@@ -23,7 +23,7 @@ export interface AttendanceRecord {
   eventId: string;
   eventName: string;
   date: string;
-  status: 'present' | 'absent';
+  status: "present" | "absent";
 }
 
 // Contribution/Payment Types
@@ -57,7 +57,7 @@ export interface Transaction {
   eventId?: string;
   eventName?: string;
   amount: number;
-  type: 'income' | 'expense';
+  type: "income" | "expense";
   responsibleOfficer: string;
   receiptUrl?: string;
 }
@@ -76,14 +76,14 @@ export interface Receipt {
 // Inquiry/Complaint/Suggestion Types
 export interface FeedbackItem {
   id: string;
-  type: 'inquiry' | 'complaint' | 'suggestion';
+  type: "inquiry" | "complaint" | "suggestion";
   title?: string;
   message: string;
   studentName?: string;
   studentId?: string;
   isAnonymous: boolean;
   submittedAt: string;
-  status: 'pending' | 'in-progress' | 'resolved';
+  status: "pending" | "in-progress" | "resolved";
 }
 
 // Audit Log Types
@@ -102,7 +102,7 @@ export interface Admin {
   id: string;
   username: string;
   name: string;
-  role: 'admin' | 'superadmin';
+  role: "admin" | "superadmin";
 }
 
 // Financial Summary Types
@@ -124,17 +124,19 @@ export interface EventAllocation {
 }
 
 // View State Types
-export type ViewState = 
-  | 'landing'
-  | 'student-record'
-  | 'transparency'
-  | 'inquiry'
-  | 'complaint'
-  | 'suggestion'
-  | 'admin-login'
-  | 'admin-dashboard'
-  | 'student-management'
-  | 'event-management'
-  | 'payment-management'
-  | 'attendance-management'
-  | 'transaction-management';
+export type ViewState =
+  | "landing"
+  | "student-record"
+  | "transparency"
+  | "inquiry"
+  | "complaint"
+  | "suggestion"
+  | "admin-login"
+  | "admin-dashboard"
+  | "student-management"
+  | "event-management"
+  | "payment-management"
+  | "attendance-management"
+  | "transaction-management";
+
+export type { Database } from "./supabase";
