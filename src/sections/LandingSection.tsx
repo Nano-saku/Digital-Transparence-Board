@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
-import { Search, ChevronDown, Eye } from 'lucide-react';
+import { Search, ChevronDown, Eye, Loader2 } from 'lucide-react';
 
 interface LandingSectionProps {
   onSearch: (name: string, studentId: string) => void;
   onViewTransparency: () => void;
+  searching?: boolean;
 }
 
-export default function LandingSection({ onSearch, onViewTransparency }: LandingSectionProps) {
+export default function LandingSection({ onSearch, onViewTransparency, searching = false }: LandingSectionProps) {
   const [name, setName] = useState('');
   const [studentId, setStudentId] = useState('');
-  
+
   const sectionRef = useRef<HTMLDivElement>(null);
   const headlineRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -20,14 +21,14 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
     const ctx = gsap.context(() => {
       // Initial animation timeline
       const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
-      
+
       // Background fade in
       tl.fromTo(
         sectionRef.current,
         { opacity: 0 },
         { opacity: 1, duration: 0.6 }
       );
-      
+
       // Headline animation
       tl.fromTo(
         headlineRef.current?.querySelectorAll('.word') || [],
@@ -35,7 +36,7 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
         { y: 0, opacity: 1, duration: 0.7, stagger: 0.03 },
         '-=0.3'
       );
-      
+
       // Search card animation
       tl.fromTo(
         cardRef.current,
@@ -43,7 +44,7 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
         { x: 0, scale: 1, opacity: 1, duration: 0.8 },
         '-=0.5'
       );
-      
+
       // Scroll hint
       tl.fromTo(
         scrollHintRef.current,
@@ -58,7 +59,9 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSearch(name, studentId);
+    if (!searching) {
+      onSearch(name, studentId);
+    }
   };
 
   return (
@@ -68,104 +71,98 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
     >
       {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-20 left-10 w-64 h-64 rounded-full bg-white blur-3xl" />
+        <div className="absolute top-20 left-10 w-72 h-72 rounded-full bg-white blur-3xl" />
         <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full bg-white blur-3xl" />
       </div>
 
       {/* Content */}
-      <div className="relative z-10 min-h-screen flex items-center">
-        <div className="w-full px-6 lg:px-16 xl:px-24 py-20 lg:py-0">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-8 items-center max-w-7xl mx-auto">
-            {/* Left: Headline */}
-            <div ref={headlineRef} className="text-center lg:text-left">
-              <h1 className="font-display font-bold text-dark leading-none mb-6">
-                <span className="block text-4xl sm:text-5xl lg:text-6xl xl:text-7xl">
-                  {'Student'.split('').map((char, i) => (
-                    <span key={i} className="word inline-block">{char}</span>
-                  ))}
-                </span>
-                <span className="block text-4xl sm:text-5xl lg:text-6xl xl:text-7xl mt-2">
-                  {'Digital'.split('').map((char, i) => (
-                    <span key={i} className="word inline-block">{char}</span>
-                  ))}
-                </span>
-                <span className="block text-4xl sm:text-5xl lg:text-6xl xl:text-7xl mt-2 text-white">
-                  {'Board'.split('').map((char, i) => (
-                    <span key={i} className="word inline-block">{char}</span>
-                  ))}
-                </span>
-              </h1>
-              
-              <p className="text-dark/80 text-base lg:text-lg max-w-md mx-auto lg:mx-0 leading-relaxed">
-                Search your attendance, contributions, and receipts—fast, clear, and transparent.
-              </p>
-            </div>
+      <div className="relative z-10 min-h-screen flex items-center justify-center px-4 sm:px-6 lg:px-8 py-20">
+        <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+          {/* Left Column - Headline */}
+          <div ref={headlineRef} className="text-center lg:text-left">
+            <h1 className="font-display font-bold text-4xl sm:text-5xl lg:text-6xl text-dark leading-tight mb-6">
+              <span className="word inline-block">Digital</span>{' '}
+              <span className="word inline-block">Transparency</span>{' '}
+              <span className="word inline-block text-red">Board</span>
+            </h1>
+            <p className="text-text-secondary text-lg sm:text-xl max-w-xl mx-auto lg:mx-0 mb-8">
+              Track your contributions, attendance, and council finances in real-time. 
+              Transparency for a stronger student community.
+            </p>
+            <button
+              onClick={onViewTransparency}
+              className="glass-button px-6 py-3 flex items-center gap-2 mx-auto lg:mx-0"
+            >
+              <Eye className="w-5 h-5" />
+              <span>View Transparency Board</span>
+            </button>
+          </div>
 
-            {/* Right: Search Card */}
-            <div className="flex justify-center lg:justify-end">
-              <div 
-                ref={cardRef}
-                className="glass-card-strong w-full max-w-md p-6 lg:p-8"
-              >
-                <div className="text-center mb-6">
-                  <div className="w-12 h-12 rounded-xl bg-red/10 flex items-center justify-center mx-auto mb-4">
-                    <Search className="w-6 h-6 text-red" />
-                  </div>
-                  <h2 className="font-display font-semibold text-xl text-dark">
-                    Find Your Record
-                  </h2>
-                  <p className="text-text-secondary text-sm mt-1">
-                    Enter your details to view your records
-                  </p>
+          {/* Right Column - Search Card */}
+          <div ref={cardRef} className="glass-card-strong p-6 sm:p-8">
+            <h2 className="font-display font-semibold text-2xl text-dark mb-2">
+              Find Your Records
+            </h2>
+            <p className="text-text-secondary mb-6">
+              Enter your name or student ID to view your contributions and attendance.
+            </p>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1.5">
+                  Student Name
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="glass-input w-full px-4 py-3"
+                  placeholder="e.g., Juan Dela Cruz"
+                  disabled={searching}
+                />
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/20"></div>
                 </div>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1.5">
-                      Student Name
-                    </label>
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g., Juan Dela Cruz"
-                      className="glass-input w-full px-4 py-3 text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1.5">
-                      Student ID
-                    </label>
-                    <input
-                      type="text"
-                      value={studentId}
-                      onChange={(e) => setStudentId(e.target.value)}
-                      placeholder="e.g., 2021-00001"
-                      className="glass-input w-full px-4 py-3 text-sm"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="btn-primary w-full py-3.5 flex items-center justify-center gap-2"
-                  >
-                    <Search className="w-4 h-4" />
-                    <span>Search Record</span>
-                  </button>
-                </form>
-
-                <div className="mt-5 pt-5 border-t border-white/50">
-                  <button
-                    onClick={onViewTransparency}
-                    className="w-full flex items-center justify-center gap-2 text-sm text-red hover:text-red/80 transition-colors"
-                  >
-                    <Eye className="w-4 h-4" />
-                    <span>Or view the Transparency Board</span>
-                  </button>
+                <div className="relative flex justify-center">
+                  <span className="px-2 bg-white/50 text-xs text-text-secondary">OR</span>
                 </div>
               </div>
-            </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1.5">
+                  Student ID
+                </label>
+                <input
+                  type="text"
+                  value={studentId}
+                  onChange={(e) => setStudentId(e.target.value)}
+                  className="glass-input w-full px-4 py-3"
+                  placeholder="e.g., 2021-00001"
+                  disabled={searching}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full btn-primary px-6 py-3 flex items-center justify-center gap-2"
+                disabled={searching || (!name && !studentId)}
+              >
+                {searching ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-5 h-5" />
+                    Search Records
+                  </>
+                )}
+              </button>
+            </form>
           </div>
         </div>
       </div>
@@ -173,12 +170,10 @@ export default function LandingSection({ onSearch, onViewTransparency }: Landing
       {/* Scroll Hint */}
       <div 
         ref={scrollHintRef}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 text-center"
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-text-secondary"
       >
-        <span className="text-dark/60 text-sm font-medium">Scroll to explore</span>
-        <div className="mt-2 animate-bounce">
-          <ChevronDown className="w-5 h-5 text-dark/60 mx-auto" />
-        </div>
+        <span className="text-sm">Scroll to learn more</span>
+        <ChevronDown className="w-5 h-5 animate-bounce" />
       </div>
     </section>
   );

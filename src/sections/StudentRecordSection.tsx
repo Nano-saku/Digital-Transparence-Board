@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { ArrowLeft, User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText } from 'lucide-react';
-import type { Student } from '@/types';
-import { getAttendanceByStudent, getContributionsByStudent, getPaymentsByStudent } from '@/data/store';
+import { ArrowLeft, User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText, Loader2 } from 'lucide-react';
+import type { Student, AttendanceRecord, ContributionRecord, PaymentRecord } from '@/types';
+import { attendanceService, contributionsService, paymentsService } from '@/services/db';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface StudentRecordSectionProps {
   student: Student;
@@ -18,10 +19,36 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
   const receiptsRef = useRef<HTMLDivElement>(null);
 
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const attendanceRecords = getAttendanceByStudent(student.id);
-  const contributionRecords = getContributionsByStudent(student.id);
-  const paymentRecords = getPaymentsByStudent(student.id);
+  // Data states
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [contributionRecords, setContributionRecords] = useState<ContributionRecord[]>([]);
+  const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
+
+  // Load data from database
+  useEffect(() => {
+    loadStudentData();
+  }, [student.id]);
+
+  const loadStudentData = async () => {
+    try {
+      setLoading(true);
+      const [attendanceData, contributionsData, paymentsData] = await Promise.all([
+        attendanceService.getByStudentId(student.id),
+        contributionsService.getByStudentId(student.id),
+        paymentsService.getByStudentId(student.id),
+      ]);
+      setAttendanceRecords(attendanceData);
+      setContributionRecords(contributionsData);
+      setPaymentRecords(paymentsData);
+    } catch (error) {
+      console.error('Error loading student data:', error);
+      toast.error('Failed to load student records');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -62,224 +89,262 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
     return () => ctx.revert();
   }, []);
 
+  const totalPaid = contributionRecords.reduce((sum, c) => sum + c.amountPaid, 0);
+  const totalRequired = contributionRecords.reduce((sum, c) => sum + c.requiredAmount, 0);
+  const totalBalance = contributionRecords.reduce((sum, c) => sum + c.remainingBalance, 0);
+
+  const presentCount = attendanceRecords.filter(r => r.status === 'present').length;
+  const absentCount = attendanceRecords.filter(r => r.status === 'absent').length;
+
   return (
     <section 
       ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-red relative overflow-hidden py-20 lg:py-24"
+      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
     >
       {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-40 right-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-40 left-20 w-96 h-96 rounded-full bg-white blur-3xl" />
+        <div className="absolute top-40 left-20 w-72 h-72 rounded-full bg-white blur-3xl" />
+        <div className="absolute bottom-40 right-20 w-96 h-96 rounded-full bg-white blur-3xl" />
       </div>
 
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
         {/* Back Button */}
-        <button
-          onClick={onBack}
-          className="mb-6 flex items-center gap-2 text-dark/80 hover:text-red transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          <span className="font-medium">Back to Search</span>
-        </button>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 max-w-7xl mx-auto">
-          {/* Profile Card */}
-          <div 
-            ref={profileRef}
-            className="lg:col-span-3"
+        <div className="mb-6">
+          <button
+            onClick={onBack}
+            className="p-2 rounded-xl hover:bg-white/50 transition-colors inline-flex items-center gap-2"
           >
-            <div className="glass-card-strong p-5 lg:p-6 h-full">
-              <div className="text-center">
-                <div className="w-20 h-20 lg:w-24 lg:h-24 rounded-full bg-red/10 flex items-center justify-center mx-auto mb-4">
-                  <User className="w-10 h-10 lg:w-12 lg:h-12 text-red" />
-                </div>
-                <h2 className="font-display font-semibold text-xl lg:text-2xl text-dark mb-1">
-                  {student.name}
-                </h2>
-                <p className="text-text-secondary text-sm mb-4">
-                  ID: {student.studentId}
-                </p>
-              </div>
+            <ArrowLeft className="w-5 h-5 text-dark" />
+            <span className="text-dark">Back to Search</span>
+          </button>
+        </div>
 
-              <div className="space-y-3 pt-4 border-t border-white/50">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-text-secondary">Program</span>
-                  <span className="text-sm font-medium text-dark text-right">{student.program}</span>
+        {/* Loading State */}
+        {loading && (
+          <div className="glass-card p-12 text-center">
+            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
+            <p className="text-text-secondary">Loading student records...</p>
+          </div>
+        )}
+
+        {!loading && (
+          <>
+            {/* Profile Card */}
+            <div ref={profileRef} className="glass-card-strong p-6 lg:p-8 mb-8">
+              <div className="flex flex-col lg:flex-row lg:items-center gap-6">
+                <div className="w-24 h-24 rounded-full bg-red/10 flex items-center justify-center flex-shrink-0">
+                  <User className="w-12 h-12 text-red" />
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-text-secondary">Year Level</span>
-                  <span className="text-sm font-medium text-dark">{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year</span>
+                <div className="flex-1">
+                  <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark mb-2">
+                    {student.name}
+                  </h1>
+                  <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
+                    <span className="flex items-center gap-1">
+                      <FileText className="w-4 h-4" />
+                      {student.studentId}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      {student.program}
+                    </span>
+                    <span>{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year - Section {student.section}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-text-secondary">Section</span>
-                  <span className="text-sm font-medium text-dark">{student.section}</span>
+                <div className="flex flex-wrap gap-3">
+                  <div className="glass-card px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-green-600">{presentCount}</p>
+                    <p className="text-xs text-text-secondary">Present</p>
+                  </div>
+                  <div className="glass-card px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-red">{absentCount}</p>
+                    <p className="text-xs text-text-secondary">Absent</p>
+                  </div>
+                  <div className="glass-card px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-dark">₱{totalPaid.toLocaleString()}</p>
+                    <p className="text-xs text-text-secondary">Total Paid</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Attendance Table */}
-          <div 
-            ref={attendanceRef}
-            className="lg:col-span-5"
-          >
-            <div className="glass-card p-5 lg:p-6 h-full">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-red" />
+            {/* Two Column Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              {/* Attendance Records */}
+              <div ref={attendanceRef} className="glass-card p-5 lg:p-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-red" />
+                  </div>
+                  <h3 className="font-display font-semibold text-lg text-dark">Attendance Records</h3>
                 </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Attendance</h3>
-              </div>
 
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Date</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceRecords.length > 0 ? (
-                      attendanceRecords.map((record) => (
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendanceRecords.map((record) => (
                         <tr key={record.id}>
-                          <td className="font-medium text-dark text-sm">{record.eventName}</td>
-                          <td className="text-text-secondary text-sm">{formatDate(record.date)}</td>
+                          <td className="font-medium text-dark">{record.eventName}</td>
+                          <td className="text-text-secondary">{formatDate(record.date)}</td>
                           <td>
                             {record.status === 'present' ? (
-                              <span className="badge-present flex items-center gap-1 w-fit">
-                                <CheckCircle className="w-3 h-3" />
+                              <span className="flex items-center gap-1 text-green-600">
+                                <CheckCircle className="w-4 h-4" />
                                 Present
                               </span>
                             ) : (
-                              <span className="badge-absent flex items-center gap-1 w-fit">
-                                <XCircle className="w-3 h-3" />
+                              <span className="flex items-center gap-1 text-red">
+                                <XCircle className="w-4 h-4" />
                                 Absent
                               </span>
                             )}
                           </td>
                         </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={3} className="text-center text-text-secondary py-4">
-                          No attendance records found
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Contributions Table */}
-          <div 
-            ref={contributionsRef}
-            className="lg:col-span-4"
-          >
-            <div className="glass-card p-5 lg:p-6 h-full">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Wallet className="w-5 h-5 text-red" />
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Contributions</h3>
+
+                {attendanceRecords.length === 0 && (
+                  <div className="text-center py-8 text-text-secondary">
+                    <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    <p>No attendance records found</p>
+                  </div>
+                )}
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Required</th>
-                      <th>Paid</th>
-                      <th>Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {contributionRecords.length > 0 ? (
-                      contributionRecords.map((record) => (
+              {/* Contribution Records */}
+              <div ref={contributionsRef} className="glass-card p-5 lg:p-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-red" />
+                  </div>
+                  <h3 className="font-display font-semibold text-lg text-dark">Contribution Records</h3>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Required</th>
+                        <th>Paid</th>
+                        <th>Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contributionRecords.map((record) => (
                         <tr key={record.id}>
-                          <td className="font-medium text-dark text-sm">{record.eventName}</td>
-                          <td className="text-text-secondary text-sm">₱{record.requiredAmount}</td>
-                          <td className="text-green-600 text-sm font-medium">₱{record.amountPaid}</td>
-                          <td>
-                            {record.remainingBalance > 0 ? (
-                              <span className="text-red text-sm font-medium">₱{record.remainingBalance}</span>
-                            ) : (
-                              <span className="badge-present text-xs">Paid</span>
-                            )}
+                          <td className="font-medium text-dark">{record.eventName}</td>
+                          <td className="text-text-secondary">₱{record.requiredAmount.toLocaleString()}</td>
+                          <td className="text-green-600">₱{record.amountPaid.toLocaleString()}</td>
+                          <td className={`font-medium ${record.remainingBalance > 0 ? 'text-red' : 'text-green-600'}`}>
+                            ₱{record.remainingBalance.toLocaleString()}
                           </td>
                         </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={4} className="text-center text-text-secondary py-4">
-                          No contribution records found
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {contributionRecords.length === 0 && (
+                  <div className="text-center py-8 text-text-secondary">
+                    <Wallet className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    <p>No contribution records found</p>
+                  </div>
+                )}
+
+                {/* Summary */}
+                {contributionRecords.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-white/20">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-secondary">Total Required:</span>
+                      <span className="font-medium text-dark">₱{totalRequired.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-text-secondary">Total Paid:</span>
+                      <span className="font-medium text-green-600">₱{totalPaid.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-text-secondary">Remaining Balance:</span>
+                      <span className={`font-medium ${totalBalance > 0 ? 'text-red' : 'text-green-600'}`}>
+                        ₱{totalBalance.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
 
-          {/* Receipts Gallery */}
-          <div 
-            ref={receiptsRef}
-            className="lg:col-span-12"
-          >
-            <div className="glass-card p-5 lg:p-6">
-              <div className="flex items-center gap-3 mb-4">
+            {/* Payment Receipts */}
+            <div ref={receiptsRef} className="glass-card p-5 lg:p-6">
+              <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
                   <Receipt className="w-5 h-5 text-red" />
                 </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Receipts & Proofs</h3>
+                <h3 className="font-display font-semibold text-lg text-dark">Payment Receipts</h3>
               </div>
 
-              {paymentRecords.filter(p => p.receiptUrl).length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                  {paymentRecords.filter(p => p.receiptUrl).map((payment) => (
-                    <button
-                      key={payment.id}
-                      onClick={() => setSelectedReceipt(payment.receiptUrl || null)}
-                      className="glass-card p-3 hover:scale-105 transition-transform text-left group"
-                    >
-                      <div className="aspect-square rounded-xl bg-red/5 flex items-center justify-center mb-3 group-hover:bg-red/10 transition-colors">
-                        <FileText className="w-8 h-8 text-red/60" />
-                      </div>
-                      <p className="text-xs font-medium text-dark truncate">{payment.eventName}</p>
-                      <p className="text-xs text-text-secondary">₱{payment.amount}</p>
-                    </button>
-                  ))}
-                </div>
-              ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {paymentRecords.filter(p => p.receiptUrl).map((payment) => (
+                  <button
+                    key={payment.id}
+                    onClick={() => setSelectedReceipt(payment.receiptUrl || null)}
+                    className="glass-card p-3 text-left hover:scale-105 transition-transform"
+                  >
+                    <div className="aspect-square rounded-lg bg-red/5 flex items-center justify-center mb-2">
+                      <Receipt className="w-8 h-8 text-red/40" />
+                    </div>
+                    <p className="text-xs font-medium text-dark truncate">{payment.eventName}</p>
+                    <p className="text-xs text-green-600">₱{payment.amount.toLocaleString()}</p>
+                    <p className="text-xs text-text-secondary">{formatDate(payment.date)}</p>
+                  </button>
+                ))}
+              </div>
+
+              {paymentRecords.filter(p => p.receiptUrl).length === 0 && (
                 <div className="text-center py-8 text-text-secondary">
-                  <Receipt className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                  <p>No receipts uploaded yet</p>
+                  <Receipt className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p>No receipts available</p>
                 </div>
               )}
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
 
       {/* Receipt Modal */}
       <Dialog open={!!selectedReceipt} onOpenChange={() => setSelectedReceipt(null)}>
         <DialogContent className="glass-card-strong max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-display">Receipt Preview</DialogTitle>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Payment Receipt
+            </DialogTitle>
           </DialogHeader>
-          <div className="aspect-video bg-red/5 rounded-xl flex items-center justify-center">
-            <div className="text-center text-text-secondary">
-              <FileText className="w-16 h-16 mx-auto mb-3 opacity-40" />
-              <p>Receipt image would be displayed here</p>
-              <p className="text-sm mt-1">{selectedReceipt}</p>
-            </div>
+          <div className="mt-4">
+            {selectedReceipt ? (
+              <img 
+                src={selectedReceipt} 
+                alt="Receipt" 
+                className="w-full rounded-lg"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/receipts/placeholder.jpg';
+                }}
+              />
+            ) : (
+              <div className="text-center py-12 text-text-secondary">
+                <Receipt className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                <p>Receipt not available</p>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -287,14 +352,18 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
   );
 }
 
-// Helper functions
+function formatDate(dateString: string): string {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric' 
+  });
+}
+
 function getOrdinalSuffix(num: number): string {
   const suffixes = ['th', 'st', 'nd', 'rd'];
   const v = num % 100;
   return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
-}
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }

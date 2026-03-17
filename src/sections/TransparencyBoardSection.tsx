@@ -3,12 +3,13 @@ import { gsap } from 'gsap';
 import { 
   TrendingUp, TrendingDown, Wallet, PieChart, 
   FileText, Download, Eye, MessageCircle, Receipt,
-  ArrowLeft, Search, Filter
+  ArrowLeft, Search, Filter, Loader2
 } from 'lucide-react';
-import type { ViewState } from '@/types';
-import { financialSummary, eventAllocations, transactions, receipts, auditLogs } from '@/data/store';
+import type { ViewState, Transaction, EventAllocation, FinancialSummary } from '@/types';
+import { transactionsService, eventAllocationsService, financialSummaryService } from '@/services/db';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { toast } from 'sonner';
 
 interface TransparencyBoardSectionProps {
   adminMode?: boolean;
@@ -26,6 +27,36 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
 
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Data states
+  const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
+  const [eventAllocations, setEventAllocations] = useState<EventAllocation[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  // Load data from database
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [summaryData, allocationsData, transactionsData] = await Promise.all([
+        financialSummaryService.get(),
+        eventAllocationsService.getAll(),
+        transactionsService.getAll(),
+      ]);
+      setFinancialSummary(summaryData);
+      setEventAllocations(allocationsData);
+      setTransactions(transactionsData);
+    } catch (error) {
+      console.error('Error loading transparency data:', error);
+      toast.error('Failed to load financial data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -79,6 +110,9 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
     t.eventName?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+  const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+
   return (
     <section 
       ref={sectionRef}
@@ -92,104 +126,97 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
 
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
-        {/* Back Button (Admin Mode) */}
+        {/* Admin Back Button */}
         {adminMode && onBack && (
-          <button
-            onClick={onBack}
-            className="mb-6 flex items-center gap-2 text-dark/80 hover:text-red transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            <span className="font-medium">Back to Dashboard</span>
-          </button>
+          <div className="mb-6">
+            <button
+              onClick={onBack}
+              className="p-2 rounded-xl hover:bg-white/50 transition-colors inline-flex items-center gap-2"
+            >
+              <ArrowLeft className="w-5 h-5 text-dark" />
+              <span className="text-dark">Back to Dashboard</span>
+            </button>
+          </div>
         )}
 
         {/* Headline */}
-        <div ref={headlineRef} className="mb-8">
-          <h1 className="font-display font-bold text-3xl sm:text-4xl lg:text-5xl text-dark mb-3">
+        <div ref={headlineRef} className="text-center mb-10">
+          <h1 className="font-display font-bold text-3xl lg:text-4xl xl:text-5xl text-dark mb-3">
             Transparency Board
           </h1>
-          <p className="text-dark/70 text-base lg:text-lg max-w-xl">
-            See how funds are collected, allocated, and spent—down to the last receipt.
+          <p className="text-text-secondary text-base lg:text-lg max-w-2xl mx-auto">
+            Real-time financial transparency. Track every contribution, expense, and allocation.
           </p>
         </div>
 
-        {/* Summary Cards */}
-        <div ref={summaryRef} className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6">
-          <div className="summary-card glass-card-strong p-4 lg:p-5">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                <Wallet className="w-5 h-5 text-red" />
-              </div>
-              <span className="text-sm text-text-secondary">Total Budget</span>
-            </div>
-            <p className="font-display font-bold text-xl lg:text-2xl text-dark">
-              ₱{financialSummary.totalBudget.toLocaleString()}
-            </p>
+        {/* Loading State */}
+        {loading && (
+          <div className="glass-card p-12 text-center">
+            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
+            <p className="text-text-secondary">Loading financial data...</p>
           </div>
+        )}
 
-          <div className="summary-card glass-card-strong p-4 lg:p-5">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-green-600" />
+        {!loading && (
+          <>
+            {/* Financial Summary */}
+            <div ref={summaryRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              <div className="summary-card glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <span className="text-xs font-medium text-text-secondary">Total Budget</span>
+                </div>
+                <p className="font-display font-bold text-2xl text-dark">
+                  ₱{financialSummary?.totalBudget.toLocaleString() || '0'}
+                </p>
               </div>
-              <span className="text-sm text-text-secondary">Total Collected</span>
-            </div>
-            <p className="font-display font-bold text-xl lg:text-2xl text-green-600">
-              ₱{financialSummary.totalFundsCollected.toLocaleString()}
-            </p>
-          </div>
 
-          <div className="summary-card glass-card-strong p-4 lg:p-5">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center">
-                <TrendingDown className="w-5 h-5 text-orange-600" />
+              <div className="summary-card glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5 text-green-600" />
+                  </div>
+                  <span className="text-xs font-medium text-text-secondary">Funds Collected</span>
+                </div>
+                <p className="font-display font-bold text-2xl text-green-600">
+                  ₱{financialSummary?.totalFundsCollected.toLocaleString() || '0'}
+                </p>
               </div>
-              <span className="text-sm text-text-secondary">Total Spent</span>
-            </div>
-            <p className="font-display font-bold text-xl lg:text-2xl text-orange-600">
-              ₱{financialSummary.totalFundsSpent.toLocaleString()}
-            </p>
-          </div>
 
-          <div className="summary-card glass-card-strong p-4 lg:p-5">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                <PieChart className="w-5 h-5 text-blue-600" />
+              <div className="summary-card glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                    <TrendingDown className="w-5 h-5 text-red" />
+                  </div>
+                  <span className="text-xs font-medium text-text-secondary">Funds Spent</span>
+                </div>
+                <p className="font-display font-bold text-2xl text-red">
+                  ₱{financialSummary?.totalFundsSpent.toLocaleString() || '0'}
+                </p>
               </div>
-              <span className="text-sm text-text-secondary">Remaining</span>
+
+              <div className="summary-card glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                    <PieChart className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <span className="text-xs font-medium text-text-secondary">Remaining</span>
+                </div>
+                <p className="font-display font-bold text-2xl text-purple-600">
+                  ₱{financialSummary?.remainingBudget.toLocaleString() || '0'}
+                </p>
+              </div>
             </div>
-            <p className="font-display font-bold text-xl lg:text-2xl text-blue-600">
-              ₱{financialSummary.remainingBudget.toLocaleString()}
-            </p>
-          </div>
-        </div>
 
-        {/* Tabs for different views */}
-        <Tabs defaultValue="allocation" className="w-full">
-          <TabsList className="glass-card mb-4 p-1 w-full flex flex-wrap gap-1">
-            <TabsTrigger value="allocation" className="flex-1 data-[state=active]:bg-red data-[state=active]:text-white">
-              Allocations
-            </TabsTrigger>
-            <TabsTrigger value="ledger" className="flex-1 data-[state=active]:bg-red data-[state=active]:text-white">
-              Transaction Ledger
-            </TabsTrigger>
-            <TabsTrigger value="receipts" className="flex-1 data-[state=active]:bg-red data-[state=active]:text-white">
-              Receipts
-            </TabsTrigger>
-            {adminMode && (
-              <TabsTrigger value="audit" className="flex-1 data-[state=active]:bg-red data-[state=active]:text-white">
-                Audit Log
-              </TabsTrigger>
-            )}
-          </TabsList>
-
-          <TabsContent value="allocation">
-            <div ref={allocationRef} className="glass-card p-5 lg:p-6">
-              <div className="flex items-center gap-3 mb-4">
+            {/* Event Allocations */}
+            <div ref={allocationRef} className="glass-card p-5 lg:p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
                   <PieChart className="w-5 h-5 text-red" />
                 </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Financial Allocation by Event</h3>
+                <h3 className="font-display font-semibold text-lg text-dark">Event Allocations</h3>
               </div>
 
               <div className="overflow-x-auto">
@@ -200,7 +227,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
                       <th>Allocation</th>
                       <th>Collected</th>
                       <th>Spent</th>
-                      <th>Remaining</th>
+                      <th>Balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,30 +235,33 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
                       <tr key={allocation.eventId}>
                         <td className="font-medium text-dark">{allocation.eventName}</td>
                         <td className="text-text-secondary">₱{allocation.allocationAmount.toLocaleString()}</td>
-                        <td className="text-green-600 font-medium">₱{allocation.totalCollected.toLocaleString()}</td>
-                        <td className="text-orange-600 font-medium">₱{allocation.totalSpent.toLocaleString()}</td>
-                        <td>
-                          <span className={`font-medium ${allocation.remainingBalance >= 0 ? 'text-blue-600' : 'text-red'}`}>
-                            ₱{allocation.remainingBalance.toLocaleString()}
-                          </span>
-                        </td>
+                        <td className="text-green-600">₱{allocation.totalCollected.toLocaleString()}</td>
+                        <td className="text-red">₱{allocation.totalSpent.toLocaleString()}</td>
+                        <td className="font-medium text-dark">₱{allocation.remainingBalance.toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
-          </TabsContent>
 
-          <TabsContent value="ledger">
-            <div ref={ledgerRef} className="glass-card p-5 lg:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+              {eventAllocations.length === 0 && (
+                <div className="text-center py-8 text-text-secondary">
+                  <PieChart className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p>No event allocations found</p>
+                </div>
+              )}
+            </div>
+
+            {/* Transaction Ledger */}
+            <div ref={ledgerRef} className="glass-card p-5 lg:p-6 mb-8">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
                     <FileText className="w-5 h-5 text-red" />
                   </div>
                   <h3 className="font-display font-semibold text-lg text-dark">Transaction Ledger</h3>
                 </div>
+
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
                   <input
@@ -251,128 +281,76 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
                       <th>Date</th>
                       <th>Description</th>
                       <th>Event</th>
+                      <th>Type</th>
                       <th>Amount</th>
                       <th>Officer</th>
+                      <th>Receipt</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredTransactions.map((transaction) => (
                       <tr key={transaction.id}>
-                        <td className="text-text-secondary text-sm">{formatDate(transaction.date)}</td>
+                        <td className="text-text-secondary">{formatDate(transaction.date)}</td>
                         <td className="font-medium text-dark">{transaction.description}</td>
-                        <td className="text-text-secondary text-sm">{transaction.eventName || '-'}</td>
+                        <td className="text-text-secondary">{transaction.eventName || '-'}</td>
                         <td>
-                          <span className={`font-medium ${transaction.type === 'income' ? 'text-green-600' : 'text-orange-600'}`}>
-                            {transaction.type === 'income' ? '+' : '-'}₱{transaction.amount.toLocaleString()}
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            transaction.type === 'income' 
+                              ? 'bg-green-100 text-green-600' 
+                              : 'bg-red/10 text-red'
+                          }`}>
+                            {transaction.type === 'income' ? 'Income' : 'Expense'}
                           </span>
                         </td>
-                        <td className="text-text-secondary text-sm">{transaction.responsibleOfficer}</td>
+                        <td className={`font-medium ${
+                          transaction.type === 'income' ? 'text-green-600' : 'text-red'
+                        }`}>
+                          {transaction.type === 'income' ? '+' : '-'}₱{transaction.amount.toLocaleString()}
+                        </td>
+                        <td className="text-text-secondary">{transaction.responsibleOfficer}</td>
+                        <td>
+                          {transaction.receiptUrl ? (
+                            <button 
+                              onClick={() => setSelectedReceipt(transaction.receiptUrl || null)}
+                              className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+                            >
+                              <Receipt className="w-4 h-4 text-red" />
+                            </button>
+                          ) : (
+                            <span className="text-text-secondary/50">-</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {filteredTransactions.length === 0 && (
+                <div className="text-center py-8 text-text-secondary">
+                  <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p>No transactions found</p>
+                </div>
+              )}
             </div>
-          </TabsContent>
 
-          <TabsContent value="receipts">
-            <div className="glass-card p-5 lg:p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Receipt className="w-5 h-5 text-red" />
-                </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Receipt Archive</h3>
+            {/* CTA Row */}
+            {!adminMode && onNavigate && (
+              <div ref={ctaRef} className="flex flex-wrap justify-center gap-4">
+                <button 
+                  onClick={() => onNavigate('inquiry')}
+                  className="glass-button px-6 py-3 flex items-center gap-2"
+                >
+                  <MessageCircle className="w-5 h-5" />
+                  <span>Submit Inquiry</span>
+                </button>
+                <button className="glass-button px-6 py-3 flex items-center gap-2">
+                  <Download className="w-5 h-5" />
+                  <span>Download Report</span>
+                </button>
               </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {receipts.map((receipt) => (
-                  <button
-                    key={receipt.id}
-                    onClick={() => setSelectedReceipt(receipt.url)}
-                    className="glass-card p-3 hover:scale-105 transition-transform text-left group"
-                  >
-                    <div className="aspect-square rounded-xl bg-red/5 flex items-center justify-center mb-3 group-hover:bg-red/10 transition-colors">
-                      <Receipt className="w-8 h-8 text-red/60" />
-                    </div>
-                    <p className="text-xs font-medium text-dark truncate">{receipt.title}</p>
-                    <p className="text-xs text-text-secondary">{formatDate(receipt.uploadedAt)}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </TabsContent>
-
-          {adminMode && (
-            <TabsContent value="audit">
-              <div className="glass-card p-5 lg:p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                    <Filter className="w-5 h-5 text-red" />
-                  </div>
-                  <h3 className="font-display font-semibold text-lg text-dark">Audit Log</h3>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="glass-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Action</th>
-                        <th>Data Modified</th>
-                        <th>Admin</th>
-                        <th>Changes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditLogs.map((log) => (
-                        <tr key={log.id}>
-                          <td className="text-text-secondary text-sm whitespace-nowrap">{log.date}</td>
-                          <td className="font-medium text-dark">{log.action}</td>
-                          <td className="text-text-secondary text-sm">{log.dataModified}</td>
-                          <td className="text-text-secondary text-sm">{log.responsibleAdmin}</td>
-                          <td className="text-sm">
-                            {log.previousValue && log.newValue ? (
-                              <span className="text-dark">
-                                <span className="text-red line-through">{log.previousValue}</span>
-                                {' → '}
-                                <span className="text-green-600">{log.newValue}</span>
-                              </span>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </TabsContent>
-          )}
-        </Tabs>
-
-        {/* CTA Row */}
-        {!adminMode && (
-          <div ref={ctaRef} className="flex flex-wrap gap-3 mt-6">
-            <button className="btn-secondary px-5 py-2.5 flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              <span>Download Report</span>
-            </button>
-            <button 
-              onClick={() => setSelectedReceipt(receipts[0]?.url || null)}
-              className="glass-button px-5 py-2.5 flex items-center gap-2"
-            >
-              <Eye className="w-4 h-4" />
-              <span>View Receipts</span>
-            </button>
-            <button 
-              onClick={() => onNavigate && onNavigate('inquiry')}
-              className="glass-button px-5 py-2.5 flex items-center gap-2"
-            >
-              <MessageCircle className="w-4 h-4" />
-              <span>Ask a Question</span>
-            </button>
-          </div>
+            )}
+          </>
         )}
       </div>
 
@@ -380,13 +358,26 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
       <Dialog open={!!selectedReceipt} onOpenChange={() => setSelectedReceipt(null)}>
         <DialogContent className="glass-card-strong max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-display">Receipt Preview</DialogTitle>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Receipt
+            </DialogTitle>
           </DialogHeader>
-          <div className="aspect-video bg-red/5 rounded-xl flex items-center justify-center">
-            <div className="text-center text-text-secondary">
-              <Receipt className="w-16 h-16 mx-auto mb-3 opacity-40" />
-              <p>Receipt image would be displayed here</p>
-            </div>
+          <div className="mt-4">
+            {selectedReceipt ? (
+              <img 
+                src={selectedReceipt} 
+                alt="Receipt" 
+                className="w-full rounded-lg"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/receipts/placeholder.jpg';
+                }}
+              />
+            ) : (
+              <div className="text-center py-12 text-text-secondary">
+                <Receipt className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                <p>Receipt not available</p>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -395,6 +386,11 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
 }
 
 function formatDate(dateString: string): string {
+  if (!dateString) return '-';
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric' 
+  });
 }

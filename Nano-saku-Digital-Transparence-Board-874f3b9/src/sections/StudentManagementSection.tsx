@@ -1,26 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { 
-  ArrowLeft, Search, Plus, Edit2, Trash2, User, FileSpreadsheet, FileText, Save, Loader2
+  ArrowLeft, Search, Plus, Edit2, Trash2, User, FileSpreadsheet, FileText, Save
 } from 'lucide-react';
-import { studentsService } from '@/services/db';
+import { students as initialStudents } from '@/data/store';
 import type { Student } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { toast } from 'sonner';
 
 interface StudentManagementSectionProps {
   onBack: () => void;
 }
 
 export default function StudentManagementSection({ onBack }: StudentManagementSectionProps) {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<Student[]>(initialStudents);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [filterProgram, setFilterProgram] = useState('');
   const [filterYear, setFilterYear] = useState('');
-  const [saving, setSaving] = useState(false);
 
   const sectionRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -33,24 +30,6 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
     yearLevel: 1,
     section: '',
   });
-
-  // Load students from database
-  useEffect(() => {
-    loadStudents();
-  }, []);
-
-  const loadStudents = async () => {
-    try {
-      setLoading(true);
-      const data = await studentsService.getAll();
-      setStudents(data);
-    } catch (error) {
-      console.error('Error loading students:', error);
-      toast.error('Failed to load students');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -76,62 +55,27 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
   const programs = [...new Set(students.map(s => s.program))];
   const yearLevels = [...new Set(students.map(s => s.yearLevel))].sort();
 
-  const handleAddStudent = async () => {
-    try {
-      setSaving(true);
-      const newStudent = await studentsService.create({
-        studentId: formData.studentId,
-        name: formData.name,
-        program: formData.program,
-        yearLevel: formData.yearLevel,
-        section: formData.section,
-      });
-      setStudents([...students, newStudent]);
-      setShowAddModal(false);
-      setFormData({ studentId: '', name: '', program: '', yearLevel: 1, section: '' });
-      toast.success('Student added successfully');
-    } catch (error) {
-      console.error('Error adding student:', error);
-      toast.error('Failed to add student');
-    } finally {
-      setSaving(false);
-    }
+  const handleAddStudent = () => {
+    const newStudent: Student = {
+      id: Date.now().toString(),
+      ...formData,
+    };
+    setStudents([...students, newStudent]);
+    setShowAddModal(false);
+    setFormData({ studentId: '', name: '', program: '', yearLevel: 1, section: '' });
   };
 
-  const handleEditStudent = async () => {
+  const handleEditStudent = () => {
     if (editingStudent) {
-      try {
-        setSaving(true);
-        const updated = await studentsService.update(editingStudent.id, {
-          studentId: formData.studentId,
-          name: formData.name,
-          program: formData.program,
-          yearLevel: formData.yearLevel,
-          section: formData.section,
-        });
-        setStudents(students.map(s => s.id === editingStudent.id ? updated : s));
-        setEditingStudent(null);
-        setFormData({ studentId: '', name: '', program: '', yearLevel: 1, section: '' });
-        toast.success('Student updated successfully');
-      } catch (error) {
-        console.error('Error updating student:', error);
-        toast.error('Failed to update student');
-      } finally {
-        setSaving(false);
-      }
+      setStudents(students.map(s => s.id === editingStudent.id ? { ...editingStudent, ...formData } : s));
+      setEditingStudent(null);
+      setFormData({ studentId: '', name: '', program: '', yearLevel: 1, section: '' });
     }
   };
 
-  const handleDeleteStudent = async (id: string) => {
+  const handleDeleteStudent = (id: string) => {
     if (confirm('Are you sure you want to delete this student?')) {
-      try {
-        await studentsService.delete(id);
-        setStudents(students.filter(s => s.id !== id));
-        toast.success('Student deleted successfully');
-      } catch (error) {
-        console.error('Error deleting student:', error);
-        toast.error('Failed to delete student');
-      }
+      setStudents(students.filter(s => s.id !== id));
     }
   };
 
@@ -196,7 +140,6 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
             <button 
               onClick={openAddModal}
               className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm"
-              disabled={loading}
             >
               <Plus className="w-4 h-4" />
               <span>Add Student</span>
@@ -214,14 +157,12 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="glass-input pl-10 pr-4 py-2 text-sm w-full"
-              disabled={loading}
             />
           </div>
           <select
             value={filterProgram}
             onChange={(e) => setFilterProgram(e.target.value)}
             className="glass-input px-4 py-2 text-sm"
-            disabled={loading}
           >
             <option value="">All Programs</option>
             {programs.map(program => (
@@ -232,7 +173,6 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
             value={filterYear}
             onChange={(e) => setFilterYear(e.target.value)}
             className="glass-input px-4 py-2 text-sm"
-            disabled={loading}
           >
             <option value="">All Years</option>
             {yearLevels.map(year => (
@@ -241,76 +181,66 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
           </select>
         </div>
 
-        {/* Loading State */}
-        {loading && (
-          <div className="glass-card p-12 text-center">
-            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
-            <p className="text-text-secondary">Loading students...</p>
-          </div>
-        )}
-
         {/* Students Table */}
-        {!loading && (
-          <div className="glass-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="glass-table">
-                <thead>
-                  <tr>
-                    <th>Student ID</th>
-                    <th>Name</th>
-                    <th>Program</th>
-                    <th>Year</th>
-                    <th>Section</th>
-                    <th className="text-right">Actions</th>
+        <div className="glass-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="glass-table">
+              <thead>
+                <tr>
+                  <th>Student ID</th>
+                  <th>Name</th>
+                  <th>Program</th>
+                  <th>Year</th>
+                  <th>Section</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStudents.map((student) => (
+                  <tr key={student.id} className="group">
+                    <td className="font-medium text-dark">{student.studentId}</td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-red/10 flex items-center justify-center">
+                          <User className="w-4 h-4 text-red" />
+                        </div>
+                        <span className="font-medium text-dark">{student.name}</span>
+                      </div>
+                    </td>
+                    <td className="text-text-secondary">{student.program}</td>
+                    <td className="text-text-secondary">{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year</td>
+                    <td className="text-text-secondary">{student.section}</td>
+                    <td className="text-right">
+                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => openEditModal(student)}
+                          className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-4 h-4 text-blue-600" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStudent(student.id)}
+                          className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4 text-red" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredStudents.map((student) => (
-                    <tr key={student.id} className="group">
-                      <td className="font-medium text-dark">{student.studentId}</td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full bg-red/10 flex items-center justify-center">
-                            <User className="w-4 h-4 text-red" />
-                          </div>
-                          <span className="font-medium text-dark">{student.name}</span>
-                        </div>
-                      </td>
-                      <td className="text-text-secondary">{student.program}</td>
-                      <td className="text-text-secondary">{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year</td>
-                      <td className="text-text-secondary">{student.section}</td>
-                      <td className="text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openEditModal(student)}
-                            className="p-2 rounded-lg hover:bg-white/50 transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4 text-blue-600" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteStudent(student.id)}
-                            className="p-2 rounded-lg hover:bg-white/50 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4 text-red" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {filteredStudents.length === 0 && (
-              <div className="text-center py-12 text-text-secondary">
-                <User className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                <p>No students found</p>
-              </div>
-            )}
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
+          
+          {filteredStudents.length === 0 && (
+            <div className="text-center py-12 text-text-secondary">
+              <User className="w-12 h-12 mx-auto mb-3 opacity-40" />
+              <p>No students found</p>
+            </div>
+          )}
+        </div>
 
         {/* Stats */}
         <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
@@ -326,106 +256,92 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
       }}>
         <DialogContent className="glass-card-strong max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
+            <DialogTitle className="font-display">
               {editingStudent ? 'Edit Student' : 'Add New Student'}
             </DialogTitle>
           </DialogHeader>
-
-          <div className="space-y-4 mt-4">
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            editingStudent ? handleEditStudent() : handleAddStudent();
+          }} className="space-y-4 mt-4">
             <div>
-              <label className="block text-sm font-medium text-dark mb-1">Student ID</label>
+              <label className="block text-sm font-medium text-dark mb-1.5">Student ID</label>
               <input
                 type="text"
                 value={formData.studentId}
                 onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
-                className="glass-input w-full px-4 py-2"
                 placeholder="e.g., 2021-00001"
-                disabled={saving}
+                className="glass-input w-full px-4 py-3 text-sm"
+                required
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-dark mb-1">Full Name</label>
+              <label className="block text-sm font-medium text-dark mb-1.5">Full Name</label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="glass-input w-full px-4 py-2"
                 placeholder="e.g., Juan Dela Cruz"
-                disabled={saving}
+                className="glass-input w-full px-4 py-3 text-sm"
+                required
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-dark mb-1">Program</label>
+              <label className="block text-sm font-medium text-dark mb-1.5">Program</label>
               <input
                 type="text"
                 value={formData.program}
                 onChange={(e) => setFormData({ ...formData, program: e.target.value })}
-                className="glass-input w-full px-4 py-2"
                 placeholder="e.g., BS Computer Science"
-                disabled={saving}
+                className="glass-input w-full px-4 py-3 text-sm"
+                required
               />
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-dark mb-1">Year Level</label>
+                <label className="block text-sm font-medium text-dark mb-1.5">Year Level</label>
                 <select
                   value={formData.yearLevel}
                   onChange={(e) => setFormData({ ...formData, yearLevel: parseInt(e.target.value) })}
-                  className="glass-input w-full px-4 py-2"
-                  disabled={saving}
+                  className="glass-input w-full px-4 py-3 text-sm"
                 >
-                  {[1, 2, 3, 4, 5].map(year => (
+                  {[1, 2, 3, 4].map(year => (
                     <option key={year} value={year}>{year}{getOrdinalSuffix(year)} Year</option>
                   ))}
                 </select>
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-dark mb-1">Section</label>
+                <label className="block text-sm font-medium text-dark mb-1.5">Section</label>
                 <input
                   type="text"
                   value={formData.section}
                   onChange={(e) => setFormData({ ...formData, section: e.target.value })}
-                  className="glass-input w-full px-4 py-2"
                   placeholder="e.g., A"
-                  disabled={saving}
+                  className="glass-input w-full px-4 py-3 text-sm"
+                  required
                 />
               </div>
             </div>
-
-            <div className="flex gap-3 pt-4">
+            <div className="flex gap-3 pt-2">
               <button
+                type="button"
                 onClick={() => {
                   setShowAddModal(false);
                   setEditingStudent(null);
                 }}
-                className="flex-1 glass-button px-4 py-2.5"
-                disabled={saving}
+                className="btn-secondary flex-1 py-3"
               >
                 Cancel
               </button>
               <button
-                onClick={editingStudent ? handleEditStudent : handleAddStudent}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
-                disabled={saving || !formData.studentId || !formData.name || !formData.program || !formData.section}
+                type="submit"
+                className="btn-primary flex-1 py-3 flex items-center justify-center gap-2"
               >
-                {saving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    {editingStudent ? 'Update' : 'Save'}
-                  </>
-                )}
+                <Save className="w-4 h-4" />
+                <span>{editingStudent ? 'Save Changes' : 'Add Student'}</span>
               </button>
             </div>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
     </section>

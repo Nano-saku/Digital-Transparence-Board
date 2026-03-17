@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react';
 import type { ViewState, Student } from '@/types';
-import { studentsService } from '@/services/db';
-import { toast, Toaster } from 'sonner';
+import { getStudentById, getStudentByName } from '@/data/store';
 
 // Sections
 import Navigation from '@/sections/Navigation';
@@ -19,35 +18,26 @@ function App() {
   const [currentView, setCurrentView] = useState<ViewState>('landing');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [searching, setSearching] = useState(false);
-
+  
   const mainRef = useRef<HTMLDivElement>(null);
 
-  // Handle student search - now using database
-  const handleSearch = async (name: string, studentId: string) => {
-    try {
-      setSearching(true);
-      let student: Student | null = null;
-
-      if (studentId) {
-        student = await studentsService.getByStudentId(studentId);
-      }
-
-      if (!student && name) {
-        student = await studentsService.getByName(name);
-      }
-
-      if (student) {
-        setSelectedStudent(student);
-        setCurrentView('student-record');
-      } else {
-        toast.error('Student not found. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error searching student:', error);
-      toast.error('Error searching for student. Please try again.');
-    } finally {
-      setSearching(false);
+  // Handle student search
+  const handleSearch = (name: string, studentId: string) => {
+    let student: Student | undefined;
+    
+    if (studentId) {
+      student = getStudentById(studentId);
+    }
+    
+    if (!student && name) {
+      student = getStudentByName(name);
+    }
+    
+    if (student) {
+      setSelectedStudent(student);
+      setCurrentView('student-record');
+    } else {
+      alert('Student not found. Please try again.');
     }
   };
 
@@ -58,9 +48,8 @@ function App() {
         (username === 'superadmin' && password === 'superadmin')) {
       setIsAdmin(true);
       setCurrentView('admin-dashboard');
-      toast.success('Welcome, Admin!');
     } else {
-      toast.error('Invalid credentials. Please try again.');
+      alert('Invalid credentials. Please try again.');
     }
   };
 
@@ -74,7 +63,6 @@ function App() {
   const handleLogout = () => {
     setIsAdmin(false);
     setCurrentView('landing');
-    toast.info('You have been logged out');
   };
 
   // Render current view
@@ -85,10 +73,9 @@ function App() {
           <LandingSection 
             onSearch={handleSearch} 
             onViewTransparency={() => navigateTo('transparency')}
-            searching={searching}
           />
         );
-
+      
       case 'student-record':
         return selectedStudent && (
           <StudentRecordSection 
@@ -96,18 +83,18 @@ function App() {
             onBack={() => navigateTo('landing')}
           />
         );
-
+      
       case 'transparency':
         return <TransparencyBoardSection onNavigate={navigateTo} />;
-
+      
       case 'inquiry':
       case 'complaint':
       case 'suggestion':
         return <FeedbackSection defaultTab={currentView} />;
-
+      
       case 'admin-login':
         return <AdminLoginSection onLogin={handleAdminLogin} />;
-
+      
       case 'admin-dashboard':
         return isAdmin ? (
           <AdminDashboardSection 
@@ -117,14 +104,14 @@ function App() {
         ) : (
           <AdminLoginSection onLogin={handleAdminLogin} />
         );
-
+      
       case 'student-management':
         return isAdmin ? (
           <StudentManagementSection onBack={() => navigateTo('admin-dashboard')} />
         ) : (
           <AdminLoginSection onLogin={handleAdminLogin} />
         );
-
+      
       case 'event-management':
       case 'payment-management':
       case 'attendance-management':
@@ -136,36 +123,33 @@ function App() {
         ) : (
           <AdminLoginSection onLogin={handleAdminLogin} />
         );
-
+      
       case 'transaction-management':
         return isAdmin ? (
           <TransparencyBoardSection adminMode onBack={() => navigateTo('admin-dashboard')} />
         ) : (
           <AdminLoginSection onLogin={handleAdminLogin} />
         );
-
+      
       default:
-        return <LandingSection onSearch={handleSearch} onViewTransparency={() => navigateTo('transparency')} searching={searching} />;
+        return <LandingSection onSearch={handleSearch} onViewTransparency={() => navigateTo('transparency')} />;
     }
   };
 
   return (
     <div ref={mainRef} className="min-h-screen">
-      {/* Toast notifications */}
-      <Toaster position="top-center" richColors />
-
       {/* Navigation */}
       <Navigation 
         currentView={currentView}
         onNavigate={navigateTo}
         isAdmin={isAdmin}
       />
-
+      
       {/* Main Content */}
       <main className="relative">
         {renderView()}
       </main>
-
+      
       {/* Footer - only show on landing page */}
       {currentView === 'landing' && (
         <FooterSection onNavigate={navigateTo} />
