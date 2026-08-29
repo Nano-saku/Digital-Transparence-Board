@@ -224,7 +224,6 @@ export default function EventManagementSection({
     morningTimeOut: "",
     afternoonTimeIn: "",
     afternoonTimeOut: "",
-    assignedMemberIds: [] as string[],
   });
 
   // Payment form
@@ -388,7 +387,6 @@ export default function EventManagementSection({
       morningTimeOut: "",
       afternoonTimeIn: "",
       afternoonTimeOut: "",
-      assignedMemberIds: [],
     });
     setShowEventModal(true);
   };
@@ -403,7 +401,6 @@ export default function EventManagementSection({
       morningTimeOut: event.morningTimeOut ?? "",
       afternoonTimeIn: event.afternoonTimeIn ?? "",
       afternoonTimeOut: event.afternoonTimeOut ?? "",
-      assignedMemberIds: event.assignedMembers?.map((m) => m.memberId) ?? [],
     });
     setShowEventModal(true);
   };
@@ -411,9 +408,6 @@ export default function EventManagementSection({
   const handleAddEvent = async () => {
     try {
       setSaving(true);
-      const assignedMembers = boardMembers
-        .filter((m) => eventForm.assignedMemberIds.includes(m.id))
-        .map((m) => ({ memberId: m.id, memberName: m.name }));
       const newEvent = await eventsService.create({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
@@ -422,7 +416,6 @@ export default function EventManagementSection({
         morningTimeOut: eventForm.morningTimeOut || undefined,
         afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
         afternoonTimeOut: eventForm.afternoonTimeOut || undefined,
-        assignedMembers,
       });
       setEvents([...events, newEvent]);
       setShowEventModal(false);
@@ -434,7 +427,6 @@ export default function EventManagementSection({
         morningTimeOut: "",
         afternoonTimeIn: "",
         afternoonTimeOut: "",
-        assignedMemberIds: [],
       });
       toast.success("Event created successfully");
     } catch (error) {
@@ -449,9 +441,6 @@ export default function EventManagementSection({
     if (!editingEvent) return;
     try {
       setSaving(true);
-      const assignedMembers = boardMembers
-        .filter((m) => eventForm.assignedMemberIds.includes(m.id))
-        .map((m) => ({ memberId: m.id, memberName: m.name }));
       const updated = await eventsService.update(editingEvent.id, {
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
@@ -460,7 +449,6 @@ export default function EventManagementSection({
         morningTimeOut: eventForm.morningTimeOut || undefined,
         afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
         afternoonTimeOut: eventForm.afternoonTimeOut || undefined,
-        assignedMembers,
       });
       setEvents(events.map((e) => (e.id === editingEvent.id ? updated : e)));
       setEditingEvent(null);
@@ -473,7 +461,6 @@ export default function EventManagementSection({
         morningTimeOut: "",
         afternoonTimeIn: "",
         afternoonTimeOut: "",
-        assignedMemberIds: [],
       });
       toast.success("Event updated successfully");
     } catch (error) {
@@ -1202,15 +1189,6 @@ export default function EventManagementSection({
       });
   }, [attendanceRecords, events, students]);
 
-  const toggleAssignedMember = (memberId: string) => {
-    setEventForm((form) => ({
-      ...form,
-      assignedMemberIds: form.assignedMemberIds.includes(memberId)
-        ? form.assignedMemberIds.filter((id) => id !== memberId)
-        : [...form.assignedMemberIds, memberId],
-    }));
-  };
-
   return (
     <section
       ref={sectionRef}
@@ -1309,7 +1287,6 @@ export default function EventManagementSection({
                         <th>Schedule</th>
                         <th>Allocation</th>
                         <th>Expected Collection</th>
-                        <th>Assigned Board Members</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
@@ -1319,12 +1296,6 @@ export default function EventManagementSection({
                           <td className="font-medium text-dark">
                             <div className="flex items-center gap-2 flex-wrap">
                               {event.name}
-                              {role === "board-member" &&
-                                assignedToMe.has(event.id) && (
-                                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-medium">
-                                    Assigned to you
-                                  </span>
-                                )}
                             </div>
                           </td>
                           <td className="text-text-secondary whitespace-nowrap">
@@ -1358,24 +1329,7 @@ export default function EventManagementSection({
                           <td className="font-medium text-green-600">
                             {formatPeso(expectedCollection(event.id))}
                           </td>
-                          <td>
-                            {event.assignedMembers &&
-                            event.assignedMembers.length > 0 ? (
-                              <div className="flex flex-wrap gap-1 max-w-44">
-                                {event.assignedMembers.map((member) => (
-                                  <span
-                                    key={member.memberId}
-                                    className="text-[11px] px-2 py-0.5 rounded-full bg-red/10 text-red font-medium inline-flex items-center gap-1"
-                                  >
-                                    <UserCheck className="w-3 h-3" />
-                                    {member.memberName}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-text-secondary/50">-</span>
-                            )}
-                          </td>
+
                           <td>
                             {canManageEvents ? (
                               <div className="flex items-center gap-2">
@@ -2607,26 +2561,10 @@ export default function EventManagementSection({
                       key={member.id}
                       className="flex items-center gap-2 cursor-pointer text-sm hover:text-red transition-colors"
                     >
-                      <input
-                        type="checkbox"
-                        checked={eventForm.assignedMemberIds.includes(
-                          member.id,
-                        )}
-                        onChange={() => toggleAssignedMember(member.id)}
-                        className="accent-red"
-                      />
                       <span className="truncate">{member.name}</span>
                     </label>
                   ))}
                 </div>
-                {boardMembers.length > 0 &&
-                  eventForm.assignedMemberIds.length > 0 && (
-                    <p className="text-xs text-text-secondary mt-1">
-                      {eventForm.assignedMemberIds.length} member
-                      {eventForm.assignedMemberIds.length === 1 ? "" : "s"}{" "}
-                      assigned
-                    </p>
-                  )}
               </div>
             )}
 

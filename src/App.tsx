@@ -158,7 +158,7 @@ function App() {
     if (!role) return false;
     switch (view) {
       case "student-management":
-        return role === "admin";
+        return role === "admin" || role === "secretary";
       case "contribution-management":
         return role === "admin" || role === "treasurer" || role === "auditor";
       case "payment-management":
