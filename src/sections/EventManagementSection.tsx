@@ -50,7 +50,6 @@ import type {
   Student,
   PaymentRecord,
   AttendanceRecord,
-  ContributionRecord,
   UserRole,
   BoardMember,
 } from "@/types";
@@ -195,7 +194,6 @@ export default function EventManagementSection({
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [setContributions] = useState<ContributionRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
@@ -312,19 +310,13 @@ export default function EventManagementSection({
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [
-        eventsData,
-        studentsData,
-        paymentsData,
-        contributionsData,
-        attendanceData,
-      ] = await Promise.all([
-        eventsService.getAll(),
-        studentsService.getAll(),
-        paymentsService.getAll(),
-        contributionsService.getAll(),
-        attendanceService.getAll(),
-      ]);
+      const [eventsData, studentsData, paymentsData, attendanceData] =
+        await Promise.all([
+          eventsService.getAll(),
+          studentsService.getAll(),
+          paymentsService.getAll(),
+          attendanceService.getAll(),
+        ]);
       setEvents(eventsData);
       setStudents(studentsData);
       setPayments(paymentsData);
