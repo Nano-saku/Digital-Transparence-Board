@@ -1042,14 +1042,12 @@ export default function EventManagementSection({
 
   // Required contributions are authoritative per student and event. Do not
   // infer a collection target from the event allocation or student count.
-  const expectedCollection = (eventId: string) =>
-    contributions
-      .filter((contribution) => contribution.eventId === eventId)
-      .reduce(
-        (total, contribution) =>
-          total + Math.max(0, contribution.requiredAmount),
-        0,
-      );
+  const expectedCollection = (event: Event) => {
+    const allocation = Number(event.allocationAmount) || 0;
+    const studentCount = students.length;
+
+    return allocation * studentCount;
+  };
 
   /** Morning / Afternoon schedule label for the events list (12h AM/PM). */
   const scheduleLabel = (event: Event): string => {
@@ -1305,7 +1303,7 @@ export default function EventManagementSection({
                             {formatPeso(event.allocationAmount)}
                           </td>
                           <td className="font-medium text-green-600">
-                            {formatPeso(expectedCollection(event.id))}
+                            {formatPeso(expectedCollection(event))}
                           </td>
 
                           <td>
