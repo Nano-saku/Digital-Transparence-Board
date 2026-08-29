@@ -190,7 +190,6 @@ export default function EventManagementSection({
   initialTab = "event-management",
   role,
   staffName,
-  userId = "",
 }: EventManagementSectionProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [events, setEvents] = useState<Event[]>([]);
@@ -1079,27 +1078,6 @@ export default function EventManagementSection({
 
   // Event ids assigned to the signed-in board member (used to highlight
   // the board member's own assignments in the events table).
-  const assignedCatalogIds = useMemo(
-    () =>
-      new Set(
-        boardMembers
-          .filter((member) => member.accountUserId === userId)
-          .map((member) => member.id),
-      ),
-    [boardMembers, userId],
-  );
-
-  const assignedToMe = useMemo(
-    () =>
-      new Set(
-        events
-          .filter((e) =>
-            e.assignedMembers?.some((m) => assignedCatalogIds.has(m.memberId)),
-          )
-          .map((e) => e.id),
-      ),
-    [assignedCatalogIds, events],
-  );
 
   // Students filtered by the single attendance search bar (full name OR
   // student ID - one search box for both). When a QR scan sets the course &
