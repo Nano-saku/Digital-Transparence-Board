@@ -60,7 +60,10 @@ function toDisplayName(user: User, role: UserRole): string {
 
 function friendlyAuthMessage(message: string): string {
   const m = message.toLowerCase();
-  if (m.includes("invalid login credentials") || m.includes("invalid credentials")) {
+  if (
+    m.includes("invalid login credentials") ||
+    m.includes("invalid credentials")
+  ) {
     return "Invalid email or password. Please try again.";
   }
   if (m.includes("email not confirmed")) {
@@ -71,6 +74,15 @@ function friendlyAuthMessage(message: string): string {
   }
   if (m.includes("email address")) {
     return "No account found with that email address.";
+  }
+  if (m.includes("password should be at least")) {
+    return "Password should be at least 6 characters.";
+  }
+  if (m.includes("same password") || m.includes("different from the old")) {
+    return "New password must be different from your current password.";
+  }
+  if (m.includes("auth session missing") || m.includes("session_not_found")) {
+    return "This reset link has expired or was already used. Request a new one.";
   }
   return message;
 }
@@ -84,7 +96,8 @@ export const authService = {
     });
 
     if (error) throw new Error(friendlyAuthMessage(error.message));
-    if (!data.user) throw new Error("Sign in succeeded but no user was returned.");
+    if (!data.user)
+      throw new Error("Sign in succeeded but no user was returned.");
 
     const roleRecord = await fetchRole(data.user.id);
     if (!roleRecord) {
@@ -93,7 +106,7 @@ export const authService = {
       await getSupabase().auth.signOut();
       throw new Error(
         "This account is not assigned an officer role. " +
-          "Ask the administrator to add it to user_roles."
+          "Ask the administrator to add it to user_roles.",
       );
     }
 
@@ -121,12 +134,53 @@ export const authService = {
     return {
       user: session.user,
       role: roleRecord.role,
-      displayName: roleRecord.name || toDisplayName(session.user, roleRecord.role),
+      displayName:
+        roleRecord.name || toDisplayName(session.user, roleRecord.role),
     };
   },
 
   async signOut(): Promise<void> {
     await getSupabase().auth.signOut();
+  },
+
+  /**
+   * Sends a password-reset email to an officer account. The link in that
+   * email brings them back to this app (redirectTo below), at which point
+   * Supabase fires a PASSWORD_RECOVERY auth event — see onPasswordRecovery.
+   * Uses the anon key only; safe to call from the browser.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    const { error } = await getSupabase().auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      { redirectTo: window.location.origin + window.location.pathname },
+    );
+    if (error) throw new Error(friendlyAuthMessage(error.message));
+  },
+
+  /**
+   * Sets a new password. Must be called while a recovery session is active
+   * (i.e. after the PASSWORD_RECOVERY event has fired), or while an officer
+   * is normally signed in.
+   */
+  async updatePassword(newPassword: string): Promise<void> {
+    const { error } = await getSupabase().auth.updateUser({
+      password: newPassword,
+    });
+    if (error) throw new Error(friendlyAuthMessage(error.message));
+  },
+
+  /**
+   * Subscribes to the PASSWORD_RECOVERY auth event, which Supabase fires
+   * once when the user lands on this page via a password-reset link.
+   * Returns an unsubscribe function.
+   */
+  onPasswordRecovery(callback: () => void): () => void {
+    const {
+      data: { subscription },
+    } = getSupabase().auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") callback();
+    });
+    return () => subscription.unsubscribe();
   },
 };
 

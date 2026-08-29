@@ -1,34 +1,36 @@
-import { useState, useEffect, useRef } from 'react';
-import type { ViewState, Student, UserRole } from '@/types';
-import { studentsService } from '@/services/db';
-import { authService, type AuthSession } from '@/services/auth';
-import { toast, Toaster } from 'sonner';
-import { offlineSyncService } from '@/lib/offlineSync';
+import { useState, useEffect, useRef } from "react";
+import type { ViewState, Student, UserRole } from "@/types";
+import { studentsService } from "@/services/db";
+import { authService, type AuthSession } from "@/services/auth";
+import { toast, Toaster } from "sonner";
+import { offlineSyncService } from "@/lib/offlineSync";
 
 // Sections
-import Navigation from '@/sections/Navigation';
-import LandingSection from '@/sections/LandingSection';
-import StudentRecordSection from '@/sections/StudentRecordSection';
-import TransparencyBoardSection from '@/sections/TransparencyBoardSection';
-import FeedbackSection from '@/sections/FeedbackSection';
-import AdminLoginSection from '@/sections/AdminLoginSection';
-import AdminDashboardSection from '@/sections/AdminDashboardSection';
-import StudentManagementSection from '@/sections/StudentManagementSection';
-import EventManagementSection from '@/sections/EventManagementSection';
-import ContributionManagementSection from '@/sections/ContributionManagementSection';
-import FeedbackManagementSection from '@/sections/FeedbackManagementSection';
-import FooterSection from '@/sections/FooterSection';
+import Navigation from "@/sections/Navigation";
+import LandingSection from "@/sections/LandingSection";
+import StudentRecordSection from "@/sections/StudentRecordSection";
+import TransparencyBoardSection from "@/sections/TransparencyBoardSection";
+import FeedbackSection from "@/sections/FeedbackSection";
+import AdminLoginSection from "@/sections/AdminLoginSection";
+import ForgotPasswordSection from "@/sections/ForgotPasswordSection";
+import ResetPasswordSection from "@/sections/ResetPasswordSection";
+import AdminDashboardSection from "@/sections/AdminDashboardSection";
+import StudentManagementSection from "@/sections/StudentManagementSection";
+import EventManagementSection from "@/sections/EventManagementSection";
+import ContributionManagementSection from "@/sections/ContributionManagementSection";
+import FeedbackManagementSection from "@/sections/FeedbackManagementSection";
+import FooterSection from "@/sections/FooterSection";
 
 const ROLE_LABEL: Record<UserRole, string> = {
-  admin: 'Admin',
-  secretary: 'Secretary',
-  treasurer: 'Treasurer',
-  auditor: 'Auditor',
-  'board-member': 'Board Member',
+  admin: "Admin",
+  secretary: "Secretary",
+  treasurer: "Treasurer",
+  auditor: "Auditor",
+  "board-member": "Board Member",
 };
 
 function App() {
-  const [currentView, setCurrentView] = useState<ViewState>('landing');
+  const [currentView, setCurrentView] = useState<ViewState>("landing");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -53,12 +55,21 @@ function App() {
       .restoreSession()
       .then((session) => {
         setAuth(session);
-        if (session && currentView === 'admin-login') {
-          setCurrentView('admin-dashboard');
+        if (session && currentView === "admin-login") {
+          setCurrentView("admin-dashboard");
         }
       })
-      .catch((error) => console.error('Failed to restore session:', error))
+      .catch((error) => console.error("Failed to restore session:", error))
       .finally(() => setAuthReady(true));
+  }, []);
+
+  // Listen for Supabase's PASSWORD_RECOVERY event, fired once when the user
+  // lands here via a password-reset email link (see authService.requestPasswordReset).
+  useEffect(() => {
+    const unsubscribe = authService.onPasswordRecovery(() => {
+      setCurrentView("admin-reset-password");
+    });
+    return unsubscribe;
   }, []);
 
   const role: UserRole | null = auth?.role ?? null;
@@ -80,19 +91,21 @@ function App() {
       // Fall back to a fuzzy search across both fields so partial IDs and
       // abbreviations still resolve (e.g. "2021-000", "Maria", "Dela").
       if (!student && (name || studentId)) {
-        const matches = await studentsService.search(`${name} ${studentId}`.trim());
+        const matches = await studentsService.search(
+          `${name} ${studentId}`.trim(),
+        );
         student = matches[0] ?? null;
       }
 
       if (student) {
         setSelectedStudent(student);
-        setCurrentView('student-record');
+        setCurrentView("student-record");
       } else {
-        toast.error('Student not found. Please try again.');
+        toast.error("Student not found. Please try again.");
       }
     } catch (error) {
-      console.error('Error searching student:', error);
-      toast.error('Error searching for student. Please try again.');
+      console.error("Error searching student:", error);
+      toast.error("Error searching for student. Please try again.");
     } finally {
       setSearching(false);
     }
@@ -102,14 +115,29 @@ function App() {
   const handleLogin = async (email: string, password: string) => {
     const session = await authService.signIn(email, password);
     setAuth(session);
-    setCurrentView('admin-dashboard');
+    setCurrentView("admin-dashboard");
     toast.success(`Welcome, ${ROLE_LABEL[session.role]}!`);
+  };
+
+  // Send a password-reset email for the "forgot password" flow.
+  const handleRequestPasswordReset = async (email: string) => {
+    await authService.requestPasswordReset(email);
+  };
+
+  // Finish the "forgot password" flow: set the new password, then sign the
+  // recovery session out so the officer re-authenticates normally.
+  const handleSetNewPassword = async (newPassword: string) => {
+    await authService.updatePassword(newPassword);
+    await authService.signOut();
+    setAuth(null);
+    setCurrentView("admin-login");
+    toast.success("Password updated. Please sign in with your new password.");
   };
 
   // Handle navigation
   const navigateTo = (view: ViewState) => {
     setCurrentView(view);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Reset admin state on logout
@@ -117,31 +145,31 @@ function App() {
     try {
       await authService.signOut();
     } catch (error) {
-      console.error('Error signing out:', error);
+      console.error("Error signing out:", error);
     }
     setAuth(null);
     offlineSyncService.configure(null, null);
-    setCurrentView('landing');
-    toast.info('You have been logged out');
+    setCurrentView("landing");
+    toast.info("You have been logged out");
   };
 
   // Which admin views each role may open.
   const canAccess = (view: ViewState): boolean => {
     if (!role) return false;
     switch (view) {
-      case 'student-management':
-        return role === 'admin';
-      case 'contribution-management':
-        return role === 'admin' || role === 'treasurer' || role === 'auditor';
-      case 'payment-management':
-      case 'transaction-management':
-        return role === 'admin' || role === 'treasurer' || role === 'auditor';
-      case 'attendance-management':
-        return role === 'admin' || role === 'secretary';
-      case 'event-management':
+      case "student-management":
+        return role === "admin";
+      case "contribution-management":
+        return role === "admin" || role === "treasurer" || role === "auditor";
+      case "payment-management":
+      case "transaction-management":
+        return role === "admin" || role === "treasurer" || role === "auditor";
+      case "attendance-management":
+        return role === "admin" || role === "secretary";
+      case "event-management":
         return true; // any staff member may view the event schedule
-      case 'feedback-management':
-      case 'admin-dashboard':
+      case "feedback-management":
+      case "admin-dashboard":
         return true;
       default:
         return true;
@@ -161,111 +189,142 @@ function App() {
       );
     }
 
-    const renderAdminLogin = () => <AdminLoginSection onLogin={handleLogin} />;
+    const renderAdminLogin = () => (
+      <AdminLoginSection
+        onLogin={handleLogin}
+        onForgotPassword={() => navigateTo("admin-forgot-password")}
+      />
+    );
     const renderDashboard = () => (
       <AdminDashboardSection
         role={role!}
-        userEmail={auth?.user.email ?? ''}
-        userId={auth?.user.id ?? ''}
+        userEmail={auth?.user.email ?? ""}
+        userId={auth?.user.id ?? ""}
         onNavigate={navigateTo}
         onLogout={handleLogout}
       />
     );
 
     switch (currentView) {
-      case 'landing':
+      case "landing":
         return (
-          <LandingSection 
-            onSearch={handleSearch} 
-            onViewTransparency={() => navigateTo('transparency')}
+          <LandingSection
+            onSearch={handleSearch}
+            onViewTransparency={() => navigateTo("transparency")}
             searching={searching}
           />
         );
 
-      case 'student-record':
-        return selectedStudent && (
-          <StudentRecordSection 
-            student={selectedStudent}
-            onBack={() => navigateTo('landing')}
+      case "student-record":
+        return (
+          selectedStudent && (
+            <StudentRecordSection
+              student={selectedStudent}
+              onBack={() => navigateTo("landing")}
+            />
+          )
+        );
+
+      case "transparency":
+        return <TransparencyBoardSection onNavigate={navigateTo} />;
+
+      case "inquiry":
+      case "complaint":
+      case "suggestion":
+        return <FeedbackSection defaultTab={currentView} />;
+
+      case "admin-login":
+        return auth ? renderDashboard() : renderAdminLogin();
+
+      case "admin-forgot-password":
+        return (
+          <ForgotPasswordSection
+            onRequestReset={handleRequestPasswordReset}
+            onBack={() => navigateTo("admin-login")}
           />
         );
 
-      case 'transparency':
-        return <TransparencyBoardSection onNavigate={navigateTo} />;
+      case "admin-reset-password":
+        return <ResetPasswordSection onSetNewPassword={handleSetNewPassword} />;
 
-      case 'inquiry':
-      case 'complaint':
-      case 'suggestion':
-        return <FeedbackSection defaultTab={currentView} />;
-
-      case 'admin-login':
+      case "admin-dashboard":
         return auth ? renderDashboard() : renderAdminLogin();
 
-      case 'admin-dashboard':
-        return auth ? renderDashboard() : renderAdminLogin();
-
-      case 'student-management':
-        return canAccess('student-management') ? (
-          <StudentManagementSection onBack={() => navigateTo('admin-dashboard')} />
+      case "student-management":
+        return canAccess("student-management") ? (
+          <StudentManagementSection
+            onBack={() => navigateTo("admin-dashboard")}
+          />
         ) : (
           renderAdminLogin()
         );
 
-      case 'event-management':
-      case 'payment-management':
+      case "event-management":
+      case "payment-management":
         return canAccess(currentView) ? (
-          <EventManagementSection 
+          <EventManagementSection
             role={role!}
-            staffName={auth?.displayName ?? ''}
-            userId={auth?.user.id ?? ''}
-            onBack={() => navigateTo('admin-dashboard')} 
+            staffName={auth?.displayName ?? ""}
+            userId={auth?.user.id ?? ""}
+            onBack={() => navigateTo("admin-dashboard")}
             initialTab={currentView}
           />
         ) : (
           renderAdminLogin()
         );
 
-      case 'attendance-management':
-        return canAccess('attendance-management') ? (
-          <EventManagementSection 
+      case "attendance-management":
+        return canAccess("attendance-management") ? (
+          <EventManagementSection
             role={role!}
-            staffName={auth?.displayName ?? ''}
-            userId={auth?.user.id ?? ''}
-            onBack={() => navigateTo('admin-dashboard')}
+            staffName={auth?.displayName ?? ""}
+            userId={auth?.user.id ?? ""}
+            onBack={() => navigateTo("admin-dashboard")}
             initialTab="attendance-management"
           />
         ) : (
           renderAdminLogin()
         );
 
-      case 'contribution-management':
-        return canAccess('contribution-management') ? (
-          <ContributionManagementSection onBack={() => navigateTo('admin-dashboard')} />
-        ) : (
-          renderAdminLogin()
-        );
-
-      case 'transaction-management':
-        return canAccess(currentView) ? (
-          <TransparencyBoardSection
-            adminMode
-            role={role!}
-            staffName={auth?.displayName ?? ''}
-            onBack={() => navigateTo('admin-dashboard')}
+      case "contribution-management":
+        return canAccess("contribution-management") ? (
+          <ContributionManagementSection
+            onBack={() => navigateTo("admin-dashboard")}
           />
         ) : (
           renderAdminLogin()
         );
 
-      case 'feedback-management':
+      case "transaction-management":
         return canAccess(currentView) ? (
-          <FeedbackManagementSection role={role!} onBack={() => navigateTo('admin-dashboard')} />
+          <TransparencyBoardSection
+            adminMode
+            role={role!}
+            staffName={auth?.displayName ?? ""}
+            onBack={() => navigateTo("admin-dashboard")}
+          />
+        ) : (
+          renderAdminLogin()
+        );
+
+      case "feedback-management":
+        return canAccess(currentView) ? (
+          <FeedbackManagementSection
+            role={role!}
+            onBack={() => navigateTo("admin-dashboard")}
+          />
         ) : (
           renderAdminLogin()
         );
 
       default:
-        return <LandingSection onSearch={handleSearch} onViewTransparency={() => navigateTo('transparency')} searching={searching} />;
+        return (
+          <LandingSection
+            onSearch={handleSearch}
+            onViewTransparency={() => navigateTo("transparency")}
+            searching={searching}
+          />
+        );
     }
   };
 
@@ -275,21 +334,17 @@ function App() {
       <Toaster position="top-center" richColors />
 
       {/* Navigation */}
-      <Navigation 
+      <Navigation
         currentView={currentView}
         onNavigate={navigateTo}
         role={auth ? role : null}
       />
 
       {/* Main Content */}
-      <main className="relative">
-        {renderView()}
-      </main>
+      <main className="relative">{renderView()}</main>
 
       {/* Footer - only show on landing page */}
-      {currentView === 'landing' && (
-        <FooterSection onNavigate={navigateTo} />
-      )}
+      {currentView === "landing" && <FooterSection onNavigate={navigateTo} />}
     </div>
   );
 }

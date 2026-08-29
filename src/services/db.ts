@@ -20,10 +20,10 @@ const createRecordId = (): string => crypto.randomUUID();
 
 const mapEvent = (item: Record<string, unknown>): Event => {
   const memberIds = Array.isArray(item.assigned_member_ids)
-    ? item.assigned_member_ids as string[]
+    ? (item.assigned_member_ids as string[])
     : [];
   const memberNames = Array.isArray(item.assigned_member_names)
-    ? item.assigned_member_names as string[]
+    ? (item.assigned_member_names as string[])
     : [];
 
   return {
@@ -177,7 +177,10 @@ export const studentsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase().from("students").delete().eq("id", id);
+    const { error } = await getSupabase()
+      .from("students")
+      .delete()
+      .eq("id", id);
 
     if (error) throw error;
   },
@@ -238,9 +241,7 @@ export const eventsService = {
       .order("date", { ascending: false });
 
     if (error) throw error;
-    return (
-      data?.map(mapEvent) || []
-    );
+    return data?.map(mapEvent) || [];
   },
 
   async getById(id: string): Promise<Event | null> {
@@ -268,8 +269,10 @@ export const eventsService = {
         morning_time_out: event.morningTimeOut ?? "",
         afternoon_time_in: event.afternoonTimeIn ?? "",
         afternoon_time_out: event.afternoonTimeOut ?? "",
-        assigned_member_ids: event.assignedMembers?.map((member) => member.memberId) ?? [],
-        assigned_member_names: event.assignedMembers?.map((member) => member.memberName) ?? [],
+        assigned_member_ids:
+          event.assignedMembers?.map((member) => member.memberId) ?? [],
+        assigned_member_names:
+          event.assignedMembers?.map((member) => member.memberName) ?? [],
       })
       .select()
       .single();
@@ -295,8 +298,12 @@ export const eventsService = {
     if (event.afternoonTimeOut !== undefined)
       updateData.afternoon_time_out = event.afternoonTimeOut;
     if (event.assignedMembers !== undefined) {
-      updateData.assigned_member_ids = event.assignedMembers.map((member) => member.memberId);
-      updateData.assigned_member_names = event.assignedMembers.map((member) => member.memberName);
+      updateData.assigned_member_ids = event.assignedMembers.map(
+        (member) => member.memberId,
+      );
+      updateData.assigned_member_names = event.assignedMembers.map(
+        (member) => member.memberName,
+      );
     }
 
     const { data, error } = await getSupabase()
@@ -777,8 +784,7 @@ export const paymentsService = {
     if (record.date !== undefined) updateData.date = record.date;
     if (record.receiptUrl !== undefined)
       updateData.receipt_url = record.receiptUrl;
-    if (record.orNumber !== undefined)
-      updateData.or_number = record.orNumber;
+    if (record.orNumber !== undefined) updateData.or_number = record.orNumber;
     if (record.recordedBy !== undefined)
       updateData.recorded_by = record.recordedBy;
 
@@ -931,7 +937,10 @@ export const transactionsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase().from("transactions").delete().eq("id", id);
+    const { error } = await getSupabase()
+      .from("transactions")
+      .delete()
+      .eq("id", id);
 
     if (error) throw error;
   },
@@ -1032,36 +1041,25 @@ export const feedbackService = {
     );
   },
 
-  async create(
-    item: Omit<FeedbackItem, "id" | "submittedAt">,
-  ): Promise<FeedbackItem> {
-    const { data, error } = await getSupabase()
+  async create(item: Omit<FeedbackItem, "id" | "submittedAt">): Promise<void> {
+    const { error } = await getSupabase()
       .from("feedback")
       .insert({
         id: createRecordId(),
         type: item.type,
-        title: item.title,
+        title: item.title || null,
         message: item.message,
-        student_name: item.studentName,
-        student_id: item.studentId,
+        student_name: item.studentName || null,
+        student_id: item.studentId || null,
         is_anonymous: item.isAnonymous,
-        status: item.status,
-      })
-      .select()
-      .single();
+        submitted_at: new Date().toISOString(),
+        status: item.status ?? "pending",
+      });
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      type: data.type,
-      title: data.title || undefined,
-      message: data.message,
-      studentName: data.student_name || undefined,
-      studentId: data.student_id || undefined,
-      isAnonymous: data.is_anonymous,
-      submittedAt: data.submitted_at,
-      status: data.status,
-    };
+    if (error) {
+      console.error("Feedback insert error:", error);
+      throw error;
+    }
   },
 
   async update(id: string, item: Partial<FeedbackItem>): Promise<FeedbackItem> {
@@ -1298,7 +1296,11 @@ export const boardMembersService = {
 // ============================================
 // FINANCIAL REPORTING SERVICE (derived, no DB writes)
 // ============================================
-const addToTotal = (totals: Map<string, number>, key: string, amount: number): void => {
+const addToTotal = (
+  totals: Map<string, number>,
+  key: string,
+  amount: number,
+): void => {
   totals.set(key, (totals.get(key) ?? 0) + Math.max(0, amount));
 };
 
@@ -1310,17 +1312,23 @@ const addToTotal = (totals: Map<string, number>, key: string, amount: number): v
 export const subscribeToTables = (
   tables: readonly string[],
   onChange: () => void,
-  channelPrefix = 'db-live',
+  channelPrefix = "db-live",
 ): (() => void) => {
   const sb = getSupabase();
   const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
 
   for (const table of tables) {
-    channel.on('postgres_changes', { event: '*', schema: 'public', table }, onChange);
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      onChange,
+    );
   }
 
   channel.subscribe();
-  return () => { void sb.removeChannel(channel); };
+  return () => {
+    void sb.removeChannel(channel);
+  };
 };
 
 export const financialReportingService = {
@@ -1335,15 +1343,22 @@ export const financialReportingService = {
     const payTotals = new Map<string, number>();
     const collectionByEvent = new Map<string, number>();
     for (const c of contributions) {
-      addToTotal(contribTotals, c.studentId + '\u0000' + c.eventId, c.amountPaid);
+      addToTotal(
+        contribTotals,
+        c.studentId + "\u0000" + c.eventId,
+        c.amountPaid,
+      );
     }
     for (const p of payments) {
-      addToTotal(payTotals, p.studentId + '\u0000' + p.eventId, p.amount);
+      addToTotal(payTotals, p.studentId + "\u0000" + p.eventId, p.amount);
     }
     const allKeys = new Set([...contribTotals.keys(), ...payTotals.keys()]);
     for (const key of allKeys) {
-      const collected = Math.max(contribTotals.get(key) ?? 0, payTotals.get(key) ?? 0);
-      const eventId = key.split('\u0000')[1];
+      const collected = Math.max(
+        contribTotals.get(key) ?? 0,
+        payTotals.get(key) ?? 0,
+      );
+      const eventId = key.split("\u0000")[1];
       addToTotal(collectionByEvent, eventId, collected);
     }
     const incomeByEvent = new Map<string, number>();
@@ -1352,7 +1367,7 @@ export const financialReportingService = {
     let totalFundsSpent = 0;
     for (const tx of transactions) {
       const amount = Math.max(0, tx.amount);
-      if (tx.type === 'income') {
+      if (tx.type === "income") {
         ledgerIncome += amount;
         if (tx.eventId) addToTotal(incomeByEvent, tx.eventId, amount);
       } else {
@@ -1360,10 +1375,19 @@ export const financialReportingService = {
         if (tx.eventId) addToTotal(spentByEvent, tx.eventId, amount);
       }
     }
-    const studentCollections = [...collectionByEvent.values()].reduce((s, a) => s + a, 0);
+    const studentCollections = [...collectionByEvent.values()].reduce(
+      (s, a) => s + a,
+      0,
+    );
     const totalFundsCollected = studentCollections + ledgerIncome;
-    const totalExpectedContributions = contributions.reduce((s, c) => s + Math.max(0, c.requiredAmount), 0);
-    const totalBudget = events.reduce((s, e) => s + Math.max(0, e.allocationAmount), 0);
+    const totalExpectedContributions = contributions.reduce(
+      (s, c) => s + Math.max(0, c.requiredAmount),
+      0,
+    );
+    const totalBudget = events.reduce(
+      (s, e) => s + Math.max(0, e.allocationAmount),
+      0,
+    );
     return {
       summary: {
         totalBudget,
@@ -1372,26 +1396,30 @@ export const financialReportingService = {
         remainingBudget: totalFundsCollected - totalFundsSpent,
         totalExpectedContributions,
       },
-      eventAllocations: events.map((event) => {
-        const totalCollected = (collectionByEvent.get(event.id) ?? 0) + (incomeByEvent.get(event.id) ?? 0);
-        const totalSpent = spentByEvent.get(event.id) ?? 0;
-        return {
-          eventId: event.id,
-          eventName: event.name,
-          allocationAmount: Math.max(0, event.allocationAmount),
-          totalCollected,
-          totalSpent,
-          remainingBalance: totalCollected - totalSpent,
-        };
-      }).sort((a, b) => a.eventName.localeCompare(b.eventName)),
+      eventAllocations: events
+        .map((event) => {
+          const totalCollected =
+            (collectionByEvent.get(event.id) ?? 0) +
+            (incomeByEvent.get(event.id) ?? 0);
+          const totalSpent = spentByEvent.get(event.id) ?? 0;
+          return {
+            eventId: event.id,
+            eventName: event.name,
+            allocationAmount: Math.max(0, event.allocationAmount),
+            totalCollected,
+            totalSpent,
+            remainingBalance: totalCollected - totalSpent,
+          };
+        })
+        .sort((a, b) => a.eventName.localeCompare(b.eventName)),
     };
   },
 
   subscribe(onChange: () => void): () => void {
     return subscribeToTables(
-      ['events', 'contributions', 'payments', 'transactions'],
+      ["events", "contributions", "payments", "transactions"],
       onChange,
-      'financial-report',
+      "financial-report",
     );
   },
 };

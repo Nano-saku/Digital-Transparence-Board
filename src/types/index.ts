@@ -51,7 +51,7 @@ export interface AttendanceRecord {
    * Each event has separate attendance tracking for Morning Time In/Out
    * and Afternoon Time In/Out.
    */
-  session: 'morning' | 'afternoon';
+  session: "morning" | "afternoon";
   /**
    * Time-in / time-out captured automatically from the QR scan time (24h
    * "HH:MM", e.g. "06:00"). Time In is set when the student's QR is scanned
@@ -162,6 +162,8 @@ export type ViewState =
   | "complaint"
   | "suggestion"
   | "admin-login"
+  | "admin-forgot-password"
+  | "admin-reset-password"
   | "admin-dashboard"
   | "student-management"
   | "event-management"
