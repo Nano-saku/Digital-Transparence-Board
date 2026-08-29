@@ -195,7 +195,7 @@ export default function EventManagementSection({
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
+  const [setContributions] = useState<ContributionRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
@@ -328,7 +328,6 @@ export default function EventManagementSection({
       setEvents(eventsData);
       setStudents(studentsData);
       setPayments(paymentsData);
-      setContributions(contributionsData);
       setAttendanceRecords(attendanceData);
 
       // Board members are read from the production catalog; the list powers the
