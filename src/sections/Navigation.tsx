@@ -1,6 +1,6 @@
-﻿import { useState, useEffect } from 'react';
-import { Menu, X, Shield } from 'lucide-react';
-import type { ViewState, UserRole } from '@/types';
+﻿import { useState, useEffect } from "react";
+import { Menu, X, Shield } from "lucide-react";
+import type { ViewState, UserRole } from "@/types";
 interface NavigationProps {
   currentView: ViewState;
   onNavigate: (view: ViewState) => void;
@@ -10,37 +10,50 @@ interface NavigationProps {
 type NavItem = { label: string; view: ViewState };
 
 const PUBLIC_NAV_ITEMS: NavItem[] = [
-  { label: 'Records', view: 'landing' },
-  { label: 'Transparency', view: 'transparency' },
-  { label: 'Inquiry', view: 'inquiry' },
+  { label: "Records", view: "landing" },
+  { label: "Transparency", view: "transparency" },
+  { label: "Inquiry", view: "inquiry" },
 ];
 
 // Nav items are filtered by the officer's role.
 function buildAdminNavItems(role: UserRole | null): NavItem[] {
   return [
-    { label: 'Dashboard', view: 'admin-dashboard' },
-    ...(role === 'admin' ? [{ label: 'Students', view: 'student-management' as ViewState }] : []),
-    ...(role ? [{ label: 'Events', view: 'event-management' as ViewState }] : []),
-    ...(role === 'secretary'
-      ? [{ label: 'Attendance', view: 'attendance-management' as ViewState }]
+    { label: "Dashboard", view: "admin-dashboard" },
+    ...(role === "admin" || role === "secretary"
+      ? [{ label: "Students", view: "student-management" as ViewState }]
       : []),
-    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
-      ? [{ label: 'Payments', view: 'payment-management' as ViewState }]
+    ...(role
+      ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),
-    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
-      ? [{ label: 'Contributions', view: 'contribution-management' as ViewState }]
+    ...(role === "secretary"
+      ? [{ label: "Attendance", view: "attendance-management" as ViewState }]
       : []),
-    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
-      ? [{ label: 'Finances', view: 'transaction-management' as ViewState }]
+    ...(role === "admin" || role === "treasurer" || role === "auditor"
+      ? [{ label: "Payments", view: "payment-management" as ViewState }]
       : []),
-    ...(role === 'board-member'
-      ? [{ label: 'Transparency', view: 'transparency' as ViewState }]
+    ...(role === "admin" || role === "treasurer" || role === "auditor"
+      ? [
+          {
+            label: "Contributions",
+            view: "contribution-management" as ViewState,
+          },
+        ]
       : []),
-    { label: 'Feedback', view: 'feedback-management' },
+    ...(role === "admin" || role === "treasurer" || role === "auditor"
+      ? [{ label: "Finances", view: "transaction-management" as ViewState }]
+      : []),
+    ...(role === "board-member"
+      ? [{ label: "Transparency", view: "transparency" as ViewState }]
+      : []),
+    { label: "Feedback", view: "feedback-management" },
   ];
 }
 
-export default function Navigation({ currentView, onNavigate, role }: NavigationProps) {
+export default function Navigation({
+  currentView,
+  onNavigate,
+  role,
+}: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -49,20 +62,20 @@ export default function Navigation({ currentView, onNavigate, role }: Navigation
       setIsScrolled(window.scrollY > 50);
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   const isLoggedIn = !!role;
   const adminViews: ViewState[] = [
-    'admin-dashboard',
-    'student-management',
-    'event-management',
-    'payment-management',
-    'contribution-management',
-    'attendance-management',
-    'transaction-management',
-    'feedback-management',
+    "admin-dashboard",
+    "student-management",
+    "event-management",
+    "payment-management",
+    "contribution-management",
+    "attendance-management",
+    "transaction-management",
+    "feedback-management",
   ];
   const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
 
@@ -77,21 +90,20 @@ export default function Navigation({ currentView, onNavigate, role }: Navigation
     setIsMobileMenuOpen(false);
   };
 
-
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
         isScrolled
-          ? 'bg-deep-navy/95 backdrop-blur-lg shadow-lg'
-          : 'bg-deep-navy'
+          ? "bg-deep-navy/95 backdrop-blur-lg shadow-lg"
+          : "bg-deep-navy"
       }`}
-      style={{ borderBottom: '1px solid rgba(201,163,78,0.25)' }}
+      style={{ borderBottom: "1px solid rgba(201,163,78,0.25)" }}
     >
       <div className="w-full px-6 lg:px-12">
         <div className="flex items-center justify-between h-16 lg:h-20">
           {/* Logo */}
           <button
-onClick={() => go(isLoggedIn ? 'admin-dashboard' : 'landing')}
+            onClick={() => go(isLoggedIn ? "admin-dashboard" : "landing")}
             className="flex items-center gap-3 group p-0"
           >
             <img
@@ -113,10 +125,10 @@ onClick={() => go(isLoggedIn ? 'admin-dashboard' : 'landing')}
           <div className="hidden md:flex items-center gap-8">
             {navItems.map((item) => (
               <button
-key={item.label}
+                key={item.label}
                 onClick={() => go(item.view)}
                 className={`nav-link text-sm font-medium ${
-                  currentView === item.view ? 'active' : ''
+                  currentView === item.view ? "active" : ""
                 }`}
               >
                 {item.label}
@@ -126,7 +138,7 @@ key={item.label}
             {/* Admin Access Link */}
             {!isLoggedIn && (
               <button
-onClick={() => go('admin-login')}
+                onClick={() => go("admin-login")}
                 className="flex items-center gap-1.5 text-sm text-silver-gray hover:text-lsc-gold transition-colors"
               >
                 <Shield className="w-4 h-4" />
@@ -137,7 +149,7 @@ onClick={() => go('admin-login')}
 
           {/* Mobile Menu Button */}
           <button
-onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className="md:hidden p-2 rounded-lg text-white hover:text-lsc-gold transition-colors"
           >
             {isMobileMenuOpen ? (
@@ -151,16 +163,22 @@ onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
 
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden mx-4 mb-4 rounded-xl overflow-hidden" style={{ background: 'rgba(14,26,77,0.97)', border: '1px solid rgba(201,163,78,0.20)' }}>
+        <div
+          className="md:hidden mx-4 mb-4 rounded-xl overflow-hidden"
+          style={{
+            background: "rgba(14,26,77,0.97)",
+            border: "1px solid rgba(201,163,78,0.20)",
+          }}
+        >
           <div className="flex flex-col gap-1 p-3">
             {navItems.map((item) => (
               <button
-key={item.label}
+                key={item.label}
                 onClick={() => go(item.view)}
                 className={`w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors ${
                   currentView === item.view
-                    ? 'bg-royal-blue/40 text-lsc-gold'
-                    : 'text-white/80 hover:text-white hover:bg-white/5'
+                    ? "bg-royal-blue/40 text-lsc-gold"
+                    : "text-white/80 hover:text-white hover:bg-white/5"
                 }`}
               >
                 {item.label}
@@ -169,7 +187,7 @@ key={item.label}
 
             {!isLoggedIn && (
               <button
-onClick={() => go('admin-login')}
+                onClick={() => go("admin-login")}
                 className="w-full text-left px-4 py-3 rounded-lg font-medium text-sm text-silver-gray hover:text-lsc-gold transition-colors flex items-center gap-2"
               >
                 <Shield className="w-4 h-4" />
