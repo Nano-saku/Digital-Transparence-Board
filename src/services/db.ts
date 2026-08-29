@@ -1333,12 +1333,14 @@ export const subscribeToTables = (
 
 export const financialReportingService = {
   async getReport(): Promise<FinancialReport> {
-    const [events, contributions, payments, transactions] = await Promise.all([
-      eventsService.getAll(),
-      contributionsService.getAll(),
-      paymentsService.getAll(),
-      transactionsService.getAll(),
-    ]);
+    const [events, students, contributions, payments, transactions] =
+      await Promise.all([
+        eventsService.getAll(),
+        studentsService.getAll(),
+        contributionsService.getAll(),
+        paymentsService.getAll(),
+        transactionsService.getAll(),
+      ]);
     const contribTotals = new Map<string, number>();
     const payTotals = new Map<string, number>();
     const collectionByEvent = new Map<string, number>();
@@ -1380,10 +1382,10 @@ export const financialReportingService = {
       0,
     );
     const totalFundsCollected = studentCollections + ledgerIncome;
-    const totalExpectedContributions = contributions.reduce(
-      (s, c) => s + Math.max(0, c.requiredAmount),
-      0,
-    );
+    const totalExpectedContributions = events.reduce((total, event) => {
+      const allocation = Number(event.allocationAmount) || 0;
+      return total + allocation * students.length;
+    }, 0);
     const totalBudget = events.reduce(
       (s, e) => s + Math.max(0, e.allocationAmount),
       0,
@@ -1417,7 +1419,7 @@ export const financialReportingService = {
 
   subscribe(onChange: () => void): () => void {
     return subscribeToTables(
-      ["events", "contributions", "payments", "transactions"],
+      ["events", "students", "contributions", "payments", "transactions"],
       onChange,
       "financial-report",
     );
