@@ -1,4 +1,4 @@
-import { supabase } from "../lib/supabase";
+import { getSupabase } from "../lib/supabase";
 import type {
   Student,
   Event,
@@ -8,15 +8,48 @@ import type {
   Transaction,
   FeedbackItem,
   FinancialSummary,
+  FinancialReport,
   EventAllocation,
+  BoardMember,
 } from "../types";
+
+// Operational tables use TEXT primary keys so they remain compatible with the
+// former Firestore document-id format. PostgreSQL does not generate a value for
+// a TEXT primary key, therefore every client-created row must receive one.
+const createRecordId = (): string => crypto.randomUUID();
+
+const mapEvent = (item: Record<string, unknown>): Event => {
+  const memberIds = Array.isArray(item.assigned_member_ids)
+    ? item.assigned_member_ids as string[]
+    : [];
+  const memberNames = Array.isArray(item.assigned_member_names)
+    ? item.assigned_member_names as string[]
+    : [];
+
+  return {
+    id: item.id as string,
+    name: item.name as string,
+    allocationAmount: item.allocation_amount as number,
+    date: (item.date as string | null) ?? undefined,
+    timeIn: (item.time_in as string | null) || undefined,
+    timeOut: (item.time_out as string | null) || undefined,
+    morningTimeIn: (item.morning_time_in as string | null) || undefined,
+    morningTimeOut: (item.morning_time_out as string | null) || undefined,
+    afternoonTimeIn: (item.afternoon_time_in as string | null) || undefined,
+    afternoonTimeOut: (item.afternoon_time_out as string | null) || undefined,
+    assignedMembers: memberIds.map((memberId, index) => ({
+      memberId,
+      memberName: memberNames[index] ?? "Unknown member",
+    })),
+  };
+};
 
 // ============================================
 // STUDENTS SERVICE
 // ============================================
 export const studentsService = {
   async getAll(): Promise<Student[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .select("*")
       .order("name");
@@ -35,7 +68,7 @@ export const studentsService = {
   },
 
   async getById(id: string): Promise<Student | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .select("*")
       .eq("id", id)
@@ -53,7 +86,7 @@ export const studentsService = {
   },
 
   async getByStudentId(studentId: string): Promise<Student | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .select("*")
       .eq("student_id", studentId)
@@ -71,7 +104,7 @@ export const studentsService = {
   },
 
   async getByName(name: string): Promise<Student | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .select("*")
       .ilike("name", `%${name}%`)
@@ -91,9 +124,10 @@ export const studentsService = {
   },
 
   async create(student: Omit<Student, "id">): Promise<Student> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .insert({
+        id: createRecordId(),
         student_id: student.studentId,
         name: student.name,
         program: student.program,
@@ -124,7 +158,7 @@ export const studentsService = {
       updateData.year_level = student.yearLevel;
     if (student.section !== undefined) updateData.section = student.section;
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .update(updateData)
       .eq("id", id)
@@ -143,13 +177,37 @@ export const studentsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase.from("students").delete().eq("id", id);
+    const { error } = await getSupabase().from("students").delete().eq("id", id);
 
     if (error) throw error;
   },
 
+  async createMany(students: Omit<Student, "id">[]): Promise<Student[]> {
+    const rows = students.map((s) => ({
+      id: createRecordId(),
+      student_id: s.studentId,
+      name: s.name,
+      program: s.program,
+      year_level: s.yearLevel,
+      section: s.section,
+    }));
+    const { data, error } = await getSupabase()
+      .from("students")
+      .insert(rows)
+      .select();
+    if (error) throw error;
+    return (data ?? []).map((item) => ({
+      id: item.id,
+      studentId: item.student_id,
+      name: item.name,
+      program: item.program,
+      yearLevel: item.year_level,
+      section: item.section,
+    }));
+  },
+
   async search(query: string): Promise<Student[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("students")
       .select("*")
       .or(`name.ilike.%${query}%,student_id.ilike.%${query}%`)
@@ -174,56 +232,50 @@ export const studentsService = {
 // ============================================
 export const eventsService = {
   async getAll(): Promise<Event[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("events")
       .select("*")
       .order("date", { ascending: false });
 
     if (error) throw error;
     return (
-      data?.map((item) => ({
-        id: item.id,
-        name: item.name,
-        allocationAmount: item.allocation_amount,
-        date: item.date,
-      })) || []
+      data?.map(mapEvent) || []
     );
   },
 
   async getById(id: string): Promise<Event | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("events")
       .select("*")
       .eq("id", id)
       .single();
 
     if (error) return null;
-    return {
-      id: data.id,
-      name: data.name,
-      allocationAmount: data.allocation_amount,
-      date: data.date,
-    };
+    return mapEvent(data);
   },
 
   async create(event: Omit<Event, "id">): Promise<Event> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("events")
       .insert({
+        id: createRecordId(),
         name: event.name,
         allocation_amount: event.allocationAmount,
         date: event.date,
+        time_in: event.timeIn ?? "",
+        time_out: event.timeOut ?? "",
+        morning_time_in: event.morningTimeIn ?? "",
+        morning_time_out: event.morningTimeOut ?? "",
+        afternoon_time_in: event.afternoonTimeIn ?? "",
+        afternoon_time_out: event.afternoonTimeOut ?? "",
+        assigned_member_ids: event.assignedMembers?.map((member) => member.memberId) ?? [],
+        assigned_member_names: event.assignedMembers?.map((member) => member.memberName) ?? [],
       })
       .select()
       .single();
 
     if (error) throw error;
-    return {
-      id: data.id,
-      name: data.name,
-      allocationAmount: data.allocation_amount,
-      date: data.date,
-    };
+    return mapEvent(data);
   },
 
   async update(id: string, event: Partial<Event>): Promise<Event> {
@@ -232,8 +284,22 @@ export const eventsService = {
     if (event.allocationAmount !== undefined)
       updateData.allocation_amount = event.allocationAmount;
     if (event.date !== undefined) updateData.date = event.date;
+    if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
+    if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
+    if (event.morningTimeIn !== undefined)
+      updateData.morning_time_in = event.morningTimeIn;
+    if (event.morningTimeOut !== undefined)
+      updateData.morning_time_out = event.morningTimeOut;
+    if (event.afternoonTimeIn !== undefined)
+      updateData.afternoon_time_in = event.afternoonTimeIn;
+    if (event.afternoonTimeOut !== undefined)
+      updateData.afternoon_time_out = event.afternoonTimeOut;
+    if (event.assignedMembers !== undefined) {
+      updateData.assigned_member_ids = event.assignedMembers.map((member) => member.memberId);
+      updateData.assigned_member_names = event.assignedMembers.map((member) => member.memberName);
+    }
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("events")
       .update(updateData)
       .eq("id", id)
@@ -241,16 +307,11 @@ export const eventsService = {
       .single();
 
     if (error) throw error;
-    return {
-      id: data.id,
-      name: data.name,
-      allocationAmount: data.allocation_amount,
-      date: data.date,
-    };
+    return mapEvent(data);
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase.from("events").delete().eq("id", id);
+    const { error } = await getSupabase().from("events").delete().eq("id", id);
 
     if (error) throw error;
   },
@@ -261,8 +322,8 @@ export const eventsService = {
 // ============================================
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .select("*")
       .order("date", { ascending: false });
 
@@ -275,13 +336,16 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
+        session: (item.session ?? "morning") as "morning" | "afternoon",
+        timeIn: item.time_in ?? undefined,
+        timeOut: item.time_out ?? undefined,
       })) || []
     );
   },
 
   async getByStudentId(studentId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .select("*")
       .eq("student_id", studentId)
       .order("date", { ascending: false });
@@ -295,13 +359,16 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
+        session: (item.session ?? "morning") as "morning" | "afternoon",
+        timeIn: item.time_in ?? undefined,
+        timeOut: item.time_out ?? undefined,
       })) || []
     );
   },
 
   async getByEventId(eventId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .select("*")
       .eq("event_id", eventId)
       .order("date", { ascending: false });
@@ -315,6 +382,36 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
+        session: (item.session ?? "morning") as "morning" | "afternoon",
+        timeIn: item.time_in ?? undefined,
+        timeOut: item.time_out ?? undefined,
+      })) || []
+    );
+  },
+
+  async getByEventIdAndSession(
+    eventId: string,
+    session: "morning" | "afternoon",
+  ): Promise<AttendanceRecord[]> {
+    const { data, error } = await getSupabase()
+      .from("attendance")
+      .select("*")
+      .eq("event_id", eventId)
+      .eq("session", session)
+      .order("date", { ascending: false });
+
+    if (error) throw error;
+    return (
+      data?.map((item) => ({
+        id: item.id,
+        studentId: item.student_id,
+        eventId: item.event_id,
+        eventName: item.event_name,
+        date: item.date,
+        status: item.status,
+        session: (item.session ?? session) as "morning" | "afternoon",
+        timeIn: item.time_in ?? undefined,
+        timeOut: item.time_out ?? undefined,
       })) || []
     );
   },
@@ -322,14 +419,18 @@ export const attendanceService = {
   async create(
     record: Omit<AttendanceRecord, "id">,
   ): Promise<AttendanceRecord> {
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .insert({
+        id: createRecordId(),
         student_id: record.studentId,
         event_id: record.eventId,
         event_name: record.eventName,
         date: record.date,
         status: record.status,
+        session: record.session ?? "morning",
+        time_in: record.timeIn ?? "",
+        time_out: record.timeOut ?? "",
       })
       .select()
       .single();
@@ -342,6 +443,9 @@ export const attendanceService = {
       eventName: data.event_name,
       date: data.date,
       status: data.status,
+      session: (data.session ?? "morning") as "morning" | "afternoon",
+      timeIn: data.time_in ?? undefined,
+      timeOut: data.time_out ?? undefined,
     };
   },
 
@@ -357,9 +461,12 @@ export const attendanceService = {
       updateData.event_name = record.eventName;
     if (record.date !== undefined) updateData.date = record.date;
     if (record.status !== undefined) updateData.status = record.status;
+    if (record.session !== undefined) updateData.session = record.session;
+    if (record.timeIn !== undefined) updateData.time_in = record.timeIn;
+    if (record.timeOut !== undefined) updateData.time_out = record.timeOut;
 
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .update(updateData)
       .eq("id", id)
       .select()
@@ -373,12 +480,15 @@ export const attendanceService = {
       eventName: data.event_name,
       date: data.date,
       status: data.status,
+      session: (data.session ?? "morning") as "morning" | "afternoon",
+      timeIn: data.time_in ?? undefined,
+      timeOut: data.time_out ?? undefined,
     };
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from("attendance_records")
+    const { error } = await getSupabase()
+      .from("attendance")
       .delete()
       .eq("id", id);
 
@@ -388,8 +498,8 @@ export const attendanceService = {
   async getStatsByEventId(
     eventId: string,
   ): Promise<{ present: number; absent: number; total: number }> {
-    const { data, error } = await supabase
-      .from("attendance_records")
+    const { data, error } = await getSupabase()
+      .from("attendance")
       .select("status")
       .eq("event_id", eventId);
 
@@ -407,10 +517,10 @@ export const attendanceService = {
 // ============================================
 export const contributionsService = {
   async getAll(): Promise<ContributionRecord[]> {
-    const { data, error } = await supabase
-      .from("contribution_records")
+    const { data, error } = await getSupabase()
+      .from("contributions")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("id", { ascending: false });
 
     if (error) throw error;
     return (
@@ -427,11 +537,11 @@ export const contributionsService = {
   },
 
   async getByStudentId(studentId: string): Promise<ContributionRecord[]> {
-    const { data, error } = await supabase
-      .from("contribution_records")
+    const { data, error } = await getSupabase()
+      .from("contributions")
       .select("*")
       .eq("student_id", studentId)
-      .order("created_at", { ascending: false });
+      .order("id", { ascending: false });
 
     if (error) throw error;
     return (
@@ -448,11 +558,11 @@ export const contributionsService = {
   },
 
   async getByEventId(eventId: string): Promise<ContributionRecord[]> {
-    const { data, error } = await supabase
-      .from("contribution_records")
+    const { data, error } = await getSupabase()
+      .from("contributions")
       .select("*")
       .eq("event_id", eventId)
-      .order("created_at", { ascending: false });
+      .order("id", { ascending: false });
 
     if (error) throw error;
     return (
@@ -471,9 +581,10 @@ export const contributionsService = {
   async create(
     record: Omit<ContributionRecord, "id">,
   ): Promise<ContributionRecord> {
-    const { data, error } = await supabase
-      .from("contribution_records")
+    const { data, error } = await getSupabase()
+      .from("contributions")
       .insert({
+        id: createRecordId(),
         student_id: record.studentId,
         event_id: record.eventId,
         event_name: record.eventName,
@@ -513,8 +624,8 @@ export const contributionsService = {
     if (record.remainingBalance !== undefined)
       updateData.remaining_balance = record.remainingBalance;
 
-    const { data, error } = await supabase
-      .from("contribution_records")
+    const { data, error } = await getSupabase()
+      .from("contributions")
       .update(updateData)
       .eq("id", id)
       .select()
@@ -533,8 +644,8 @@ export const contributionsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from("contribution_records")
+    const { error } = await getSupabase()
+      .from("contributions")
       .delete()
       .eq("id", id);
 
@@ -547,8 +658,8 @@ export const contributionsService = {
 // ============================================
 export const paymentsService = {
   async getAll(): Promise<PaymentRecord[]> {
-    const { data, error } = await supabase
-      .from("payment_records")
+    const { data, error } = await getSupabase()
+      .from("payments")
       .select("*")
       .order("date", { ascending: false });
 
@@ -563,14 +674,15 @@ export const paymentsService = {
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
+        orNumber: item.or_number || undefined,
         recordedBy: item.recorded_by,
       })) || []
     );
   },
 
   async getByStudentId(studentId: string): Promise<PaymentRecord[]> {
-    const { data, error } = await supabase
-      .from("payment_records")
+    const { data, error } = await getSupabase()
+      .from("payments")
       .select("*")
       .eq("student_id", studentId)
       .order("date", { ascending: false });
@@ -586,14 +698,15 @@ export const paymentsService = {
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
+        orNumber: item.or_number || undefined,
         recordedBy: item.recorded_by,
       })) || []
     );
   },
 
   async getByEventId(eventId: string): Promise<PaymentRecord[]> {
-    const { data, error } = await supabase
-      .from("payment_records")
+    const { data, error } = await getSupabase()
+      .from("payments")
       .select("*")
       .eq("event_id", eventId)
       .order("date", { ascending: false });
@@ -609,15 +722,17 @@ export const paymentsService = {
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
+        orNumber: item.or_number || undefined,
         recordedBy: item.recorded_by,
       })) || []
     );
   },
 
   async create(record: Omit<PaymentRecord, "id">): Promise<PaymentRecord> {
-    const { data, error } = await supabase
-      .from("payment_records")
+    const { data, error } = await getSupabase()
+      .from("payments")
       .insert({
+        id: createRecordId(),
         student_id: record.studentId,
         student_name: record.studentName,
         event_id: record.eventId,
@@ -625,6 +740,7 @@ export const paymentsService = {
         amount: record.amount,
         date: record.date,
         receipt_url: record.receiptUrl,
+        or_number: record.orNumber,
         recorded_by: record.recordedBy,
       })
       .select()
@@ -640,6 +756,7 @@ export const paymentsService = {
       amount: data.amount,
       date: data.date,
       receiptUrl: data.receipt_url || undefined,
+      orNumber: data.or_number || undefined,
       recordedBy: data.recorded_by,
     };
   },
@@ -660,11 +777,13 @@ export const paymentsService = {
     if (record.date !== undefined) updateData.date = record.date;
     if (record.receiptUrl !== undefined)
       updateData.receipt_url = record.receiptUrl;
+    if (record.orNumber !== undefined)
+      updateData.or_number = record.orNumber;
     if (record.recordedBy !== undefined)
       updateData.recorded_by = record.recordedBy;
 
-    const { data, error } = await supabase
-      .from("payment_records")
+    const { data, error } = await getSupabase()
+      .from("payments")
       .update(updateData)
       .eq("id", id)
       .select()
@@ -680,13 +799,14 @@ export const paymentsService = {
       amount: data.amount,
       date: data.date,
       receiptUrl: data.receipt_url || undefined,
+      orNumber: data.or_number || undefined,
       recordedBy: data.recorded_by,
     };
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from("payment_records")
+    const { error } = await getSupabase()
+      .from("payments")
       .delete()
       .eq("id", id);
 
@@ -699,7 +819,7 @@ export const paymentsService = {
 // ============================================
 export const transactionsService = {
   async getAll(): Promise<Transaction[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("transactions")
       .select("*")
       .order("date", { ascending: false });
@@ -721,7 +841,7 @@ export const transactionsService = {
   },
 
   async getByEventId(eventId: string): Promise<Transaction[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("transactions")
       .select("*")
       .eq("event_id", eventId)
@@ -744,9 +864,10 @@ export const transactionsService = {
   },
 
   async create(record: Omit<Transaction, "id">): Promise<Transaction> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("transactions")
       .insert({
+        id: createRecordId(),
         date: record.date,
         description: record.description,
         event_id: record.eventId,
@@ -788,7 +909,7 @@ export const transactionsService = {
     if (record.receiptUrl !== undefined)
       updateData.receipt_url = record.receiptUrl;
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("transactions")
       .update(updateData)
       .eq("id", id)
@@ -810,7 +931,7 @@ export const transactionsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase.from("transactions").delete().eq("id", id);
+    const { error } = await getSupabase().from("transactions").delete().eq("id", id);
 
     if (error) throw error;
   },
@@ -820,7 +941,7 @@ export const transactionsService = {
     expense: number;
     balance: number;
   }> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("transactions")
       .select("type, amount");
 
@@ -844,8 +965,8 @@ export const transactionsService = {
 // ============================================
 export const feedbackService = {
   async getAll(): Promise<FeedbackItem[]> {
-    const { data, error } = await supabase
-      .from("feedback_items")
+    const { data, error } = await getSupabase()
+      .from("feedback")
       .select("*")
       .order("submitted_at", { ascending: false });
 
@@ -866,8 +987,8 @@ export const feedbackService = {
   },
 
   async getByType(type: FeedbackItem["type"]): Promise<FeedbackItem[]> {
-    const { data, error } = await supabase
-      .from("feedback_items")
+    const { data, error } = await getSupabase()
+      .from("feedback")
       .select("*")
       .eq("type", type)
       .order("submitted_at", { ascending: false });
@@ -889,8 +1010,8 @@ export const feedbackService = {
   },
 
   async getByStatus(status: FeedbackItem["status"]): Promise<FeedbackItem[]> {
-    const { data, error } = await supabase
-      .from("feedback_items")
+    const { data, error } = await getSupabase()
+      .from("feedback")
       .select("*")
       .eq("status", status)
       .order("submitted_at", { ascending: false });
@@ -914,9 +1035,10 @@ export const feedbackService = {
   async create(
     item: Omit<FeedbackItem, "id" | "submittedAt">,
   ): Promise<FeedbackItem> {
-    const { data, error } = await supabase
-      .from("feedback_items")
+    const { data, error } = await getSupabase()
+      .from("feedback")
       .insert({
+        id: createRecordId(),
         type: item.type,
         title: item.title,
         message: item.message,
@@ -954,8 +1076,8 @@ export const feedbackService = {
       updateData.is_anonymous = item.isAnonymous;
     if (item.status !== undefined) updateData.status = item.status;
 
-    const { data, error } = await supabase
-      .from("feedback_items")
+    const { data, error } = await getSupabase()
+      .from("feedback")
       .update(updateData)
       .eq("id", id)
       .select()
@@ -976,8 +1098,8 @@ export const feedbackService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from("feedback_items")
+    const { error } = await getSupabase()
+      .from("feedback")
       .delete()
       .eq("id", id);
 
@@ -988,8 +1110,8 @@ export const feedbackService = {
     id: string,
     status: FeedbackItem["status"],
   ): Promise<void> {
-    const { error } = await supabase
-      .from("feedback_items")
+    const { error } = await getSupabase()
+      .from("feedback")
       .update({ status })
       .eq("id", id);
 
@@ -1002,7 +1124,7 @@ export const feedbackService = {
 // ============================================
 export const financialSummaryService = {
   async get(): Promise<FinancialSummary | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("financial_summaries")
       .select("*")
       .single();
@@ -1031,10 +1153,10 @@ export const financialSummaryService = {
       updateData.total_expected_contributions =
         summary.totalExpectedContributions;
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("financial_summaries")
       .update(updateData)
-      .eq("id", (await this.get())?.id || 1)
+      .eq("id", "main")
       .select()
       .single();
 
@@ -1054,10 +1176,10 @@ export const financialSummaryService = {
 // ============================================
 export const eventAllocationsService = {
   async getAll(): Promise<EventAllocation[]> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("event_allocations")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("event_name", { ascending: true });
 
     if (error) throw error;
     return (
@@ -1073,7 +1195,7 @@ export const eventAllocationsService = {
   },
 
   async getByEventId(eventId: string): Promise<EventAllocation | null> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("event_allocations")
       .select("*")
       .eq("event_id", eventId)
@@ -1093,9 +1215,10 @@ export const eventAllocationsService = {
   async create(
     allocation: Omit<EventAllocation, "id">,
   ): Promise<EventAllocation> {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("event_allocations")
       .insert({
+        id: allocation.eventId,
         event_id: allocation.eventId,
         event_name: allocation.eventName,
         allocation_amount: allocation.allocationAmount,
@@ -1133,7 +1256,7 @@ export const eventAllocationsService = {
     if (allocation.remainingBalance !== undefined)
       updateData.remaining_balance = allocation.remainingBalance;
 
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("event_allocations")
       .update(updateData)
       .eq("event_id", eventId)
@@ -1149,5 +1272,126 @@ export const eventAllocationsService = {
       totalSpent: data.total_spent,
       remainingBalance: data.remaining_balance,
     };
+  },
+};
+
+// ============================================
+// BOARD MEMBERS SERVICE
+// ============================================
+export const boardMembersService = {
+  async listBoardMembers(): Promise<BoardMember[]> {
+    const { data, error } = await getSupabase()
+      .from("board_members")
+      .select("*")
+      .order("name");
+    if (error) throw error;
+    return (
+      data?.map((item) => ({
+        id: item.id,
+        name: item.name,
+        accountUserId: item.account_user_id ?? undefined,
+      })) || []
+    );
+  },
+};
+
+// ============================================
+// FINANCIAL REPORTING SERVICE (derived, no DB writes)
+// ============================================
+const addToTotal = (totals: Map<string, number>, key: string, amount: number): void => {
+  totals.set(key, (totals.get(key) ?? 0) + Math.max(0, amount));
+};
+
+/**
+ * Reload UI data whenever a record in one of its Supabase source tables changes.
+ * The caller remains the single source of truth by re-querying the database;
+ * this helper never caches or writes duplicate summary data.
+ */
+export const subscribeToTables = (
+  tables: readonly string[],
+  onChange: () => void,
+  channelPrefix = 'db-live',
+): (() => void) => {
+  const sb = getSupabase();
+  const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
+
+  for (const table of tables) {
+    channel.on('postgres_changes', { event: '*', schema: 'public', table }, onChange);
+  }
+
+  channel.subscribe();
+  return () => { void sb.removeChannel(channel); };
+};
+
+export const financialReportingService = {
+  async getReport(): Promise<FinancialReport> {
+    const [events, contributions, payments, transactions] = await Promise.all([
+      eventsService.getAll(),
+      contributionsService.getAll(),
+      paymentsService.getAll(),
+      transactionsService.getAll(),
+    ]);
+    const contribTotals = new Map<string, number>();
+    const payTotals = new Map<string, number>();
+    const collectionByEvent = new Map<string, number>();
+    for (const c of contributions) {
+      addToTotal(contribTotals, c.studentId + '\u0000' + c.eventId, c.amountPaid);
+    }
+    for (const p of payments) {
+      addToTotal(payTotals, p.studentId + '\u0000' + p.eventId, p.amount);
+    }
+    const allKeys = new Set([...contribTotals.keys(), ...payTotals.keys()]);
+    for (const key of allKeys) {
+      const collected = Math.max(contribTotals.get(key) ?? 0, payTotals.get(key) ?? 0);
+      const eventId = key.split('\u0000')[1];
+      addToTotal(collectionByEvent, eventId, collected);
+    }
+    const incomeByEvent = new Map<string, number>();
+    const spentByEvent = new Map<string, number>();
+    let ledgerIncome = 0;
+    let totalFundsSpent = 0;
+    for (const tx of transactions) {
+      const amount = Math.max(0, tx.amount);
+      if (tx.type === 'income') {
+        ledgerIncome += amount;
+        if (tx.eventId) addToTotal(incomeByEvent, tx.eventId, amount);
+      } else {
+        totalFundsSpent += amount;
+        if (tx.eventId) addToTotal(spentByEvent, tx.eventId, amount);
+      }
+    }
+    const studentCollections = [...collectionByEvent.values()].reduce((s, a) => s + a, 0);
+    const totalFundsCollected = studentCollections + ledgerIncome;
+    const totalExpectedContributions = contributions.reduce((s, c) => s + Math.max(0, c.requiredAmount), 0);
+    const totalBudget = events.reduce((s, e) => s + Math.max(0, e.allocationAmount), 0);
+    return {
+      summary: {
+        totalBudget,
+        totalFundsCollected,
+        totalFundsSpent,
+        remainingBudget: totalFundsCollected - totalFundsSpent,
+        totalExpectedContributions,
+      },
+      eventAllocations: events.map((event) => {
+        const totalCollected = (collectionByEvent.get(event.id) ?? 0) + (incomeByEvent.get(event.id) ?? 0);
+        const totalSpent = spentByEvent.get(event.id) ?? 0;
+        return {
+          eventId: event.id,
+          eventName: event.name,
+          allocationAmount: Math.max(0, event.allocationAmount),
+          totalCollected,
+          totalSpent,
+          remainingBalance: totalCollected - totalSpent,
+        };
+      }).sort((a, b) => a.eventName.localeCompare(b.eventName)),
+    };
+  },
+
+  subscribe(onChange: () => void): () => void {
+    return subscribeToTables(
+      ['events', 'contributions', 'payments', 'transactions'],
+      onChange,
+      'financial-report',
+    );
   },
 };

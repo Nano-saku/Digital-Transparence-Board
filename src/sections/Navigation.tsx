@@ -1,14 +1,46 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Menu, X, Shield } from 'lucide-react';
-import type { ViewState } from '@/types';
-
+import type { ViewState, UserRole } from '@/types';
 interface NavigationProps {
   currentView: ViewState;
   onNavigate: (view: ViewState) => void;
-  isAdmin: boolean;
+  role: UserRole | null;
 }
 
-export default function Navigation({ currentView, onNavigate, isAdmin }: NavigationProps) {
+type NavItem = { label: string; view: ViewState };
+
+const PUBLIC_NAV_ITEMS: NavItem[] = [
+  { label: 'Records', view: 'landing' },
+  { label: 'Transparency', view: 'transparency' },
+  { label: 'Inquiry', view: 'inquiry' },
+];
+
+// Nav items are filtered by the officer's role.
+function buildAdminNavItems(role: UserRole | null): NavItem[] {
+  return [
+    { label: 'Dashboard', view: 'admin-dashboard' },
+    ...(role === 'admin' ? [{ label: 'Students', view: 'student-management' as ViewState }] : []),
+    ...(role ? [{ label: 'Events', view: 'event-management' as ViewState }] : []),
+    ...(role === 'secretary'
+      ? [{ label: 'Attendance', view: 'attendance-management' as ViewState }]
+      : []),
+    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
+      ? [{ label: 'Payments', view: 'payment-management' as ViewState }]
+      : []),
+    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
+      ? [{ label: 'Contributions', view: 'contribution-management' as ViewState }]
+      : []),
+    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
+      ? [{ label: 'Finances', view: 'transaction-management' as ViewState }]
+      : []),
+    ...(role === 'board-member'
+      ? [{ label: 'Transparency', view: 'transparency' as ViewState }]
+      : []),
+    { label: 'Feedback', view: 'feedback-management' },
+  ];
+}
+
+export default function Navigation({ currentView, onNavigate, role }: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -21,76 +53,81 @@ export default function Navigation({ currentView, onNavigate, isAdmin }: Navigat
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const isPublicPage = !isAdmin && 
-    currentView !== 'admin-login' && 
-    currentView !== 'admin-dashboard' && 
-    currentView !== 'student-management' && 
-    currentView !== 'event-management' && 
-    currentView !== 'payment-management' && 
-    currentView !== 'attendance-management' && 
-    currentView !== 'transaction-management';
-
-  const publicNavItems = [
-    { label: 'Records', view: 'landing' as ViewState },
-    { label: 'Transparency', view: 'transparency' as ViewState },
-    { label: 'Inquiry', view: 'inquiry' as ViewState },
+  const isLoggedIn = !!role;
+  const adminViews: ViewState[] = [
+    'admin-dashboard',
+    'student-management',
+    'event-management',
+    'payment-management',
+    'contribution-management',
+    'attendance-management',
+    'transaction-management',
+    'feedback-management',
   ];
+  const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
 
-  const adminNavItems = [
-    { label: 'Dashboard', view: 'admin-dashboard' as ViewState },
-    { label: 'Students', view: 'student-management' as ViewState },
-    { label: 'Events', view: 'event-management' as ViewState },
-    { label: 'Transparency', view: 'transaction-management' as ViewState },
-  ];
+  const navItems = isLoggedIn ? buildAdminNavItems(role) : PUBLIC_NAV_ITEMS;
 
-  const navItems = isAdmin ? adminNavItems : publicNavItems;
-
-  if (!isPublicPage && !isAdmin) {
+  if (!isPublicPage && !isLoggedIn) {
     return null;
   }
 
+  const go = (view: ViewState) => {
+    onNavigate(view);
+    setIsMobileMenuOpen(false);
+  };
+
+
   return (
-    <nav 
+    <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled 
-          ? 'bg-white/70 backdrop-blur-lg shadow-sm' 
-          : 'bg-transparent'
+        isScrolled
+          ? 'bg-deep-navy/95 backdrop-blur-lg shadow-lg'
+          : 'bg-deep-navy'
       }`}
+      style={{ borderBottom: '1px solid rgba(201,163,78,0.25)' }}
     >
       <div className="w-full px-6 lg:px-12">
         <div className="flex items-center justify-between h-16 lg:h-20">
           {/* Logo */}
-          <button 
-            onClick={() => onNavigate(isAdmin ? 'admin-dashboard' : 'landing')}
-            className="flex items-center gap-2 group"
+          <button
+onClick={() => go(isLoggedIn ? 'admin-dashboard' : 'landing')}
+            className="flex items-center gap-3 group p-0"
           >
-            <div className="w-8 h-8 rounded-lg bg-red flex items-center justify-center">
-              <span className="text-white font-display font-bold text-sm">SB</span>
+            <img
+              src="/lsc-logo.jpg"
+              alt="Local Student Council logo"
+              className="w-9 h-9 rounded-lg object-cover ring-2 ring-lsc-gold/40"
+            />
+            <div className="flex flex-col leading-tight">
+              <span className="font-display font-bold text-white text-base tracking-wide group-hover:text-lsc-gold transition-colors">
+                DSSC — LSC
+              </span>
+              <span className="text-silver-gray text-[0.65rem] tracking-widest uppercase">
+                Santa Cruz
+              </span>
             </div>
-            <span className="font-display font-semibold text-dark text-lg group-hover:text-red transition-colors">
-              StudentBoard
-            </span>
           </button>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-8">
             {navItems.map((item) => (
               <button
-                key={item.label}
-                onClick={() => onNavigate(item.view)}
+key={item.label}
+                onClick={() => go(item.view)}
                 className={`nav-link text-sm font-medium ${
-                  currentView === item.view ? 'active text-red' : ''
+                  currentView === item.view ? 'active' : ''
                 }`}
               >
                 {item.label}
               </button>
             ))}
-            
+
             {/* Admin Access Link */}
-            {!isAdmin && (
+            {!isLoggedIn && (
               <button
-                onClick={() => onNavigate('admin-login')}
-                className="flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-red transition-colors"
+onClick={() => go('admin-login')}
+                className="flex items-center gap-1.5 text-sm text-silver-gray hover:text-lsc-gold transition-colors"
               >
                 <Shield className="w-4 h-4" />
                 <span>Admin</span>
@@ -100,13 +137,13 @@ export default function Navigation({ currentView, onNavigate, isAdmin }: Navigat
 
           {/* Mobile Menu Button */}
           <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg hover:bg-white/50 transition-colors"
+onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="md:hidden p-2 rounded-lg text-white hover:text-lsc-gold transition-colors"
           >
             {isMobileMenuOpen ? (
-              <X className="w-5 h-5 text-dark" />
+              <X className="w-5 h-5" />
             ) : (
-              <Menu className="w-5 h-5 text-dark" />
+              <Menu className="w-5 h-5" />
             )}
           </button>
         </div>
@@ -114,32 +151,26 @@ export default function Navigation({ currentView, onNavigate, isAdmin }: Navigat
 
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden glass-card mx-4 mb-4 p-4">
-          <div className="flex flex-col gap-2">
+        <div className="md:hidden mx-4 mb-4 rounded-xl overflow-hidden" style={{ background: 'rgba(14,26,77,0.97)', border: '1px solid rgba(201,163,78,0.20)' }}>
+          <div className="flex flex-col gap-1 p-3">
             {navItems.map((item) => (
               <button
-                key={item.label}
-                onClick={() => {
-                  onNavigate(item.view);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`px-4 py-3 rounded-xl text-left font-medium transition-colors ${
-                  currentView === item.view 
-                    ? 'bg-red/10 text-red' 
-                    : 'hover:bg-white/50 text-dark'
+key={item.label}
+                onClick={() => go(item.view)}
+                className={`w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors ${
+                  currentView === item.view
+                    ? 'bg-royal-blue/40 text-lsc-gold'
+                    : 'text-white/80 hover:text-white hover:bg-white/5'
                 }`}
               >
                 {item.label}
               </button>
             ))}
-            
-            {!isAdmin && (
+
+            {!isLoggedIn && (
               <button
-                onClick={() => {
-                  onNavigate('admin-login');
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex items-center gap-2 px-4 py-3 rounded-xl text-left font-medium text-text-secondary hover:bg-white/50 transition-colors"
+onClick={() => go('admin-login')}
+                className="w-full text-left px-4 py-3 rounded-lg font-medium text-sm text-silver-gray hover:text-lsc-gold transition-colors flex items-center gap-2"
               >
                 <Shield className="w-4 h-4" />
                 <span>Admin Access</span>

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { Search, ChevronDown, Eye, Loader2 } from 'lucide-react';
-
+import LSCOfficerCarousel from '@/components/LSCOfficerCarousel';
 interface LandingSectionProps {
   onSearch: (name: string, studentId: string) => void;
   onViewTransparency: () => void;
@@ -65,33 +65,42 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
   };
 
   return (
-    <section 
+    <>
+    <section
       ref={sectionRef}
       className="min-h-screen w-full gradient-bg-orange relative overflow-hidden"
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-20 left-10 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 rounded-full bg-white blur-3xl" />
+      {/* Subtle orb overlays for depth */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-16 left-10 w-80 h-80 rounded-full blur-3xl" style={{ background: 'rgba(110,140,255,0.18)' }} />
+        <div className="absolute bottom-20 right-10 w-[28rem] h-[28rem] rounded-full blur-3xl" style={{ background: 'rgba(14,26,77,0.35)' }} />
+        {/* Watermark seal */}
+        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-96 h-96 opacity-[0.06]"
+          style={{ backgroundImage: 'url(/lsc-logo.jpg)', backgroundSize: 'contain', backgroundRepeat: 'no-repeat', backgroundPosition: 'center' }}
+        />
       </div>
 
       {/* Content */}
-      <div className="relative z-10 min-h-screen flex items-center justify-center px-4 sm:px-6 lg:px-8 py-20">
-        <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+      <div className="relative z-10 min-h-screen flex items-center justify-center px-4 sm:px-6 lg:px-8 py-24">
+        <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center">
           {/* Left Column - Headline */}
           <div ref={headlineRef} className="text-center lg:text-left">
-            <h1 className="font-display font-bold text-4xl sm:text-5xl lg:text-6xl text-dark leading-tight mb-6">
+            {/* Eyebrow */}
+            <span className="dssc-tagline block mb-3">One Step Better Than Yesterday.</span>
+
+            <h1 className="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-white leading-tight mb-6"
+              style={{ letterSpacing: '0.02em' }}>
               <span className="word inline-block">Digital</span>{' '}
               <span className="word inline-block">Transparency</span>{' '}
-              <span className="word inline-block text-red">Board</span>
+              <span className="word inline-block" style={{ color: '#C9A34E' }}>Board</span>
             </h1>
-            <p className="text-text-secondary text-lg sm:text-xl max-w-xl mx-auto lg:mx-0 mb-8">
+            <p className="text-blue-100 text-lg sm:text-xl max-w-xl mx-auto lg:mx-0 mb-8 leading-relaxed">
               Track your contributions, attendance, and council finances in real-time. 
               Transparency for a stronger student community.
             </p>
             <button
-              onClick={onViewTransparency}
-              className="glass-button px-6 py-3 flex items-center gap-2 mx-auto lg:mx-0"
+onClick={onViewTransparency}
+              className="glass-button px-6 py-3"
             >
               <Eye className="w-5 h-5" />
               <span>View Transparency Board</span>
@@ -100,16 +109,18 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
           {/* Right Column - Search Card */}
           <div ref={cardRef} className="glass-card-strong p-6 sm:p-8">
-            <h2 className="font-display font-semibold text-2xl text-dark mb-2">
+            {/* Card accent bar */}
+            <div className="h-1 w-16 rounded-full mb-5" style={{ background: 'var(--dssc-gold)' }} />
+            <h2 className="font-display font-bold text-2xl mb-2" style={{ color: 'var(--dssc-deep-navy)' }}>
               Find Your Records
             </h2>
-            <p className="text-text-secondary mb-6">
+            <p className="text-text-secondary mb-6 text-sm">
               Enter your name or student ID to view your contributions and attendance.
             </p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-dark mb-1.5">
+                <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--dssc-deep-navy)' }}>
                   Student Name
                 </label>
                 <input
@@ -124,15 +135,15 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/20"></div>
+                  <div className="w-full border-t border-silver-gray/30"></div>
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="px-2 bg-white/50 text-xs text-text-secondary">OR</span>
+                  <span className="px-3 bg-white text-xs text-text-secondary rounded-full">OR</span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-dark mb-1.5">
+                <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--dssc-deep-navy)' }}>
                   Student ID
                 </label>
                 <input
@@ -147,7 +158,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
               <button
                 type="submit"
-                className="w-full btn-primary px-6 py-3 flex items-center justify-center gap-2"
+className="w-full btn-primary px-6 py-3 justify-center"
                 disabled={searching || (!name && !studentId)}
               >
                 {searching ? (
@@ -170,11 +181,26 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
       {/* Scroll Hint */}
       <div 
         ref={scrollHintRef}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-text-secondary"
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+        style={{ color: 'rgba(255,255,255,0.60)' }}
       >
-        <span className="text-sm">Scroll to learn more</span>
+        <span className="text-xs tracking-widest uppercase">Scroll down</span>
         <ChevronDown className="w-5 h-5 animate-bounce" />
       </div>
     </section>
+    <section id="lsc-preview" className="relative overflow-hidden bg-[#0E1A4D] px-4 py-20 sm:px-6 lg:px-8">
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(58,95,224,0.32),transparent_62%)]" />
+      <div className="relative z-10 mx-auto w-full max-w-6xl">
+        <div className="mb-10 text-center">
+          <span className="dssc-tagline">Leadership • Service • Commitment</span>
+          <h2 className="mt-3 font-display text-3xl font-bold text-white sm:text-4xl">LSC Preview</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-blue-100 sm:text-base">
+            Meet the officers dedicated to serving the Local Student Council community.
+          </p>
+        </div>
+        <LSCOfficerCarousel />
+      </div>
+    </section>
+    </>
   );
 }

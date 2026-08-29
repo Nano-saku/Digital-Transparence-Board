@@ -1,11 +1,10 @@
-import { useEffect, useRef } from 'react';
+﻿import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { 
   Search, Eye, MessageCircle, AlertTriangle, Lightbulb, 
   Shield, Mail, Phone, MapPin, ExternalLink
 } from 'lucide-react';
 import type { ViewState } from '@/types';
-
 interface FooterSectionProps {
   onNavigate: (view: ViewState) => void;
 }
@@ -46,55 +45,69 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
   ];
 
   const contactInfo = [
-    { icon: Mail, label: 'studentcouncil@university.edu' },
-    { icon: Phone, label: '+63 (2) 8123-4567' },
-    { icon: MapPin, label: 'Student Council Office, Main Building' },
+    { icon: Mail, label: 'dsscsclsc@gmail.com' },
+    { icon: Phone, label: 'Not have a Number yet!' },
+    { icon: MapPin, label: 'Student Council Office, Likod Sa SB 101' },
   ];
 
   return (
     <footer 
       ref={footerRef}
-      className="w-full gradient-bg-red relative overflow-hidden py-12 lg:py-16"
+      className="w-full relative overflow-hidden py-12 lg:py-16"
+      style={{ background: 'var(--dssc-deep-navy)' }}
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-0 left-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-0 right-20 w-96 h-96 rounded-full bg-white blur-3xl" />
+      {/* Subtle orb accents */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-20 w-72 h-72 rounded-full blur-3xl opacity-10" style={{ background: '#3A5FE0' }} />
+        <div className="absolute bottom-0 right-20 w-96 h-96 rounded-full blur-3xl opacity-10" style={{ background: '#1B2E8C' }} />
+        <div className="absolute right-8 top-1/2 -translate-y-1/2 w-52 h-52 opacity-[0.05]"
+          style={{ backgroundImage: 'url(/lsc-logo.jpg)', backgroundSize: 'contain', backgroundRepeat: 'no-repeat', backgroundPosition: 'center' }} />
       </div>
+      {/* Gold top accent line */}
+      <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: 'var(--grad-card-accent)' }} />
 
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
-        <div className="glass-card-strong p-6 lg:p-10 max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-12">
             {/* Brand */}
             <div className="lg:col-span-1">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-10 h-10 rounded-xl bg-red flex items-center justify-center">
-                  <span className="text-white font-display font-bold text-sm">SB</span>
+              <div className="flex items-center gap-3 mb-4">
+                <img src="/lsc-logo.jpg" alt="Local Student Council logo"
+                  className="w-10 h-10 rounded-xl object-cover ring-2 ring-lsc-gold/40" />
+                <div>
+                  <span className="font-display font-bold text-white text-base block tracking-wide">DSSC — LSC</span>
+                  <span className="text-silver-gray text-[0.65rem] tracking-widest uppercase">Santa Cruz</span>
                 </div>
-                <span className="font-display font-semibold text-dark text-xl">
-                  StudentBoard
-                </span>
               </div>
-              <p className="text-text-secondary text-sm leading-relaxed mb-4">
-                Built for transparency. Designed for students. 
-                Your trusted platform for attendance tracking and financial transparency.
+              <p className="text-silver-gray text-sm leading-relaxed mb-3">
+                Built for transparency. Designed for students.
               </p>
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <Shield className="w-4 h-4 text-red" />
+              <p className="dssc-tagline">"One Step Better Than Yesterday."</p>
+
+              <div className="flex items-center gap-2 text-sm text-silver-gray">
+                <Shield className="w-4 h-4 text-lsc-gold" />
                 <span>Secure & Transparent</span>
+              </div>
+              <div className="mt-6">
+                <h4 className="font-display font-semibold text-white mb-2">Developers</h4>
+                <ul className="space-y-1 text-sm text-silver-gray">
+                  <li>Mark Louise Eyas - Back-end</li>
+                  <li>Justine Renz Capapas - UI/UX Front-end</li>
+                  <li>John Mark Mahidlawon - Dev Ops</li>
+                </ul>
               </div>
             </div>
 
             {/* Quick Links */}
             <div>
-              <h4 className="font-display font-semibold text-dark mb-4">Quick Links</h4>
+              <h4 className="font-display font-semibold text-white mb-4">Quick Links</h4>
               <ul className="space-y-2">
                 {quickLinks.map((link) => (
                   <li key={link.label}>
                     <button
-                      onClick={() => onNavigate(link.view)}
-                      className="flex items-center gap-2 text-sm text-text-secondary hover:text-red transition-colors"
+onClick={() => onNavigate(link.view)}
+                      className="inline-flex items-center text-sm text-silver-gray gap-2 hover:text-white transition-colors"
                     >
                       <link.icon className="w-4 h-4" />
                       <span>{link.label}</span>
@@ -106,10 +119,10 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
 
             {/* Contact */}
             <div>
-              <h4 className="font-display font-semibold text-dark mb-4">Contact Us</h4>
+              <h4 className="font-display font-semibold text-white mb-4">Contact Us</h4>
               <ul className="space-y-3">
                 {contactInfo.map((item, index) => (
-                  <li key={index} className="flex items-start gap-2 text-sm text-text-secondary">
+                  <li key={index} className="flex items-start gap-2 text-sm text-silver-gray">
                     <item.icon className="w-4 h-4 mt-0.5 flex-shrink-0" />
                     <span>{item.label}</span>
                   </li>
@@ -119,24 +132,24 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
 
             {/* Office Hours */}
             <div>
-              <h4 className="font-display font-semibold text-dark mb-4">Office Hours</h4>
+              <h4 className="font-display font-semibold text-white mb-4">Office Hours</h4>
               <ul className="space-y-2 text-sm text-text-secondary">
                 <li className="flex justify-between">
                   <span>Monday - Friday</span>
-                  <span className="font-medium text-dark">8:00 AM - 5:00 PM</span>
+                  <span className="font-medium text-white">8:00 AM - 5:00 PM</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Saturday</span>
-                  <span className="font-medium text-dark">9:00 AM - 12:00 PM</span>
+                  <span className="font-medium text-white">Closed</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Sunday</span>
-                  <span className="font-medium text-dark">Closed</span>
+                  <span className="font-medium text-white">Closed</span>
                 </li>
               </ul>
-              <div className="mt-4 p-3 rounded-xl bg-red/5">
+              <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10">
                 <p className="text-xs text-text-secondary">
-                  <span className="font-medium text-dark">Data Privacy Notice:</span> All data is handled in compliance with the Data Privacy Act of 2012 (RA 10173).
+                  <span className="font-medium text-white">Data Privacy Notice:</span> All data is handled in compliance with the Data Privacy Act of 2012 (RA 10173).
                 </p>
               </div>
             </div>
@@ -144,17 +157,17 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
 
           {/* Bottom Bar */}
           <div className="mt-8 pt-6 border-t border-white/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-text-secondary text-center sm:text-left">
+            <p className="text-sm text-silver-gray text-center sm:text-left">
               © 2026 Student Council. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
-              <button className="text-sm text-text-secondary hover:text-red transition-colors">
+              <button className="text-sm text-silver-gray hover:text-white transition-colors">
                 Privacy Policy
               </button>
-              <button className="text-sm text-text-secondary hover:text-red transition-colors">
+              <button className="text-sm text-silver-gray hover:text-white transition-colors">
                 Terms of Service
               </button>
-              <button className="text-sm text-text-secondary hover:text-red transition-colors flex items-center gap-1">
+              <button className="inline-flex items-center gap-1 text-sm text-silver-gray hover:text-white transition-colors">
                 <ExternalLink className="w-3 h-3" />
                 Help Center
               </button>

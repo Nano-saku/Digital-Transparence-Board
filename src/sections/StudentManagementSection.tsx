@@ -1,13 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
-import { gsap } from 'gsap';
-import { 
-  ArrowLeft, Search, Plus, Edit2, Trash2, User, FileSpreadsheet, FileText, Save, Loader2
+﻿import { useState, useEffect, useRef, useMemo, type ChangeEvent } from 'react';
+import {
+  Search, Plus, Edit2, Trash2, User, FileSpreadsheet, Save, Loader2, QrCode
 } from 'lucide-react';
+import { getOrdinalSuffix } from '@/lib/format';
+import { useSectionEntrance } from '@/hooks/useSectionEntrance';
+import SectionLoader from '@/components/SectionLoader';
+import SectionEmptyState from '@/components/SectionEmptyState';
+import SectionBackButton from '@/components/SectionBackButton';
 import { studentsService } from '@/services/db';
 import type { Student } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import StudentQrModal from '@/components/StudentQrModal';
 import { toast } from 'sonner';
-
+import { readSheet } from 'read-excel-file/browser';
+import { parseCsv, excelRowsToRecords, pickField } from '@/lib/spreadsheet';
+import { ATTENDANCE_COURSES } from '@/lib/kmeans';
 interface StudentManagementSectionProps {
   onBack: () => void;
 }
@@ -21,6 +28,9 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
   const [filterProgram, setFilterProgram] = useState('');
   const [filterYear, setFilterYear] = useState('');
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [qrStudent, setQrStudent] = useState<Student | null>(null);
 
   const sectionRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -52,39 +62,45 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
     }
   };
 
-  useEffect(() => {
-    const ctx = gsap.context(() => {
-      gsap.fromTo(
-        contentRef.current,
-        { y: '6vh', opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.5, ease: 'power2.out' }
-      );
-    }, sectionRef);
+  useSectionEntrance(sectionRef, [
+    { ref: contentRef, from: { y: '6vh', opacity: 0 }, to: { y: 0, opacity: 1, duration: 0.5, ease: 'power2.out' } },
+  ]);
 
-    return () => ctx.revert();
-  }, []);
+  const filteredStudents = useMemo(() => {
+    return students.filter(student => {
+      const matchesSearch =
+        student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesProgram = !filterProgram || student.program === filterProgram;
+      const matchesYear = !filterYear || student.yearLevel.toString() === filterYear;
+      return matchesSearch && matchesProgram && matchesYear;
+    });
+  }, [students, searchTerm, filterProgram, filterYear]);
 
-  const filteredStudents = students.filter(student => {
-    const matchesSearch = 
-      student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesProgram = !filterProgram || student.program === filterProgram;
-    const matchesYear = !filterYear || student.yearLevel.toString() === filterYear;
-    return matchesSearch && matchesProgram && matchesYear;
-  });
-
-  const programs = [...new Set(students.map(s => s.program))];
-  const yearLevels = [...new Set(students.map(s => s.yearLevel))].sort();
+  const programs = useMemo(() => [...new Set(students.map(s => s.program))], [students]);
+  const yearLevels = useMemo(() => [...new Set(students.map(s => s.yearLevel))].sort(), [students]);
 
   const handleAddStudent = async () => {
+    const studentId = formData.studentId.trim();
+    const name = formData.name.trim();
+    const program = formData.program.trim();
+    const section = formData.section.trim();
+    if (!studentId || !name || !program || !section) {
+      toast.error('Please complete all student fields');
+      return;
+    }
+    if (students.some((student) => student.studentId.toLowerCase() === studentId.toLowerCase())) {
+      toast.error('A student with this Student ID already exists');
+      return;
+    }
     try {
       setSaving(true);
       const newStudent = await studentsService.create({
-        studentId: formData.studentId,
-        name: formData.name,
-        program: formData.program,
+        studentId,
+        name,
+        program,
         yearLevel: formData.yearLevel,
-        section: formData.section,
+        section,
       });
       setStudents([...students, newStudent]);
       setShowAddModal(false);
@@ -100,14 +116,26 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
 
   const handleEditStudent = async () => {
     if (editingStudent) {
+      const studentId = formData.studentId.trim();
+      const name = formData.name.trim();
+      const program = formData.program.trim();
+      const section = formData.section.trim();
+      if (!studentId || !name || !program || !section) {
+        toast.error('Please complete all student fields');
+        return;
+      }
+      if (students.some((student) => student.id !== editingStudent.id && student.studentId.toLowerCase() === studentId.toLowerCase())) {
+        toast.error('A student with this Student ID already exists');
+        return;
+      }
       try {
         setSaving(true);
         const updated = await studentsService.update(editingStudent.id, {
-          studentId: formData.studentId,
-          name: formData.name,
-          program: formData.program,
+          studentId,
+          name,
+          program,
           yearLevel: formData.yearLevel,
-          section: formData.section,
+          section,
         });
         setStudents(students.map(s => s.id === editingStudent.id ? updated : s));
         setEditingStudent(null);
@@ -152,6 +180,74 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
     setShowAddModal(true);
   };
 
+  const importStudentRows = async (rows: Record<string, string>[]) => {
+    if (rows.length === 0) {
+      toast.error('File is empty or invalid');
+      return;
+    }
+
+    const parsed = rows
+      .map(mapCsvRowToStudent)
+      .filter((s): s is Omit<Student, 'id'> => s !== null);
+
+    if (parsed.length === 0) {
+      toast.error(
+        'No valid rows found. Expected columns: Student ID, Name, Program, Year Level, Section'
+      );
+      return;
+    }
+
+    // Skip rows already in the table or duplicated within the file.
+    const existingIds = new Set(students.map(s => s.studentId.toLowerCase()));
+    const seen = new Set<string>();
+    const deduped = parsed.filter(s => {
+      const key = s.studentId.toLowerCase();
+      if (existingIds.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (deduped.length === 0) {
+      toast.info('All rows in the file already exist in the table');
+      return;
+    }
+
+    const created = await studentsService.createMany(deduped);
+    setStudents(prev => [...prev, ...created]);
+    const skipped = parsed.length - deduped.length;
+    toast.success(
+      skipped > 0
+        ? `${created.length} student(s) imported, ${skipped} duplicate(s) skipped`
+        : `${created.length} student(s) imported successfully`
+    );
+  };
+
+  const handleImportFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+    if (!file) return;
+
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+    const isExcel = file.name.toLowerCase().endsWith('.xlsx');
+    if (!isCsv && !isExcel) {
+      toast.error('Please upload a .csv or .xlsx file');
+      return;
+    }
+
+    try {
+      setImporting(true);
+      const rows = isCsv
+        ? parseCsv(await file.text())
+        : excelRowsToRecords(await readSheet(file));
+      await importStudentRows(rows);
+    } catch (error) {
+      console.error(`Error importing ${isCsv ? 'CSV' : 'Excel'} file:`, error);
+      toast.error(`Failed to import ${isCsv ? 'CSV' : 'Excel'} file`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <section 
       ref={sectionRef}
@@ -168,12 +264,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
-            <button
-              onClick={onBack}
-              className="p-2 rounded-xl hover:bg-white/50 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5 text-dark" />
-            </button>
+            <SectionBackButton onClick={onBack} />
             <div>
               <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
                 Student Management
@@ -185,23 +276,39 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm">
-              <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">Upload CSV</span>
+            <button
+onClick={() => importInputRef.current?.click()}
+              className="glass-button px-4 py-2.5 text-sm"
+              disabled={loading || importing}
+              title="Import students from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID, Name, Program, Year Level, Section."
+            >
+              {importing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4" />
+              )}
+              <span className="hidden sm:inline">
+                {importing ? 'Importing...' : 'Upload CSV / Excel'}
+              </span>
             </button>
-            <button className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm">
-              <FileSpreadsheet className="w-4 h-4" />
-              <span className="hidden sm:inline">Upload Excel</span>
-            </button>
-            <button 
-              onClick={openAddModal}
-              className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm"
-              disabled={loading}
+            <button
+onClick={openAddModal}
+              className="btn-primary px-4 py-2.5 text-sm"
+              disabled={loading || importing}
             >
               <Plus className="w-4 h-4" />
               <span>Add Student</span>
             </button>
           </div>
+
+          {/* Hidden file input for CSV / Excel import */}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={handleImportFileSelected}
+          />
         </div>
 
         {/* Filters */}
@@ -242,12 +349,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
         </div>
 
         {/* Loading State */}
-        {loading && (
-          <div className="glass-card p-12 text-center">
-            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
-            <p className="text-text-secondary">Loading students...</p>
-          </div>
-        )}
+        {loading && <SectionLoader message="Loading students..." />}
 
         {/* Students Table */}
         {!loading && (
@@ -261,6 +363,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
                     <th>Program</th>
                     <th>Year</th>
                     <th>Section</th>
+                    <th className="text-center">QR</th>
                     <th className="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -279,18 +382,27 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
                       <td className="text-text-secondary">{student.program}</td>
                       <td className="text-text-secondary">{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year</td>
                       <td className="text-text-secondary">{student.section}</td>
+                      <td className="text-center">
+                        <button
+onClick={() => setQrStudent(student)}
+                          className="p-2 rounded-lg"
+                          title={`Download attendance QR for ${student.name}`}
+                        >
+                          <QrCode className="w-4 h-4 text-dark" />
+                        </button>
+                      </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => openEditModal(student)}
-                            className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+onClick={() => openEditModal(student)}
+                            className="p-2 rounded-lg"
                             title="Edit"
                           >
                             <Edit2 className="w-4 h-4 text-blue-600" />
                           </button>
                           <button
-                            onClick={() => handleDeleteStudent(student.id)}
-                            className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+onClick={() => handleDeleteStudent(student.id)}
+                            className="p-2 rounded-lg hover:bg-red-500/10"
                             title="Delete"
                           >
                             <Trash2 className="w-4 h-4 text-red" />
@@ -304,10 +416,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
             </div>
 
             {filteredStudents.length === 0 && (
-              <div className="text-center py-12 text-text-secondary">
-                <User className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                <p>No students found</p>
-              </div>
+              <SectionEmptyState message="No students found" icon={User} compact />
             )}
           </div>
         )}
@@ -360,12 +469,18 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
               <label className="block text-sm font-medium text-dark mb-1">Program</label>
               <input
                 type="text"
+                list="program-suggestions"
                 value={formData.program}
                 onChange={(e) => setFormData({ ...formData, program: e.target.value })}
                 className="glass-input w-full px-4 py-2"
-                placeholder="e.g., BS Computer Science"
+                placeholder="e.g., BSIT, ACT, DIT"
                 disabled={saving}
               />
+              <datalist id="program-suggestions">
+                {ATTENDANCE_COURSES.map(course => (
+                  <option key={course} value={course} />
+                ))}
+              </datalist>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -398,7 +513,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
 
             <div className="flex gap-3 pt-4">
               <button
-                onClick={() => {
+onClick={() => {
                   setShowAddModal(false);
                   setEditingStudent(null);
                 }}
@@ -408,7 +523,7 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
                 Cancel
               </button>
               <button
-                onClick={editingStudent ? handleEditStudent : handleAddStudent}
+onClick={editingStudent ? handleEditStudent : handleAddStudent}
                 className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
                 disabled={saving || !formData.studentId || !formData.name || !formData.program || !formData.section}
               >
@@ -428,12 +543,30 @@ export default function StudentManagementSection({ onBack }: StudentManagementSe
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Attendance QR Code Modal */}
+      <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
     </section>
   );
 }
 
-function getOrdinalSuffix(num: number): string {
-  const suffixes = ['th', 'st', 'nd', 'rd'];
-  const v = num % 100;
-  return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
+// ---------------------------------------------------------------------------
+// Import helpers
+// ---------------------------------------------------------------------------
+
+/** Flexibly maps one CSV/Excel row to a Student. Returns null when name and ID are missing. */
+function mapCsvRowToStudent(row: Record<string, string>): Omit<Student, 'id'> | null {
+  const studentId = pickField(row, 'studentid', 'studentno', 'studentnumber', 'studid', 'idnumber', 'lrn', 'id');
+  const name = pickField(row, 'name', 'fullname', 'studentname');
+  if (!studentId || !name) return null;
+
+  const yearRaw = parseInt(pickField(row, 'yearlevel', 'year', 'gradelevel', 'grade', 'gradelvl'), 10);
+
+  return {
+    studentId,
+    name,
+    program: pickField(row, 'program', 'course', 'degree', 'programofstudy'),
+    yearLevel: Number.isNaN(yearRaw) || yearRaw < 1 ? 1 : yearRaw,
+    section: pickField(row, 'section', 'class', 'block'),
+  };
 }

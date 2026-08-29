@@ -1,10 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
-import { gsap } from 'gsap';
-import { ArrowLeft, User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText, Loader2 } from 'lucide-react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText, Download, Loader2, QrCode, ChevronDown, Clock } from 'lucide-react';
 import type { Student, AttendanceRecord, ContributionRecord, PaymentRecord } from '@/types';
 import { attendanceService, contributionsService, paymentsService } from '@/services/db';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { downloadContributionReceipt, officialReceiptNumber, type ReceiptFormat } from '@/lib/receipts';
+import ReceiptViewer from '@/components/ReceiptViewer';
+import StudentQrModal from '@/components/StudentQrModal';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { formatDate, formatPeso, getOrdinalSuffix, formatTimeRange, today } from '@/lib/format';
+import { contributionStatus } from '@/lib/contributions';
+import { useSectionEntrance } from '@/hooks/useSectionEntrance';
+import SectionLoader from '@/components/SectionLoader';
+import SectionEmptyState from '@/components/SectionEmptyState';
+import SectionBackButton from '@/components/SectionBackButton';
+import AnimatedNetwork from '@/components/ui/animated-network';
 
 interface StudentRecordSectionProps {
   student: Student;
@@ -16,9 +30,10 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
   const profileRef = useRef<HTMLDivElement>(null);
   const attendanceRef = useRef<HTMLDivElement>(null);
   const contributionsRef = useRef<HTMLDivElement>(null);
-  const receiptsRef = useRef<HTMLDivElement>(null);
 
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
+  const [qrStudent, setQrStudent] = useState<Student | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Data states
@@ -27,11 +42,7 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
 
   // Load data from database
-  useEffect(() => {
-    loadStudentData();
-  }, [student.id]);
-
-  const loadStudentData = async () => {
+  const loadStudentData = useCallback(async () => {
     try {
       setLoading(true);
       const [attendanceData, contributionsData, paymentsData] = await Promise.all([
@@ -48,52 +59,91 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
     } finally {
       setLoading(false);
     }
-  };
+  }, [student.id]);
 
   useEffect(() => {
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    loadStudentData();
+  }, [loadStudentData]);
 
+  // Payment receipts are grouped by event once (memoized) instead of being
+  // re-filtered for every row on every render.
+  const receiptsByEvent = useMemo(() => {
+    const map = new Map<string, PaymentRecord[]>();
+    for (const payment of paymentRecords) {
+      if (!payment.receiptUrl) continue;
+      const list = map.get(payment.eventId);
+      if (list) list.push(payment);
+      else map.set(payment.eventId, [payment]);
+    }
+    return map;
+  }, [paymentRecords]);
+
+  const receiptsForEvent = (eventId: string): PaymentRecord[] =>
+    receiptsByEvent.get(eventId) ?? [];
+
+  // Builds the contribution-record receipt (student, event, required, paid,
+  // balance, status) and downloads it directly — no storage round-trip.
+  // Supports SVG, PNG, and JPG formats.
+  const handleDownloadContributionReceipt = async (
+    record: ContributionRecord,
+    format: ReceiptFormat = 'svg'
+  ) => {
+    try {
+      setDownloadingId(record.id);
+      // Client-side guard (mirrors the backend guard in downloadContributionReceipt):
+      // an Official Receipt may only be issued once the payment is fully paid.
+      if (contributionStatus(record).label !== 'Fully Paid') {
+        throw new Error(
+          'Official Receipt is only available once the payment is fully paid.'
+        );
+      }
+      const message = await downloadContributionReceipt({
+        tag: 'CONTRIBUTION RECORD',
+        receiptNumber: await officialReceiptNumber(),
+        issuedTo: student.name,
+        eventName: record.eventName,
+        amount: record.amountPaid,
+        type: 'income',
+        date: today(),
+        recordedBy: 'Council Officer',
+        requiredAmount: record.requiredAmount,
+        remainingBalance: record.remainingBalance,
+        statusLabel: contributionStatus(record).label,
+      }, format);
+      toast.success(message);
+    } catch (error) {
+      console.error('Error downloading contribution receipt:', error);
+      toast.error('Failed to download receipt. Please try again.');
+    } finally {
+      setDownloadingId((current) => (current === record.id ? null : current));
+    }
+  };
+
+  useSectionEntrance(sectionRef, [
       // Profile card entrance
-      tl.fromTo(
-        profileRef.current,
-        { x: '-60vw', opacity: 0 },
-        { x: 0, opacity: 1, duration: 0.8 }
-      );
-
+      { ref: profileRef, from: { x: '-60vw', opacity: 0 }, to: { x: 0, opacity: 1, duration: 0.8 } },
       // Attendance table entrance
-      tl.fromTo(
-        attendanceRef.current,
-        { y: '60vh', opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.7 },
-        '-=0.5'
-      );
-
+      { ref: attendanceRef, from: { y: '60vh', opacity: 0 }, to: { y: 0, opacity: 1, duration: 0.7 }, position: '-=0.5' },
       // Contributions table entrance
-      tl.fromTo(
-        contributionsRef.current,
-        { x: '60vw', opacity: 0 },
-        { x: 0, opacity: 1, duration: 0.7 },
-        '-=0.5'
-      );
+      { ref: contributionsRef, from: { x: '60vw', opacity: 0 }, to: { x: 0, opacity: 1, duration: 0.7 }, position: '-=0.5' },
+    ]);
 
-      // Receipts gallery entrance
-      tl.fromTo(
-        receiptsRef.current,
-        { y: '60vh', opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.7 },
-        '-=0.4'
-      );
-    }, sectionRef);
-
-    return () => ctx.revert();
-  }, []);
-
-  const totalPaid = contributionRecords.reduce((sum, c) => sum + c.amountPaid, 0);
-  const totalRequired = contributionRecords.reduce((sum, c) => sum + c.requiredAmount, 0);
-  const totalBalance = contributionRecords.reduce((sum, c) => sum + c.remainingBalance, 0);
+  // Summary figures share a single pass over the records so the per-render
+  // cost stays O(n), not O(3n).
+  const { totalPaid, totalRequired, totalBalance } = useMemo(() => {
+    let paid = 0;
+    let required = 0;
+    let balance = 0;
+    for (const record of contributionRecords) {
+      paid += record.amountPaid;
+      required += record.requiredAmount;
+      balance += record.remainingBalance;
+    }
+    return { totalPaid: paid, totalRequired: required, totalBalance: balance };
+  }, [contributionRecords]);
 
   const presentCount = attendanceRecords.filter(r => r.status === 'present').length;
+  const lateCount = attendanceRecords.filter(r => r.status === 'late').length;
   const absentCount = attendanceRecords.filter(r => r.status === 'absent').length;
 
   return (
@@ -101,32 +151,20 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
       ref={sectionRef}
       className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-40 left-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-40 right-20 w-96 h-96 rounded-full bg-white blur-3xl" />
+      {/* Animated Network Background */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <AnimatedNetwork nodeCount={45} maxEdgeDistance={150} speed={0.3} />
       </div>
 
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
         {/* Back Button */}
         <div className="mb-6">
-          <button
-            onClick={onBack}
-            className="p-2 rounded-xl hover:bg-white/50 transition-colors inline-flex items-center gap-2"
-          >
-            <ArrowLeft className="w-5 h-5 text-dark" />
-            <span className="text-dark">Back to Search</span>
-          </button>
+          <SectionBackButton onClick={onBack} label="Back to Search" />
         </div>
 
         {/* Loading State */}
-        {loading && (
-          <div className="glass-card p-12 text-center">
-            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
-            <p className="text-text-secondary">Loading student records...</p>
-          </div>
-        )}
+        {loading && <SectionLoader message="Loading student records..." />}
 
         {!loading && (
           <>
@@ -152,17 +190,29 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
                     <span>{student.yearLevel}{getOrdinalSuffix(student.yearLevel)} Year - Section {student.section}</span>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+onClick={() => setQrStudent(student)}
+                    className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm"
+                    title="Download your attendance QR code (Student ID, Name, Program, Year, Section)"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    QR Code
+                  </button>
                   <div className="glass-card px-4 py-3 text-center">
                     <p className="text-2xl font-bold text-green-600">{presentCount}</p>
                     <p className="text-xs text-text-secondary">Present</p>
                   </div>
                   <div className="glass-card px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-red">{absentCount}</p>
+                    <p className="text-2xl font-bold text-amber-500">{lateCount}</p>
+                    <p className="text-xs text-text-secondary">Late</p>
+                  </div>
+                  <div className="glass-card px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-red-500">{absentCount}</p>
                     <p className="text-xs text-text-secondary">Absent</p>
                   </div>
                   <div className="glass-card px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-dark">₱{totalPaid.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-dark">{formatPeso(totalPaid)}</p>
                     <p className="text-xs text-text-secondary">Total Paid</p>
                   </div>
                 </div>
@@ -187,6 +237,7 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
                         <th>Event</th>
                         <th>Date</th>
                         <th>Status</th>
+                        <th>Time</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -195,17 +246,29 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
                           <td className="font-medium text-dark">{record.eventName}</td>
                           <td className="text-text-secondary">{formatDate(record.date)}</td>
                           <td>
-                            {record.status === 'present' ? (
+                            {record.status === 'present' && (
                               <span className="flex items-center gap-1 text-green-600">
                                 <CheckCircle className="w-4 h-4" />
                                 Present
                               </span>
-                            ) : (
-                              <span className="flex items-center gap-1 text-red">
+                            )}
+                            {record.status === 'late' && (
+                              <span className="flex items-center gap-1 text-amber-500">
+                                <Clock className="w-4 h-4" />
+                                Late
+                              </span>
+                            )}
+                            {record.status === 'absent' && (
+                              <span className="flex items-center gap-1 text-red-500">
                                 <XCircle className="w-4 h-4" />
                                 Absent
                               </span>
                             )}
+                          </td>
+                          <td className="text-text-secondary whitespace-nowrap">
+                            {record.status !== 'absent' && (record.timeIn || record.timeOut)
+                              ? formatTimeRange(record.timeIn, record.timeOut)
+                              : '—'}
                           </td>
                         </tr>
                       ))}
@@ -214,10 +277,7 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
                 </div>
 
                 {attendanceRecords.length === 0 && (
-                  <div className="text-center py-8 text-text-secondary">
-                    <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                    <p>No attendance records found</p>
-                  </div>
+                  <SectionEmptyState message="No attendance records found" icon={Calendar} compact />
                 )}
               </div>
 
@@ -235,48 +295,105 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
                     <thead>
                       <tr>
                         <th>Event</th>
-                        <th>Required</th>
-                        <th>Paid</th>
-                        <th>Balance</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Downloadable Receipt</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {contributionRecords.map((record) => (
-                        <tr key={record.id}>
-                          <td className="font-medium text-dark">{record.eventName}</td>
-                          <td className="text-text-secondary">₱{record.requiredAmount.toLocaleString()}</td>
-                          <td className="text-green-600">₱{record.amountPaid.toLocaleString()}</td>
-                          <td className={`font-medium ${record.remainingBalance > 0 ? 'text-red' : 'text-green-600'}`}>
-                            ₱{record.remainingBalance.toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
+                      {contributionRecords.map((record) => {
+                        const status = contributionStatus(record);
+                        const paymentReceipts = receiptsForEvent(record.eventId);
+                        return (
+                          <tr key={record.id}>
+                            <td className="font-medium text-dark">{record.eventName}</td>
+                            <td>
+                              <span className="font-medium text-green-600">{formatPeso(record.amountPaid)}</span>
+                              <span className="block text-xs text-text-secondary">
+                                of {formatPeso(record.requiredAmount)}
+                              </span>
+                            </td>
+                            <td className={`font-medium ${status.className}`}>
+                              {status.label}
+                            </td>
+                            <td>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {/* Downloadable receipt: available ONLY when the payment is
+                                    Fully Paid. Partial and Unpaid records never show a Download
+                                    Receipt option and cannot produce an Official Receipt. */}
+                                {status.label === 'Fully Paid' && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger
+                                      asChild
+                                      disabled={downloadingId === record.id}
+                                      title={`Download contribution receipt – ${record.eventName}`}
+                                    >
+                                      <button
+                                        disabled={downloadingId === record.id}
+                                        className="px-2.5 py-1.5 text-xs disabled:opacity-70"
+                                      >
+                                        {downloadingId === record.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Download className="w-3.5 h-3.5" />
+                                        )}
+                                        Download
+                                        <ChevronDown className="w-3 h-3" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="glass-card-strong">
+                                      {(['svg', 'png', 'jpg'] as ReceiptFormat[]).map((format) => (
+                                        <DropdownMenuItem
+                                          key={format}
+                                          onClick={() => handleDownloadContributionReceipt(record, format)}
+                                          className="flex items-center gap-2 cursor-pointer text-xs"
+                                        >
+                                          {format.toUpperCase()}
+                                        </DropdownMenuItem>
+                                      ))}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                                {status.label === 'Fully Paid' && paymentReceipts.map((payment) => (
+                                  <button
+                                    key={payment.id}
+                                    type="button"
+                                    onClick={() => setSelectedReceipt(payment.receiptUrl || null)}
+                                    className="p-2 rounded-lg text-text-secondary"
+                                    title={`Preview payment receipt – ${payment.eventName} (${formatDate(payment.date)})`}
+                                    aria-label="Preview payment receipt"
+                                  >
+                                    <Receipt className="w-4 h-4" />
+                                  </button>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
 
                 {contributionRecords.length === 0 && (
-                  <div className="text-center py-8 text-text-secondary">
-                    <Wallet className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                    <p>No contribution records found</p>
-                  </div>
+                  <SectionEmptyState message="No contribution records found" icon={Wallet} compact />
                 )}
 
                 {/* Summary */}
                 {contributionRecords.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-white/20">
+                  <div className="mt-4 pt-4 border-t border-white/50">
                     <div className="flex justify-between text-sm">
                       <span className="text-text-secondary">Total Required:</span>
-                      <span className="font-medium text-dark">₱{totalRequired.toLocaleString()}</span>
+                      <span className="font-medium text-dark">{formatPeso(totalRequired)}</span>
                     </div>
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-text-secondary">Total Paid:</span>
-                      <span className="font-medium text-green-600">₱{totalPaid.toLocaleString()}</span>
+                      <span className="font-medium text-green-600">{formatPeso(totalPaid)}</span>
                     </div>
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-text-secondary">Remaining Balance:</span>
-                      <span className={`font-medium ${totalBalance > 0 ? 'text-red' : 'text-green-600'}`}>
-                        ₱{totalBalance.toLocaleString()}
+                      <span className={`font-medium ${totalBalance > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                        {formatPeso(totalBalance)}
                       </span>
                     </div>
                   </div>
@@ -284,86 +401,19 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
               </div>
             </div>
 
-            {/* Payment Receipts */}
-            <div ref={receiptsRef} className="glass-card p-5 lg:p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Receipt className="w-5 h-5 text-red" />
-                </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Payment Receipts</h3>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {paymentRecords.filter(p => p.receiptUrl).map((payment) => (
-                  <button
-                    key={payment.id}
-                    onClick={() => setSelectedReceipt(payment.receiptUrl || null)}
-                    className="glass-card p-3 text-left hover:scale-105 transition-transform"
-                  >
-                    <div className="aspect-square rounded-lg bg-red/5 flex items-center justify-center mb-2">
-                      <Receipt className="w-8 h-8 text-red/40" />
-                    </div>
-                    <p className="text-xs font-medium text-dark truncate">{payment.eventName}</p>
-                    <p className="text-xs text-green-600">₱{payment.amount.toLocaleString()}</p>
-                    <p className="text-xs text-text-secondary">{formatDate(payment.date)}</p>
-                  </button>
-                ))}
-              </div>
-
-              {paymentRecords.filter(p => p.receiptUrl).length === 0 && (
-                <div className="text-center py-8 text-text-secondary">
-                  <Receipt className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                  <p>No receipts available</p>
-                </div>
-              )}
-            </div>
-          </>
+            </>
         )}
       </div>
 
       {/* Receipt Modal */}
-      <Dialog open={!!selectedReceipt} onOpenChange={() => setSelectedReceipt(null)}>
-        <DialogContent className="glass-card-strong max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              Payment Receipt
-            </DialogTitle>
-          </DialogHeader>
-          <div className="mt-4">
-            {selectedReceipt ? (
-              <img 
-                src={selectedReceipt} 
-                alt="Receipt" 
-                className="w-full rounded-lg"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/receipts/placeholder.jpg';
-                }}
-              />
-            ) : (
-              <div className="text-center py-12 text-text-secondary">
-                <Receipt className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                <p>Receipt not available</p>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ReceiptViewer
+        receiptUrl={selectedReceipt}
+        onClose={() => setSelectedReceipt(null)}
+        title="Contribution Receipt"
+      />
+
+      {/* Attendance QR Code Modal */}
+      <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
     </section>
   );
-}
-
-function formatDate(dateString: string): string {
-  if (!dateString) return '-';
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: 'short', 
-    day: 'numeric' 
-  });
-}
-
-function getOrdinalSuffix(num: number): string {
-  const suffixes = ['th', 'st', 'nd', 'rd'];
-  const v = num % 100;
-  return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
 }

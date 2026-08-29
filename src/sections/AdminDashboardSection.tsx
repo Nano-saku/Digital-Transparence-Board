@@ -1,20 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
-import { gsap } from 'gsap';
-import { 
+import { useEffect, useRef, useState, useCallback } from 'react';
+import {
   Users, Wallet, TrendingUp, TrendingDown, PieChart,
   UserCog, Calendar, CreditCard, FileText, LogOut,
-  ArrowRight, Loader2
+  ArrowRight, MessageSquare, Coins
 } from 'lucide-react';
-import type { ViewState, FinancialSummary } from '@/types';
-import { financialSummaryService, studentsService, eventsService, feedbackService } from '@/services/db';
+import { today, daysUntil, formatPeso } from '@/lib/format';
+import { useSectionEntrance } from '@/hooks/useSectionEntrance';
+import SectionLoader from '@/components/SectionLoader';
+import type { ViewState, FinancialSummary, Event, UserRole } from '@/types';
+import { financialReportingService, studentsService, eventsService, feedbackService, boardMembersService, subscribeToTables } from '@/services/db';
 import { toast } from 'sonner';
-
 interface AdminDashboardSectionProps {
   onNavigate: (view: ViewState) => void;
   onLogout: () => void;
+  role: UserRole;
+  userEmail: string;
+  userId?: string;
 }
 
-export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDashboardSectionProps) {
+export default function AdminDashboardSection({ onNavigate, onLogout, role, userEmail, userId = '' }: AdminDashboardSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const headlineRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
@@ -23,65 +27,72 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
   const [loading, setLoading] = useState(true);
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [studentCount, setStudentCount] = useState(0);
-  const [eventCount, setEventCount] = useState(0);
+  const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([]);
   const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
 
-  // Load data from database
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const [summaryData, studentsData, eventsData, pendingFeedbackData] = await Promise.all([
-        financialSummaryService.get(),
+      const [summaryData, studentsData, eventsData, pendingFeedbackData, boardMembersData] = await Promise.all([
+        financialReportingService.getReport().then((report) => report.summary),
         studentsService.getAll(),
         eventsService.getAll(),
         feedbackService.getByStatus('pending'),
+        boardMembersService.listBoardMembers(),
       ]);
       setFinancialSummary(summaryData);
       setStudentCount(studentsData.length);
-      setEventCount(eventsData.length);
       setPendingFeedbackCount(pendingFeedbackData.length);
+
+      // Upcoming = events whose date is today or later, soonest first.
+      // Board members only see the events assigned to them.
+      const todays = today();
+      const assignedCatalogIds = new Set(
+        boardMembersData
+          .filter((member) => member.accountUserId === userId)
+          .map((member) => member.id)
+      );
+      const upcoming = eventsData
+        .filter((e) => e.date && e.date >= todays)
+        .filter(
+          (e) =>
+            role !== 'board-member' ||
+            (e.assignedMembers?.some((m) => assignedCatalogIds.has(m.memberId)) ?? false)
+        )
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      setUpcomingEvents(upcoming);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [role, userId]);
 
+  // Load data from database and refresh the member-to-account mapping when the
+  // authenticated user or role changes.
   useEffect(() => {
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    loadDashboardData();
+  }, [loadDashboardData]);
 
-      // Headline entrance
-      tl.fromTo(
-        headlineRef.current,
-        { x: '-30vw', opacity: 0 },
-        { x: 0, opacity: 1, duration: 0.7 }
-      );
+  // Re-query every source table on change so dashboard figures never depend on
+  // stale local values or hardcoded counters.
+  useEffect(() => {
+    return subscribeToTables(
+      ['students', 'events', 'contributions', 'payments', 'transactions', 'feedback', 'board_members'],
+      loadDashboardData,
+      'dashboard',
+    );
+  }, [loadDashboardData]);
 
-      // Summary cards entrance
-      tl.fromTo(
-        summaryRef.current?.querySelectorAll('.summary-card') || [],
-        { y: '-20vh', opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.6, stagger: 0.05 },
-        '-=0.4'
-      );
-
-      // Quick actions entrance
-      tl.fromTo(
-        actionsRef.current?.querySelectorAll('.action-card') || [],
-        { y: '30vh', opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.6, stagger: 0.06 },
-        '-=0.3'
-      );
-    }, sectionRef);
-
-    return () => ctx.revert();
-  }, []);
+  useSectionEntrance(sectionRef, [
+    // Headline entrance
+    { ref: headlineRef, from: { x: '-30vw', opacity: 0 }, to: { x: 0, opacity: 1, duration: 0.7 } },
+    // Summary cards entrance
+    { ref: summaryRef, selector: '.summary-card', from: { y: '-20vh', opacity: 0 }, to: { y: 0, opacity: 1, duration: 0.6, stagger: 0.05 }, position: '-=0.4' },
+    // Quick actions entrance
+    { ref: actionsRef, selector: '.action-card', from: { y: '30vh', opacity: 0 }, to: { y: 0, opacity: 1, duration: 0.6, stagger: 0.06 }, position: '-=0.3' },
+  ]);
 
   const summaryCards = [
     { 
@@ -93,28 +104,28 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
     },
     { 
       label: 'Expected Contributions', 
-      value: `₱${financialSummary?.totalExpectedContributions.toLocaleString() || '0'}`, 
+      value: formatPeso(financialSummary?.totalExpectedContributions ?? 0), 
       icon: Wallet, 
       color: 'purple',
       suffix: ''
     },
     { 
       label: 'Funds Collected', 
-      value: `₱${financialSummary?.totalFundsCollected.toLocaleString() || '0'}`, 
+      value: formatPeso(financialSummary?.totalFundsCollected ?? 0), 
       icon: TrendingUp, 
       color: 'green',
       suffix: ''
     },
     { 
       label: 'Funds Spent', 
-      value: `₱${financialSummary?.totalFundsSpent.toLocaleString() || '0'}`, 
+      value: formatPeso(financialSummary?.totalFundsSpent ?? 0), 
       icon: TrendingDown, 
       color: 'red',
       suffix: ''
     },
     { 
       label: 'Remaining Budget', 
-      value: `₱${financialSummary?.remainingBudget.toLocaleString() || '0'}`, 
+      value: formatPeso(financialSummary?.remainingBudget ?? 0), 
       icon: PieChart, 
       color: 'yellow',
       suffix: ''
@@ -122,47 +133,90 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
   ];
 
   const quickActions = [
+    ...(role === 'admin'
+      ? [{
+          title: 'Student Management',
+          description: 'Add, edit, or remove student records',
+          icon: UserCog,
+          view: 'student-management' as ViewState,
+          color: 'blue',
+        }]
+      : []),
+    ...(role === 'admin' || role === 'treasurer'
+      ? [{
+          title: 'Event Management',
+          description: 'Create events and manage allocations',
+          icon: Calendar,
+          view: 'event-management' as ViewState,
+          color: 'green',
+        }]
+      : []),
+    ...(role === 'board-member'
+      ? [{
+          title: 'Assigned Events',
+          description: 'View the events you are assigned to',
+          icon: Calendar,
+          view: 'event-management' as ViewState,
+          color: 'green',
+        }]
+      : []),
+    ...(role === 'admin' || role === 'secretary'
+      ? [{
+          title: 'Attendance Tracking',
+          description: 'Record attendance for every event',
+          icon: Users,
+          view: 'attendance-management' as ViewState,
+          color: 'green',
+        }]
+      : []),
+    ...(role === 'admin' || role === 'treasurer' || role === 'auditor'
+      ? [
+          {
+            title: 'Payment Records',
+            description: 'Record and track student payments',
+            icon: CreditCard,
+            view: 'payment-management' as ViewState,
+            color: 'purple',
+          },
+          {
+            title: 'Transaction Ledger',
+            description: 'Manage income and expenses with auto receipts',
+            icon: FileText,
+            view: 'transaction-management' as ViewState,
+            color: 'yellow',
+          },
+          {
+            title: 'Contribution Records',
+            description: 'Add, edit, or remove student contributions',
+            icon: Coins,
+            view: 'contribution-management' as ViewState,
+            color: 'blue',
+          },
+        ]
+      : []),
+    ...(role === 'board-member'
+      ? [{
+          title: 'Transparency Board',
+          description: 'View the council financial report',
+          icon: FileText,
+          view: 'transparency' as ViewState,
+          color: 'blue',
+        }]
+      : []),
     {
-      title: 'Student Management',
-      description: 'Add, edit, or remove student records',
-      icon: UserCog,
-      view: 'student-management' as ViewState,
-      color: 'blue',
-    },
-    {
-      title: 'Event Management',
-      description: 'Create events and manage allocations',
-      icon: Calendar,
-      view: 'event-management' as ViewState,
-      color: 'green',
-    },
-    {
-      title: 'Payment Records',
-      description: 'Record and track student payments',
-      icon: CreditCard,
-      view: 'payment-management' as ViewState,
+      title: 'Feedback Inbox',
+      description: 'View all complaints, inquiries, and suggestions',
+      icon: MessageSquare,
+      view: 'feedback-management' as ViewState,
       color: 'purple',
-    },
-    {
-      title: 'Transaction Ledger',
-      description: 'View and manage all transactions',
-      icon: FileText,
-      view: 'transaction-management' as ViewState,
-      color: 'yellow',
     },
   ];
 
   return (
     <section 
       ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-warm relative overflow-hidden py-20 lg:py-24"
+      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-40 right-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-40 left-20 w-96 h-96 rounded-full bg-white blur-3xl" />
-      </div>
-
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
         {/* Header */}
@@ -171,12 +225,29 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
             <h1 className="font-display font-bold text-3xl lg:text-4xl text-dark mb-2">
               Admin Dashboard
             </h1>
-            <p className="text-text-secondary">
-              Welcome back! Here is an overview of your council finances.
-            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <img
+                src="/DSSC_logo.png"
+                alt="DSSC logo"
+                className="h-12 w-12 rounded-full border-2 border-lsc-gold/60 bg-white object-contain p-1"
+              />
+              <p className="text-text-secondary">
+                {userEmail} — your council{' '}
+                {
+                  {
+                    admin: 'operations',
+                    secretary: 'attendance',
+                    treasurer: 'finance',
+                    auditor: 'finance & audit',
+                    'board-member': 'events',
+                  }[role]
+                }{' '}
+                overview.
+              </p>
+            </div>
           </div>
           <button
-            onClick={onLogout}
+onClick={onLogout}
             className="glass-button px-4 py-2.5 flex items-center gap-2 self-start"
           >
             <LogOut className="w-4 h-4" />
@@ -185,12 +256,7 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
         </div>
 
         {/* Loading State */}
-        {loading && (
-          <div className="glass-card p-12 text-center">
-            <Loader2 className="w-8 h-8 mx-auto mb-4 animate-spin text-red" />
-            <p className="text-text-secondary">Loading dashboard data...</p>
-          </div>
-        )}
+        {loading && <SectionLoader message="Loading dashboard data..." />}
 
         {!loading && (
           <>
@@ -229,12 +295,12 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
             {/* Stats Row */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
               <div className="glass-card p-5 flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Calendar className="w-6 h-6 text-red" />
+                <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
+                  <Calendar className="w-6 h-6 text-blue-600" />
                 </div>
                 <div>
-                  <p className="font-display font-bold text-2xl text-dark">{eventCount}</p>
-                  <p className="text-sm text-text-secondary">Active Events</p>
+                  <p className="font-display font-bold text-2xl text-dark">{upcomingEvents.length}</p>
+                  <p className="text-sm text-text-secondary">Upcoming Events</p>
                 </div>
               </div>
 
@@ -269,7 +335,7 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
                   const Icon = action.icon;
                   return (
                     <button
-                      key={index}
+key={index}
                       onClick={() => onNavigate(action.view)}
                       className="action-card glass-card p-5 text-left hover:shadow-lg transition-all group"
                     >
@@ -292,7 +358,7 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
                       <p className="text-sm text-text-secondary mb-3">
                         {action.description}
                       </p>
-                      <span className="inline-flex items-center gap-1 text-sm font-medium text-red group-hover:gap-2 transition-all">
+                      <span className="inline-flex items-center gap-1 text-sm font-medium text-royal-blue group-hover:gap-2 transition-all">
                         Manage
                         <ArrowRight className="w-4 h-4" />
                       </span>
@@ -300,6 +366,72 @@ export default function AdminDashboardSection({ onNavigate, onLogout }: AdminDas
                   );
                 })}
               </div>
+            </div>
+
+            {/* Upcoming Events */}
+            <div className="mt-10">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <h2 className="font-display font-semibold text-xl text-dark">
+                  Upcoming Events
+                </h2>
+                {(role === 'admin' || role === 'treasurer') && (
+                  <button
+onClick={() => onNavigate('event-management')}
+                    className="text-sm self-start"
+                  >
+                    Manage all events
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {upcomingEvents.length === 0 ? (
+                <div className="glass-card p-10 text-center text-text-secondary">
+                  <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p>{role === 'board-member' ? 'No events have been assigned to you yet' : 'No upcoming events scheduled'}</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {upcomingEvents.slice(0, 6).map((event) => {
+                    const days = daysUntil(event.date || '');
+                    return (
+                      <div key={event.id} className="glass-card p-5">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h3 className="font-display font-semibold text-dark leading-snug">
+                            {event.name}
+                          </h3>
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium flex-shrink-0 ${
+                            days === 0
+                              ? 'bg-red-500 text-white'
+                              : days > 0
+                                ? 'bg-green-100 text-green-600'
+                                : 'bg-red/10 text-red-500'
+                          }`}>
+                            {days === 0
+                              ? 'Today'
+                              : days > 0
+                                ? `In ${days} day${days === 1 ? '' : 's'}`
+                                : 'Over'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-text-secondary mb-3">
+                          {event.date
+                            ? new Date(event.date).toLocaleDateString('en-US', {
+                                weekday: 'short',
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })
+                            : 'Date not set'}
+                        </p>
+                        <p className="text-xs text-text-secondary">
+                          Allocation: <span className="font-medium text-dark">₱{event.allocationAmount.toLocaleString()}</span>
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </>
         )}

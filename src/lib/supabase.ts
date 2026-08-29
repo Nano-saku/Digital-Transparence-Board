@@ -1,15 +1,43 @@
-import { createClient } from "@supabase/supabase-js";
-import type { Database } from "../types/supabase"; // Relative path
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl =
-  import.meta.env.VITE_SUPABASE_URL ||
-  "https://hqxdssfvqyyrytvtkcmf.supabase.co";
-const supabaseKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhxeGRzc2Z2cXl5cnl0dnRrY21mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NTYxMDksImV4cCI6MjA4OTMzMjEwOX0.zrXJVPmQU7RhjeSW7qAwj48GEwVfYfUirLagOLzUO9s";
+// ------------------------------------------------------------------
+// Supabase configuration
+// ------------------------------------------------------------------
+// Values come from your Supabase project dashboard:
+// Project Settings > API > Project URL and Publishable key (or anon key).
+// Copy .env.example to .env and fill in the values.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseKey);
+let client: SupabaseClient | null = null;
 
-export const isSupabaseConfigured = () => {
-  return !!supabaseUrl && !!supabaseKey;
-};
+/** True when the required Supabase env vars are present. */
+export const isSupabaseConfigured = (): boolean =>
+  Boolean(supabaseUrl && supabaseKey);
+
+/**
+ * Returns the initialized Supabase client, or throws a helpful error when the
+ * project has not been configured yet. Initialization is lazy so importing
+ * this module (and the db service layer) never crashes the app.
+ */
+export function getSupabase(): SupabaseClient {
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(
+      "Supabase is not configured. Copy .env.example to .env and add your " +
+        "Supabase project URL and publishable key. See SUPABASE_INTEGRATION.md " +
+        "for details."
+    );
+  }
+  if (!client) {
+    client = createClient(supabaseUrl, supabaseKey, {
+      // The app now uses real Supabase Auth (officer accounts from
+      // supabase/security.sql), so sessions persist across reloads.
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+  }
+  return client;
+}

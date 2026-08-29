@@ -1,156 +1,227 @@
-# Digital Transparency Board - Supabase Integration
+# Supabase Integration
 
-This document describes the Supabase database integration for the Digital Transparency Board application.
+This project is backed by **Supabase** (PostgreSQL) instead of Firebase.
+All data access goes through the Supabase client in `src/lib/supabase.ts` and
+the service layer in `src/services/db.ts`.
 
-## Overview
+## Setup
 
-The application has been fully integrated with Supabase to provide real-time data persistence for all modules including:
-- Student Management
-- Event Management
-- Payment Records
-- Attendance Tracking
-- Financial Transparency
-- Feedback System
+1. **Run the database scripts** — two SQL files live in `supabase/`:
+   - **`supabase/schema.sql`** — creates/upgrades the tables, indexes, and
+     strict Row-Level Security policies without dropping data. It is safe to
+     rerun on a fresh or existing project.
+   - **`supabase/security.sql`** — creates/upgrades `user_roles`, the
+     `board_members` catalog, storage, and role-based policies. It also removes
+     the obsolete profile-image column from `user_roles`. **Run this on any
+     project** (existing or fresh) before going live. It is idempotent.
+   - For an **existing database**, run `security.sql` first or by itself. It
+     now creates the missing `board_members` catalog before applying its
+     policies. Run `schema.sql` afterward only if the base tables also need to
+     be created/upgraded.
 
-## Setup Instructions
+   ```text
+   Supabase Dashboard → SQL Editor → New query → paste → Run
+   ```
 
-### 1. Create a Supabase Project
+2. **Environment variables** — copy `.env.example` to `.env` and fill in:
 
-1. Go to [Supabase](https://supabase.com) and create a new project
-2. Note your project URL and anon key
+   ```env
+   VITE_SUPABASE_URL=https://tguimzatilpqxnpoammo.supabase.co
+   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_0NlnRQHlQlrzMvgHvSUSWQ_MMqwWZh3
+   ```
 
-### 2. Configure Environment Variables
+   These come from **Project Settings → API** in the dashboard
+   (the "Publishable key", which is the browser-safe replacement for the anon
+   key; the anon key works too).
 
-Create a `.env` file in the root directory:
+3. **Run the app**
 
-```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+## Officer accounts (sign-in)
+
+The admin area is protected by **real Supabase Auth**. Authentication accounts
+must be provisioned through Supabase Authentication; the SQL files do not create
+accounts or set passwords. The role synchronization scripts recognize these
+officer email addresses:
+
+| Role         | Email                         | Access |
+| ------------ | ----------------------------- | ------ |
+| Admin        | `admin@studentboard.ph`       | Full administration |
+| Secretary    | `secretary@studentboard.ph`   | Attendance and read access |
+| Treasurer    | `treasurer@studentboard.ph`   | Payments and financial records |
+| Auditor      | `auditor@studentboard.ph`     | Payments and financial records |
+| Board Member | `boardmember@studentboard.ph` | Assigned events and read access |
+
+Roles live in the `public.user_roles` table (`user_id` → `role`). To add more
+officers later:
+
+```sql
+-- create the auth user first (Dashboard > Authentication > Users > Add user),
+-- then assign the role:
+INSERT INTO public.user_roles (user_id, role, name)
+VALUES ('<the auth user id>', 'admin', 'Display Name');
 ```
 
-### 3. Run the Database Schema
+### Temporary officer identity display
 
-Execute the SQL schema (provided by the user) in your Supabase SQL Editor to create all necessary tables:
-- `students`
-- `events`
-- `attendance_records`
-- `contribution_records`
-- `payment_records`
-- `transactions`
-- `feedback_items`
-- `financial_summaries`
-- `event_allocations`
+Officer profile images are not stored in Supabase. The dashboard always renders
+the local application asset `/DSSC_logo.png`, and displays the authenticated
+Supabase user's actual `auth.users.email` below it. `public.user_roles` stores
+only the account's role and display name used by application workflows.
 
-### 4. Install Dependencies
+`supabase/security.sql` includes `DROP COLUMN IF EXISTS profile_image_url` to
+remove the image field left by an earlier version. It does not modify
+`auth.users`, passwords, role assignments, or permissions. Do not add a profile
+image column, profile-picture record, upload flow, or Supabase Storage object
+for this temporary display.
 
-```bash
-npm install
-```
+The repository includes the local asset at `public/DSSC_logo.png`. Keep that
+file available at the deployed application's site root. The older
+`DSSC-logo.png` filename remains only for receipt-generation compatibility.
 
-### 5. Run the Application
+## Production data cleanup
 
-```bash
-npm run dev
-```
+Run `supabase/production_cleanup.sql` in the Supabase SQL Editor when preparing
+the project for production:
 
-## Database Services
+1. Run the two preview queries at the top and review every candidate row.
+2. If a legitimate record matches a marker word (`test`, `dummy`, `sample`,
+   `mock`, `placeholder`, `fake`, `fixture`, `demo`, or `seed`), remove it from
+   the candidate logic before proceeding.
+3. Change `v_confirm` from `false` to `true` in the cleanup block and run the
+   complete script in one execution.
+4. Confirm the final account query still lists every required officer and role.
 
-All database operations are encapsulated in `/src/services/db.ts`:
+The script deletes only strongly marked operational records and unlinked,
+strongly marked board-member catalog rows. It removes attendance,
+contributions, payments, transactions, feedback, allocations, and then their
+marked event/student records in dependency order. It preserves the production
+financial summary row (`id = 'main'`), all account-linked board members, every
+`public.user_roles` row, and every `auth.users` row. It does not drop or alter
+tables, relationships, functions, triggers, RLS policies, grants, or storage.
 
-### Students Service
-- `getAll()` - Fetch all students
-- `getById(id)` - Fetch student by UUID
-- `getByStudentId(studentId)` - Fetch student by student ID
-- `getByName(name)` - Search student by name
-- `create(student)` - Create new student
-- `update(id, student)` - Update student
-- `delete(id)` - Delete student
-- `search(query)` - Search students by name or ID
+Do not use broad `DELETE FROM <table>` statements for this task. With
+`v_confirm = false`, the cleanup block performs no deletes and returns a notice
+so the SQL Editor reports a successful, safe preview-only execution. Only the
+project owner can identify a live row as test data from the Supabase preview
+results.
 
-### Events Service
-- `getAll()` - Fetch all events
-- `getById(id)` - Fetch event by ID
-- `create(event)` - Create new event
-- `update(id, event)` - Update event
-- `delete(id)` - Delete event
+## Receipts
 
-### Attendance Service
-- `getAll()` - Fetch all attendance records
-- `getByStudentId(studentId)` - Fetch attendance by student
-- `getByEventId(eventId)` - Fetch attendance by event
-- `create(record)` - Create attendance record
-- `update(id, record)` - Update attendance
-- `delete(id)` - Delete attendance
-- `getStatsByEventId(eventId)` - Get attendance statistics
+- The seeded receipts are **real image files** served from `public/receipts/`
+  (`receipt1.svg`, `expense2.svg`, …). Regenerate them anytime with
+  `node scripts/generate-receipts.mjs`.
+- The Receipt viewer dialog has **Open in new tab** and **Download** buttons.
+  Auto-generated (SVG) receipts can be exported as **SVG, PNG, or JPG**.
+- When the **treasurer, auditor, or admin** records a payment or a ledger
+  transaction, an **official receipt is generated automatically** (SVG, via
+  `src/lib/receipts.ts`) and uploaded to the Supabase Storage bucket `receipts`
+  (created by `security.sql`). If the bucket is not configured yet, the record
+  is still saved — just without a receipt.
+- There is no manual receipt upload in the Record Payment form or the
+  transaction-ledger dialog anymore — the generated receipt is the receipt.
+  The public URL is stored in `payments.receipt_url` / `transactions.receipt_url`.
 
-### Contributions Service
-- `getAll()` - Fetch all contribution records
-- `getByStudentId(studentId)` - Fetch contributions by student
-- `getByEventId(eventId)` - Fetch contributions by event
-- `create(record)` - Create contribution record
-- `update(id, record)` - Update contribution
-- `delete(id)` - Delete contribution
+## Schema (tables)
 
-### Payments Service
-- `getAll()` - Fetch all payment records
-- `getByStudentId(studentId)` - Fetch payments by student
-- `getByEventId(eventId)` - Fetch payments by event
-- `create(record)` - Create payment record
-- `update(id, record)` - Update payment
-- `delete(id)` - Delete payment
+| Table                  | Purpose                                     | App type                     |
+| ---------------------- | ------------------------------------------- | ---------------------------- |
+| `students`             | Student roster                              | `Student`                    |
+| `events`               | Events with allocation amounts, Morning + Afternoon scheduled attendance windows (`morning_time_in`/`morning_time_out`, `afternoon_time_in`/`afternoon_time_out`; legacy single-session `time_in`/`time_out` kept), + assigned board members (`assigned_member_ids`/`assigned_member_names` text arrays) | `Event`            |
+| `attendance`        | Per-student attendance per event + scan-captured shift times (`time_in`/`time_out`, 24h HH:MM) | `AttendanceRecord` |
+| `contributions`        | Required vs paid amounts per student/event  | `ContributionRecord`         |
+| `payments`             | Cash receipts                               | `PaymentRecord`              |
+| `transactions`         | Income/expense ledger entries               | `Transaction`                |
+| `feedback`             | Student feedback (inquiry/complaint/suggestion) | `FeedbackItem`            |
+| `financial_summaries`  | Single-row summary (id = `'main'`)          | `FinancialSummary`           |
+| `event_allocations`    | Per-event budget allocation (id = event id) | `EventAllocation`            |
 
-### Transactions Service
-- `getAll()` - Fetch all transactions
-- `getByEventId(eventId)` - Fetch transactions by event
-- `create(record)` - Create transaction
-- `update(id, record)` - Update transaction
-- `delete(id)` - Delete transaction
-- `getFinancialSummary()` - Get financial summary
+Column names are `snake_case` in the database and are mapped to the app's
+`camelCase` fields inside `src/services/db.ts`.
 
-### Feedback Service
-- `getAll()` - Fetch all feedback items
-- `getByType(type)` - Fetch feedback by type
-- `getByStatus(status)` - Fetch feedback by status
-- `create(item)` - Create feedback item
-- `update(id, item)` - Update feedback
-- `delete(id)` - Delete feedback
-- `updateStatus(id, status)` - Update feedback status
+## Attendance (QR scans + auto status)
 
-### Financial Summary Service
-- `get()` - Fetch financial summary
-- `update(summary)` - Update financial summary
+The Attendance Tracking tab (admin/secretary) lets the secretary record every
+event and student:
 
-### Event Allocations Service
-- `getAll()` - Fetch all event allocations
-- `getByEventId(eventId)` - Fetch allocation by event
-- `create(allocation)` - Create event allocation
-- `update(eventId, allocation)` - Update event allocation
+- A single **search bar** filters students by **full name or student ID**
+  (one box for both).
+- **QR scanner** with two modes — **Scan Time In** and **Scan Time Out**. The
+  actual scan time is captured automatically as the student's Time In / Time
+  Out, never typed by hand. Times are stored as 24h `HH:MM` and displayed in
+  12-hour labels (e.g. "6:00 AM – 12:00 PM").
+- **Attendance is saved automatically** — every QR scan, status toggle, and
+  time edit persists to the `attendance` table immediately (upsert) and the
+  table shows the saved row instantly. There is no "Save Attendance" button.
+- **Status is auto-derived from the event's Morning / Afternoon schedule**
+  (`events.morning_time_in` + `afternoon_time_in`, set on the event create/edit
+  form which has a Morning Schedule and an Afternoon Schedule, both 12-hour
+  inputs):
+  - **Present** – scanned on/before the applicable session's Time In (the
+    Morning Time In until the Afternoon session begins, then the Afternoon
+    Time In).
+  - **Late** – scanned after that session's Time In.
+  - **Absent** – never scanned; the system **automatically marks the student
+    Absent at 10:00 PM** on the event day (checks on the Attendance tab and on
+    a 1-minute timer, idempotent so it never duplicates saved scans/edits).
+- `supabase/security.sql` adds the new `morning_time_in`/`morning_time_out` and
+  `afternoon_time_in`/`afternoon_time_out` columns to an existing `events`
+  table non-destructively (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, along
+  with the older `time_in`/`time_out` additions); fresh setups get them from
+  `schema.sql`. Existing events with only `time_in`/`time_out` are treated as
+  a Morning-only schedule.
+- The `attendance` table also carries a **`session`** column
+  (`morning` | `afternoon`, default `morning`) so each student gets separate
+  Time In / Time Out rows per shift.
+  ⚠️ **Existing databases MUST re-run `supabase/security.sql`** (or at least
+  its section 3b `ALTER TABLE` statements) before using attendance recording:
+  every insert/update sent by the app includes `session`, so a database
+  without that column rejects ALL Time In / Time Out writes with
+  *"Could not find the 'session' column of 'attendance' in the schema cache"*.
 
-## UI Updates
+## Production catalog
 
-All sections have been updated with:
-- Loading states while fetching data
-- Error handling with toast notifications
-- Success confirmations for CRUD operations
-- Disabled states during async operations
+The database setup intentionally contains no demo students, events, or
+payments. Board members are maintained in the `public.board_members` catalog;
+add the authoritative names with an idempotent SQL seed only after the official
+roster has been confirmed. Catalog rows do not create authentication accounts.
 
-## Authentication
+## Security (roles & RLS)
 
-The admin login uses simple mock authentication:
-- Username: `admin`, Password: `admin`
-- Username: `superadmin`, Password: `superadmin`
+Row Level Security is enabled on every table. The old open `public_all`
+policies are gone — the current policies are strict and role-based:
 
-For production, implement proper authentication using Supabase Auth.
+| Data            | Public (anyone)                                   | Staff write access                       |
+| --------------- | ------------------------------------------------- | ---------------------------------------- |
+| Transparency data (students, events, attendance, contributions, payments, transactions, financial summaries, allocations) | Read only | `admin` (all), `secretary` (attendance), `treasurer` + `auditor` (payments/finances) |
+| `feedback`      | Can submit (`INSERT`)                             | Staff read; `admin` updates/deletes      |
+| `user_roles`    | none                                              | Each user reads their own role row; staff may read the board-member roster for event assignment |
 
-## Row Level Security (RLS)
+Implementation notes:
 
-The database schema includes RLS policies for:
-- Public read access to all tables (for transparency)
-- Service role full access (for backend operations)
+- The policies call `public.has_role(text)` / `public.is_staff()` (security
+  definer helpers reading `public.user_roles`), so role checks happen on the
+  server, not in the app.
+- The app signs in with `auth.signInWithPassword` (`src/services/auth.ts`),
+  resolves the officer's role, and gates every admin screen by role.
+- Storage: a public `receipts` bucket is created; signed-in staff may upload
+  to it.
 
-## Notes
+## Service API (unchanged for UI components)
 
-- All data fetching is done asynchronously with proper loading states
-- Error handling is implemented throughout the application
-- The existing design and animations have been preserved
-- Toast notifications provide user feedback for all operations
+`src/services/db.ts` exports exactly the same services and method signatures
+that the Firebase version had, so the UI sections do not need changes:
+
+- `studentsService` — `getAll`, `getById`, `getByStudentId`, `getByName`, `create`, `update`, `delete`, `search`
+- `eventsService` — `getAll`, `getById`, `create`, `update`, `delete`
+- `attendanceService` — `getAll`, `getById`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`, `getStatsByEventId`
+- `contributionsService` — `getAll`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`
+- `paymentsService` — `getAll`, `getById`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`
+- `transactionsService` — `getAll`, `getById`, `getByEventId`, `create`, `update`, `delete`, `getFinancialSummary`
+- `feedbackService` — `getAll`, `getById`, `getByType`, `getByStatus`, `create`, `update`, `delete`, `updateStatus`
+- `financialSummaryService` — `get`, `update`
+- `eventAllocationsService` — `getAll`, `getByEventId`, `create`, `update`, `delete`

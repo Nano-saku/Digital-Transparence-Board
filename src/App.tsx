@@ -1,7 +1,9 @@
-import { useState, useRef } from 'react';
-import type { ViewState, Student } from '@/types';
+import { useState, useEffect, useRef } from 'react';
+import type { ViewState, Student, UserRole } from '@/types';
 import { studentsService } from '@/services/db';
+import { authService, type AuthSession } from '@/services/auth';
 import { toast, Toaster } from 'sonner';
+import { offlineSyncService } from '@/lib/offlineSync';
 
 // Sections
 import Navigation from '@/sections/Navigation';
@@ -13,15 +15,53 @@ import AdminLoginSection from '@/sections/AdminLoginSection';
 import AdminDashboardSection from '@/sections/AdminDashboardSection';
 import StudentManagementSection from '@/sections/StudentManagementSection';
 import EventManagementSection from '@/sections/EventManagementSection';
+import ContributionManagementSection from '@/sections/ContributionManagementSection';
+import FeedbackManagementSection from '@/sections/FeedbackManagementSection';
 import FooterSection from '@/sections/FooterSection';
+
+const ROLE_LABEL: Record<UserRole, string> = {
+  admin: 'Admin',
+  secretary: 'Secretary',
+  treasurer: 'Treasurer',
+  auditor: 'Auditor',
+  'board-member': 'Board Member',
+};
 
 function App() {
   const [currentView, setCurrentView] = useState<ViewState>('landing');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [auth, setAuth] = useState<AuthSession | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
 
   const mainRef = useRef<HTMLDivElement>(null);
+
+  // Start / stop the connectivity listeners for the offline sync service.
+  useEffect(() => {
+    offlineSyncService.start();
+    return () => offlineSyncService.stop();
+  }, []);
+
+  // Keep the offline sync service in sync with the authenticated officer session.
+  useEffect(() => {
+    offlineSyncService.configure(auth?.user.id ?? null, auth?.role ?? null);
+  }, [auth]);
+
+  // Restore the persisted Supabase session after a reload.
+  useEffect(() => {
+    authService
+      .restoreSession()
+      .then((session) => {
+        setAuth(session);
+        if (session && currentView === 'admin-login') {
+          setCurrentView('admin-dashboard');
+        }
+      })
+      .catch((error) => console.error('Failed to restore session:', error))
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  const role: UserRole | null = auth?.role ?? null;
 
   // Handle student search - now using database
   const handleSearch = async (name: string, studentId: string) => {
@@ -35,6 +75,13 @@ function App() {
 
       if (!student && name) {
         student = await studentsService.getByName(name);
+      }
+
+      // Fall back to a fuzzy search across both fields so partial IDs and
+      // abbreviations still resolve (e.g. "2021-000", "Maria", "Dela").
+      if (!student && (name || studentId)) {
+        const matches = await studentsService.search(`${name} ${studentId}`.trim());
+        student = matches[0] ?? null;
       }
 
       if (student) {
@@ -51,17 +98,12 @@ function App() {
     }
   };
 
-  // Handle admin login
-  const handleAdminLogin = (username: string, password: string) => {
-    // Simple mock authentication
-    if ((username === 'admin' && password === 'admin') || 
-        (username === 'superadmin' && password === 'superadmin')) {
-      setIsAdmin(true);
-      setCurrentView('admin-dashboard');
-      toast.success('Welcome, Admin!');
-    } else {
-      toast.error('Invalid credentials. Please try again.');
-    }
+  // Handle admin/staff login. Throws so the login form can surface errors.
+  const handleLogin = async (email: string, password: string) => {
+    const session = await authService.signIn(email, password);
+    setAuth(session);
+    setCurrentView('admin-dashboard');
+    toast.success(`Welcome, ${ROLE_LABEL[session.role]}!`);
   };
 
   // Handle navigation
@@ -71,14 +113,65 @@ function App() {
   };
 
   // Reset admin state on logout
-  const handleLogout = () => {
-    setIsAdmin(false);
+  const handleLogout = async () => {
+    try {
+      await authService.signOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+    setAuth(null);
+    offlineSyncService.configure(null, null);
     setCurrentView('landing');
     toast.info('You have been logged out');
   };
 
+  // Which admin views each role may open.
+  const canAccess = (view: ViewState): boolean => {
+    if (!role) return false;
+    switch (view) {
+      case 'student-management':
+        return role === 'admin';
+      case 'contribution-management':
+        return role === 'admin' || role === 'treasurer' || role === 'auditor';
+      case 'payment-management':
+      case 'transaction-management':
+        return role === 'admin' || role === 'treasurer' || role === 'auditor';
+      case 'attendance-management':
+        return role === 'admin' || role === 'secretary';
+      case 'event-management':
+        return true; // any staff member may view the event schedule
+      case 'feedback-management':
+      case 'admin-dashboard':
+        return true;
+      default:
+        return true;
+    }
+  };
+
   // Render current view
   const renderView = () => {
+    if (!authReady) {
+      return (
+        <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-10 h-10 border-4 border-red/20 border-t-red rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-text-secondary">Loading...</p>
+          </div>
+        </section>
+      );
+    }
+
+    const renderAdminLogin = () => <AdminLoginSection onLogin={handleLogin} />;
+    const renderDashboard = () => (
+      <AdminDashboardSection
+        role={role!}
+        userEmail={auth?.user.email ?? ''}
+        userId={auth?.user.id ?? ''}
+        onNavigate={navigateTo}
+        onLogout={handleLogout}
+      />
+    );
+
     switch (currentView) {
       case 'landing':
         return (
@@ -106,42 +199,69 @@ function App() {
         return <FeedbackSection defaultTab={currentView} />;
 
       case 'admin-login':
-        return <AdminLoginSection onLogin={handleAdminLogin} />;
+        return auth ? renderDashboard() : renderAdminLogin();
 
       case 'admin-dashboard':
-        return isAdmin ? (
-          <AdminDashboardSection 
-            onNavigate={navigateTo}
-            onLogout={handleLogout}
-          />
-        ) : (
-          <AdminLoginSection onLogin={handleAdminLogin} />
-        );
+        return auth ? renderDashboard() : renderAdminLogin();
 
       case 'student-management':
-        return isAdmin ? (
+        return canAccess('student-management') ? (
           <StudentManagementSection onBack={() => navigateTo('admin-dashboard')} />
         ) : (
-          <AdminLoginSection onLogin={handleAdminLogin} />
+          renderAdminLogin()
         );
 
       case 'event-management':
       case 'payment-management':
-      case 'attendance-management':
-        return isAdmin ? (
+        return canAccess(currentView) ? (
           <EventManagementSection 
+            role={role!}
+            staffName={auth?.displayName ?? ''}
+            userId={auth?.user.id ?? ''}
             onBack={() => navigateTo('admin-dashboard')} 
             initialTab={currentView}
           />
         ) : (
-          <AdminLoginSection onLogin={handleAdminLogin} />
+          renderAdminLogin()
+        );
+
+      case 'attendance-management':
+        return canAccess('attendance-management') ? (
+          <EventManagementSection 
+            role={role!}
+            staffName={auth?.displayName ?? ''}
+            userId={auth?.user.id ?? ''}
+            onBack={() => navigateTo('admin-dashboard')}
+            initialTab="attendance-management"
+          />
+        ) : (
+          renderAdminLogin()
+        );
+
+      case 'contribution-management':
+        return canAccess('contribution-management') ? (
+          <ContributionManagementSection onBack={() => navigateTo('admin-dashboard')} />
+        ) : (
+          renderAdminLogin()
         );
 
       case 'transaction-management':
-        return isAdmin ? (
-          <TransparencyBoardSection adminMode onBack={() => navigateTo('admin-dashboard')} />
+        return canAccess(currentView) ? (
+          <TransparencyBoardSection
+            adminMode
+            role={role!}
+            staffName={auth?.displayName ?? ''}
+            onBack={() => navigateTo('admin-dashboard')}
+          />
         ) : (
-          <AdminLoginSection onLogin={handleAdminLogin} />
+          renderAdminLogin()
+        );
+
+      case 'feedback-management':
+        return canAccess(currentView) ? (
+          <FeedbackManagementSection role={role!} onBack={() => navigateTo('admin-dashboard')} />
+        ) : (
+          renderAdminLogin()
         );
 
       default:
@@ -158,7 +278,7 @@ function App() {
       <Navigation 
         currentView={currentView}
         onNavigate={navigateTo}
-        isAdmin={isAdmin}
+        role={auth ? role : null}
       />
 
       {/* Main Content */}

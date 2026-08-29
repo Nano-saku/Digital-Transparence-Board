@@ -1,13 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { 
   MessageCircle, AlertTriangle, Lightbulb, 
   Send, User, IdCard, EyeOff, Shield, CheckCircle, Loader2 
 } from 'lucide-react';
-import type { ViewState, FeedbackItem } from '@/types';
+import type { ViewState } from '@/types';
 import { feedbackService } from '@/services/db';
 import { toast } from 'sonner';
-
 interface FeedbackSectionProps {
   defaultTab: ViewState;
 }
@@ -129,10 +128,28 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
   const config = getTabConfig();
   const Icon = config.icon;
 
+  const tabButtonColors = {
+    inquiry: {
+      active: 'bg-blue-600 text-white border-blue-700 shadow-lg scale-105',
+      inactive: 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50 hover:border-blue-500',
+      focus: 'focus-visible:ring-blue-500',
+    },
+    complaint: {
+      active: 'bg-red-600 text-white border-red-700 shadow-lg scale-105',
+      inactive: 'bg-white text-red-700 border-red-200 hover:bg-red-50 hover:border-red-500',
+      focus: 'focus-visible:ring-red-500',
+    },
+    suggestion: {
+      active: 'bg-yellow-400 text-slate-900 border-yellow-600 shadow-lg scale-105',
+      inactive: 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50 hover:border-yellow-500',
+      focus: 'focus-visible:ring-yellow-500',
+    },
+  } as const;
+
   return (
     <section 
       ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-warm relative overflow-hidden py-20 lg:py-24"
+      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
     >
       {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10">
@@ -160,10 +177,10 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`feedback-card glass-card px-6 py-4 flex items-center gap-3 transition-all ${
-                  activeTab === tab 
-                    ? 'bg-red text-white shadow-lg scale-105' 
-                    : 'hover:bg-white/50'
+                className={`feedback-card rounded-xl px-6 py-4 transition-all inline-flex items-center gap-2 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${tabButtonColors[tab].focus} ${
+                  activeTab === tab
+                    ? tabButtonColors[tab].active
+                    : tabButtonColors[tab].inactive
                 }`}
               >
                 <TabIcon className="w-5 h-5" />
@@ -184,7 +201,7 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
               }`}>
                 <Icon className={`w-6 h-6 ${
                   activeTab === 'inquiry' ? 'text-blue-600' : 
-                  activeTab === 'complaint' ? 'text-red' : 'text-yellow-600'
+                  activeTab === 'complaint' ? 'text-red-500' : 'text-yellow-600'
                 }`} />
               </div>
               <div>
@@ -241,8 +258,8 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
                 <div className="flex items-center gap-3 p-4 glass-card">
                   <button
                     type="button"
-                    onClick={() => setFormData({ ...formData, isAnonymous: !formData.isAnonymous })}
-                    className={`w-10 h-6 rounded-full transition-colors relative ${
+onClick={() => setFormData({ ...formData, isAnonymous: !formData.isAnonymous })}
+                    className={`w-10 h-6 rounded-full p-0 ${
                       formData.isAnonymous ? 'bg-red' : 'bg-gray-300'
                     }`}
                   >
@@ -295,7 +312,7 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
                 {/* Submit Button */}
                 <button
                   type="submit"
-                  className="w-full btn-primary px-6 py-3 flex items-center justify-center gap-2"
+className="w-full btn-primary px-6 py-3 flex items-center justify-center gap-2"
                   disabled={submitting || !formData.message.trim()}
                 >
                   {submitting ? (
