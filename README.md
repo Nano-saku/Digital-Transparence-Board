@@ -1,73 +1,376 @@
-# React + TypeScript + Vite
+# Digital Transparency Board
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A web-based **Digital Transparency Board** designed to provide a centralized platform for managing, publishing, and viewing transparent organizational information.
 
-Currently, two official plugins are available:
+Built with **React, TypeScript, Vite, Tailwind CSS, and Supabase**.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 📋 Table of Contents
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+* [About the Project](#-about-the-project)
+* [Technology Stack](#-technology-stack)
+* [Features](#-features)
+* [Project Structure](#-project-structure)
+* [Getting Started](#-getting-started)
+* [Environment Variables](#-environment-variables)
+* [Available Scripts](#-available-scripts)
+* [Git & Environment File Safety](#-git--environment-file-safety)
+* [Development Workflow](#-development-workflow)
+* [Contributing](#-contributing)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 📌 About the Project
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+The **Digital Transparency Board** is a web application intended to provide an accessible and centralized system for managing and presenting organizational information.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+The system uses a modern frontend architecture with Supabase serving as the backend and database platform.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+---
+
+## 🛠 Technology Stack
+
+### Frontend
+
+* **React** – User interface framework
+* **TypeScript** – Type-safe JavaScript
+* **Vite** – Development server and build tool
+* **Tailwind CSS** – Utility-first CSS framework
+* **Radix UI** – Accessible UI components
+* **Lucide React** – Icon library
+
+### Backend & Database
+
+* **Supabase**
+
+  * PostgreSQL database
+  * Authentication
+  * Backend services
+  * API
+
+### Additional Libraries
+
+* React Hook Form
+* Zod
+* Recharts
+* GSAP
+* date-fns
+* QRCode
+* jsQR
+* read-excel-file
+* Embla Carousel
+
+---
+
+## ✨ Features
+
+The project includes functionality for:
+
+* 📊 Digital information and transparency management
+* 🔐 User authentication and authorization
+* 🗄️ Supabase database integration
+* 📱 Responsive web interface
+* 📈 Data visualization and charts
+* 📷 QR code generation and scanning
+* 📑 Excel data processing
+* 🎨 Modern component-based UI
+* ⚡ Fast development and production builds through Vite
+
+> Features may change as development continues.
+
+---
+
+## 📁 Project Structure
+
+A simplified structure of the project:
+
+```text
+Digital-Transparence-Board/
+│
+├── public/                 # Static assets
+├── src/
+│   ├── components/        # Reusable UI components
+│   ├── pages/             # Application pages
+│   ├── lib/               # Utilities and configurations
+│   └── ...
+│
+├── supabase/              # Supabase-related configuration/functions
+│
+├── .env.example           # Example environment configuration
+├── .gitignore             # Git exclusions
+├── package.json           # Project dependencies and scripts
+├── package-lock.json      # Locked dependency versions
+├── vite.config.ts         # Vite configuration
+├── tsconfig.json          # TypeScript configuration
+└── README.md              # Project documentation
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+---
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+# 🚀 Getting Started
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Prerequisites
+
+Make sure the following are installed:
+
+* [Node.js](https://nodejs.org/)
+* npm
+* Git
+
+Check your installations:
+
+```bash
+node --version
+npm --version
+git --version
 ```
+
+---
+
+## 1. Clone the Repository
+
+```bash
+git clone https://github.com/Nano-saku/Digital-Transparence-Board.git
+```
+
+Enter the project directory:
+
+```bash
+cd Digital-Transparence-Board
+```
+
+---
+
+## 2. Install Dependencies
+
+Install the project's dependencies using:
+
+```bash
+npm install
+```
+
+For a clean installation based on the lock file:
+
+```bash
+npm ci
+```
+
+Do **not** manually install the packages listed in `package.json`. Running `npm install` or `npm ci` installs the required dependencies automatically.
+
+---
+
+# 🔐 Environment Variables
+
+The application uses environment variables for configuration and Supabase access.
+
+Create a local `.env` file based on the provided example:
+
+### Windows PowerShell
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### macOS / Linux
+
+```bash
+cp .env.example .env
+```
+
+Then open `.env` and configure the required values.
+
+Example:
+
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+### ⚠️ Important
+
+**Never commit `.env` to Git.**
+
+The repository's `.gitignore` is configured to ignore environment files:
+
+```gitignore
+.env
+.env.*
+!.env.example
+```
+
+The `.env.example` file may be committed because it should contain **placeholders only**, never real credentials.
+
+### Service Role Key
+
+The Supabase service-role key is highly privileged and must be kept secret.
+
+**Never:**
+
+* Commit it to Git
+* Share it publicly
+* Put it in frontend/client-side code
+* Prefix it with `VITE_`
+
+If a secret is accidentally committed or exposed, **rotate/revoke the affected credential immediately**.
+
+---
+
+# ▶️ Running the Development Server
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+Vite will display the local development URL in the terminal, typically:
+
+```text
+http://localhost:5173
+```
+
+Open the displayed URL in your browser.
+
+---
+
+# 📦 Building for Production
+
+Create a production build:
+
+```bash
+npm run build
+```
+
+Preview the production build locally:
+
+```bash
+npm run preview
+```
+
+---
+
+# 🔍 Linting
+
+Run ESLint:
+
+```bash
+npm run lint
+```
+
+---
+
+# 🌿 Git & Environment File Safety
+
+## Never commit `.env`
+
+Before committing changes, check:
+
+```bash
+git status
+```
+
+You can verify whether `.env` is being tracked with:
+
+```bash
+git ls-files .env
+```
+
+If the command returns nothing, `.env` is not currently tracked.
+
+If `.env` has already been tracked, remove it from Git tracking **without deleting your local file**:
+
+```bash
+git rm --cached .env
+```
+
+Then commit the change:
+
+```bash
+git add .gitignore
+git commit -m "Stop tracking environment configuration"
+```
+
+---
+
+## Before Every Push
+
+Recommended workflow:
+
+```bash
+git status
+git add .
+git commit -m "Describe your changes"
+git push
+```
+
+Before pushing, make sure:
+
+* `.env` is not listed as a staged file
+* No API keys or passwords are present in the changes
+* `.env.example` contains placeholders instead of real credentials
+
+---
+
+# 🔄 Development Workflow
+
+When starting work:
+
+```bash
+git pull
+```
+
+Create a feature branch when appropriate:
+
+```bash
+git checkout -b feature/your-feature-name
+```
+
+After making changes:
+
+```bash
+git status
+git add .
+git commit -m "Add your change description"
+git push -u origin feature/your-feature-name
+```
+
+For small team changes directly on `master`:
+
+```bash
+git pull
+git add .
+git commit -m "Describe your changes"
+git push
+```
+
+Avoid force-pushing shared branches unless the team has explicitly agreed to rewrite the history.
+
+---
+
+# 🤝 Contributing
+
+When contributing to the project:
+
+1. Pull the latest changes before starting work.
+2. Create a branch for significant features or fixes.
+3. Keep commits focused and descriptive.
+4. Do not commit credentials, API keys, passwords, or `.env` files.
+5. Test your changes locally before pushing.
+6. Keep the README and relevant documentation updated.
+
+---
+
+## 📄 License
+
+Add the project's applicable license here.
+
+---
+
+## 👥 Development Team
+
+**Digital Transparency Board**
+
+Repository:
+https://github.com/Nano-saku/Digital-Transparence-Board
