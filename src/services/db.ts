@@ -1,4 +1,5 @@
 import { getSupabase } from "../lib/supabase";
+import { offlineSyncService } from "../lib/offlineSync";
 import type {
   Student,
   Event,
@@ -18,6 +19,36 @@ import type {
 // former Firestore document-id format. PostgreSQL does not generate a value for
 // a TEXT primary key, therefore every client-created row must receive one.
 const createRecordId = (): string => crypto.randomUUID();
+
+// The set of tables offlineSyncService knows how to cache/queue, pulled from
+// its own method signature so this file doesn't need a second copy of that
+// union type to stay in sync with.
+type OfflineTable = Parameters<typeof offlineSyncService.read>[0];
+
+// Shared "online-first, cache-fallback" read pattern used by every getAll().
+// - If we already know we're offline, skip the network round-trip and go
+//   straight to the cache.
+// - Otherwise try the network; on success, refresh the cache for next time.
+// - On any failure (including a network error the sync service hasn't
+//   noticed yet), fall back to whatever is cached before giving up.
+async function cachedRead<T>(
+  table: OfflineTable,
+  fetcher: () => Promise<T[]>,
+): Promise<T[]> {
+  if (offlineSyncService.isOffline()) {
+    const cached = await offlineSyncService.read<T>(table);
+    if (cached) return cached;
+  }
+  try {
+    const records = await fetcher();
+    await offlineSyncService.cache(table, records);
+    return records;
+  } catch (error) {
+    const cached = await offlineSyncService.read<T>(table);
+    if (cached) return cached;
+    throw error;
+  }
+}
 
 const mapEvent = (item: Record<string, unknown>): Event => {
   const memberIds = Array.isArray(item.assigned_member_ids)
@@ -63,22 +94,24 @@ const mapEvent = (item: Record<string, unknown>): Event => {
 // ============================================
 export const studentsService = {
   async getAll(): Promise<Student[]> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .select("*")
-      .order("name");
+    return cachedRead<Student>("students", async () => {
+      const { data, error } = await getSupabase()
+        .from("students")
+        .select("*")
+        .order("name");
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        name: item.name,
-        program: item.program,
-        yearLevel: item.year_level,
-        section: item.section,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          name: item.name,
+          program: item.program,
+          yearLevel: item.year_level,
+          section: item.section,
+        })) || []
+      );
+    });
   },
 
   async getById(id: string): Promise<Student | null> {
@@ -138,28 +171,42 @@ export const studentsService = {
   },
 
   async create(student: Omit<Student, "id">): Promise<Student> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .insert({
-        id: createRecordId(),
-        student_id: student.studentId,
-        name: student.name,
-        program: student.program,
-        year_level: student.yearLevel,
-        section: student.section,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      name: data.name,
-      program: data.program,
-      yearLevel: data.year_level,
-      section: data.section,
+    const id = createRecordId();
+    const payload = {
+      student_id: student.studentId,
+      name: student.name,
+      program: student.program,
+      year_level: student.yearLevel,
+      section: student.section,
     };
+
+    const result = await offlineSyncService.mutation<Student>({
+      table: "students",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...student }) as Student,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("students")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          name: data.name,
+          program: data.program,
+          yearLevel: data.year_level,
+          section: data.section,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to create student");
+    return result;
   },
 
   async update(id: string, record: Partial<Student>): Promise<Student> {
@@ -173,32 +220,52 @@ export const studentsService = {
       updateData.year_level = record.yearLevel;
     if (record.section !== undefined) updateData.section = record.section;
 
-    const { data, error } = await getSupabase()
-      .from("students")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<Student>({
+      table: "students",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({ ...(current as Student), ...record, id }) as Student,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("students")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          name: data.name,
+          program: data.program,
+          yearLevel: data.year_level,
+          section: data.section,
+        };
+      },
+    });
 
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      name: data.name,
-      program: data.program,
-      yearLevel: data.year_level,
-      section: data.section,
-    };
+    if (!result) throw new Error("Failed to update student");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
-      .from("students")
-      .delete()
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "students",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("students")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 
   async createMany(students: Omit<Student, "id">[]): Promise<{
@@ -287,16 +354,22 @@ export const studentsService = {
 // ============================================
 export const eventsService = {
   async getAll(): Promise<Event[]> {
-    const { data, error } = await getSupabase()
-      .from("events")
-      .select("*")
-      .order("date", { ascending: false });
+    return cachedRead<Event>("events", async () => {
+      const { data, error } = await getSupabase()
+        .from("events")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return data?.map(mapEvent) || [];
+      if (error) throw error;
+      return data?.map(mapEvent) || [];
+    });
   },
 
   async getById(id: string): Promise<Event | null> {
+    if (offlineSyncService.isOffline()) {
+      const cached = await offlineSyncService.read<Event>("events");
+      return cached?.find((event) => event.id === id) ?? null;
+    }
     const { data, error } = await getSupabase()
       .from("events")
       .select("*")
@@ -308,30 +381,44 @@ export const eventsService = {
   },
 
   async create(event: Omit<Event, "id">): Promise<Event> {
-    const { data, error } = await getSupabase()
-      .from("events")
-      .insert({
-        id: createRecordId(),
-        name: event.name,
-        allocation_amount: event.allocationAmount,
-        date: event.date,
-        schedules: event.schedules ?? [],
-        time_in: event.timeIn ?? "",
-        time_out: event.timeOut ?? "",
-        morning_time_in: event.morningTimeIn ?? "",
-        morning_time_out: event.morningTimeOut ?? "",
-        afternoon_time_in: event.afternoonTimeIn ?? "",
-        afternoon_time_out: event.afternoonTimeOut ?? "",
-        assigned_member_ids:
-          event.assignedMembers?.map((member) => member.memberId) ?? [],
-        assigned_member_names:
-          event.assignedMembers?.map((member) => member.memberName) ?? [],
-      })
-      .select()
-      .single();
+    const id = createRecordId();
+    const payload = {
+      name: event.name,
+      allocation_amount: event.allocationAmount,
+      date: event.date,
+      schedules: event.schedules ?? [],
+      time_in: event.timeIn ?? "",
+      time_out: event.timeOut ?? "",
+      morning_time_in: event.morningTimeIn ?? "",
+      morning_time_out: event.morningTimeOut ?? "",
+      afternoon_time_in: event.afternoonTimeIn ?? "",
+      afternoon_time_out: event.afternoonTimeOut ?? "",
+      assigned_member_ids:
+        event.assignedMembers?.map((member) => member.memberId) ?? [],
+      assigned_member_names:
+        event.assignedMembers?.map((member) => member.memberName) ?? [],
+    };
 
-    if (error) throw error;
-    return mapEvent(data);
+    const result = await offlineSyncService.mutation<Event>({
+      table: "events",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...event }) as Event,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("events")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return mapEvent(data);
+      },
+    });
+
+    if (!result) throw new Error("Failed to create event");
+    return result;
   },
 
   async update(id: string, event: Partial<Event>): Promise<Event> {
@@ -362,21 +449,45 @@ export const eventsService = {
       );
     }
 
-    const { data, error } = await getSupabase()
-      .from("events")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<Event>({
+      table: "events",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({ ...(current as Event), ...event, id }) as Event,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("events")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return mapEvent(data);
+        if (error) throw error;
+        return mapEvent(data);
+      },
+    });
+
+    if (!result) throw new Error("Failed to update event");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase().from("events").delete().eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "events",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("events")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 };
 
@@ -385,28 +496,30 @@ export const eventsService = {
 // ============================================
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .select("*")
-      .order("date", { ascending: false });
+    return cachedRead<AttendanceRecord>("attendance", async () => {
+      const { data, error } = await getSupabase()
+        .from("attendance")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        date: item.date,
-        status: item.status,
-        session: (item.session ?? "morning") as
-          | "morning"
-          | "afternoon"
-          | "evening",
-        timeIn: item.time_in ?? undefined,
-        timeOut: item.time_out ?? undefined,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          date: item.date,
+          status: item.status,
+          session: (item.session ?? "morning") as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: item.time_in ?? undefined,
+          timeOut: item.time_out ?? undefined,
+        })) || []
+      );
+    });
   },
 
   async getByStudentId(studentId: string): Promise<AttendanceRecord[]> {
@@ -494,37 +607,51 @@ export const attendanceService = {
   async create(
     record: Omit<AttendanceRecord, "id">,
   ): Promise<AttendanceRecord> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .insert({
-        id: createRecordId(),
-        student_id: record.studentId,
-        event_id: record.eventId,
-        event_name: record.eventName,
-        date: record.date,
-        status: record.status,
-        session: record.session ?? "morning",
-        time_in: record.timeIn ?? "",
-        time_out: record.timeOut ?? "",
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      date: data.date,
-      status: data.status,
-      session: (data.session ?? "morning") as
-        | "morning"
-        | "afternoon"
-        | "evening",
-      timeIn: data.time_in ?? undefined,
-      timeOut: data.time_out ?? undefined,
+    const id = createRecordId();
+    const payload = {
+      student_id: record.studentId,
+      event_id: record.eventId,
+      event_name: record.eventName,
+      date: record.date,
+      status: record.status,
+      session: record.session ?? "morning",
+      time_in: record.timeIn ?? "",
+      time_out: record.timeOut ?? "",
     };
+
+    const result = await offlineSyncService.mutation<AttendanceRecord>({
+      table: "attendance",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...record }) as AttendanceRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("attendance")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          eventId: data.event_id,
+          eventName: data.event_name,
+          date: data.date,
+          status: data.status,
+          session: (data.session ?? "morning") as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: data.time_in ?? undefined,
+          timeOut: data.time_out ?? undefined,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to create attendance record");
+    return result;
   },
 
   async update(
@@ -543,37 +670,62 @@ export const attendanceService = {
     if (record.timeIn !== undefined) updateData.time_in = record.timeIn;
     if (record.timeOut !== undefined) updateData.time_out = record.timeOut;
 
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<AttendanceRecord>({
+      table: "attendance",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({
+          ...(current as AttendanceRecord),
+          ...record,
+          id,
+        }) as AttendanceRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("attendance")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      date: data.date,
-      status: data.status,
-      session: (data.session ?? "morning") as
-        | "morning"
-        | "afternoon"
-        | "evening",
-      timeIn: data.time_in ?? undefined,
-      timeOut: data.time_out ?? undefined,
-    };
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          eventId: data.event_id,
+          eventName: data.event_name,
+          date: data.date,
+          status: data.status,
+          session: (data.session ?? "morning") as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: data.time_in ?? undefined,
+          timeOut: data.time_out ?? undefined,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to update attendance record");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
-      .from("attendance")
-      .delete()
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "attendance",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("attendance")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 
   async getStatsByEventId(
@@ -598,23 +750,25 @@ export const attendanceService = {
 // ============================================
 export const contributionsService = {
   async getAll(): Promise<ContributionRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .select("*")
-      .order("id", { ascending: false });
+    return cachedRead<ContributionRecord>("contributions", async () => {
+      const { data, error } = await getSupabase()
+        .from("contributions")
+        .select("*")
+        .order("id", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        requiredAmount: item.required_amount,
-        amountPaid: item.amount_paid,
-        remainingBalance: item.remaining_balance,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          requiredAmount: item.required_amount,
+          amountPaid: item.amount_paid,
+          remainingBalance: item.remaining_balance,
+        })) || []
+      );
+    });
   },
 
   async getByStudentId(studentId: string): Promise<ContributionRecord[]> {
@@ -684,30 +838,44 @@ export const contributionsService = {
   async create(
     record: Omit<ContributionRecord, "id">,
   ): Promise<ContributionRecord> {
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .insert({
-        id: createRecordId(),
-        student_id: record.studentId,
-        event_id: record.eventId,
-        event_name: record.eventName,
-        required_amount: record.requiredAmount,
-        amount_paid: record.amountPaid,
-        remaining_balance: record.remainingBalance,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      requiredAmount: data.required_amount,
-      amountPaid: data.amount_paid,
-      remainingBalance: data.remaining_balance,
+    const id = createRecordId();
+    const payload = {
+      student_id: record.studentId,
+      event_id: record.eventId,
+      event_name: record.eventName,
+      required_amount: record.requiredAmount,
+      amount_paid: record.amountPaid,
+      remaining_balance: record.remainingBalance,
     };
+
+    const result = await offlineSyncService.mutation<ContributionRecord>({
+      table: "contributions",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...record }) as ContributionRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("contributions")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          eventId: data.event_id,
+          eventName: data.event_name,
+          requiredAmount: data.required_amount,
+          amountPaid: data.amount_paid,
+          remainingBalance: data.remaining_balance,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to create contribution");
+    return result;
   },
 
   async update(
@@ -727,32 +895,57 @@ export const contributionsService = {
     if (record.remainingBalance !== undefined)
       updateData.remaining_balance = record.remainingBalance;
 
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<ContributionRecord>({
+      table: "contributions",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({
+          ...(current as ContributionRecord),
+          ...record,
+          id,
+        }) as ContributionRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("contributions")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      requiredAmount: data.required_amount,
-      amountPaid: data.amount_paid,
-      remainingBalance: data.remaining_balance,
-    };
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          eventId: data.event_id,
+          eventName: data.event_name,
+          requiredAmount: data.required_amount,
+          amountPaid: data.amount_paid,
+          remainingBalance: data.remaining_balance,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to update contribution");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
-      .from("contributions")
-      .delete()
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "contributions",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("contributions")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 };
 
@@ -761,27 +954,29 @@ export const contributionsService = {
 // ============================================
 export const paymentsService = {
   async getAll(): Promise<PaymentRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("payments")
-      .select("*")
-      .order("date", { ascending: false });
+    return cachedRead<PaymentRecord>("payments", async () => {
+      const { data, error } = await getSupabase()
+        .from("payments")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        studentName: item.student_name,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        contributionId: item.contribution_id,
-        amount: item.amount,
-        date: item.date,
-        receiptUrl: item.receipt_url || undefined,
-        orNumber: item.or_number || undefined,
-        recordedBy: item.recorded_by,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          studentName: item.student_name,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          contributionId: item.contribution_id,
+          amount: item.amount,
+          date: item.date,
+          receiptUrl: item.receipt_url || undefined,
+          orNumber: item.or_number || undefined,
+          recordedBy: item.recorded_by,
+        })) || []
+      );
+    });
   },
 
   async getByStudentId(studentId: string): Promise<PaymentRecord[]> {
@@ -835,39 +1030,52 @@ export const paymentsService = {
   },
 
   async create(record: Omit<PaymentRecord, "id">): Promise<PaymentRecord> {
-    const { data, error } = await getSupabase()
-      .from("payments")
-      .insert({
-        id: createRecordId(),
-        student_id: record.studentId,
-        student_name: record.studentName,
-        event_id: record.eventId,
-        event_name: record.eventName,
-        contribution_id: record.contributionId, // ADD THIS
-        amount: record.amount,
-        date: record.date,
-        receipt_url: record.receiptUrl,
-        or_number: record.orNumber,
-        recorded_by: record.recordedBy,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      studentName: data.student_name,
-      eventId: data.event_id || undefined,
-      eventName: data.event_name || undefined,
-      contributionId: data.contribution_id || undefined, // ADD THIS
-      amount: data.amount,
-      date: data.date,
-      receiptUrl: data.receipt_url || undefined,
-      orNumber: data.or_number || undefined,
-      recordedBy: data.recorded_by,
+    const id = createRecordId();
+    const payload = {
+      student_id: record.studentId,
+      student_name: record.studentName,
+      event_id: record.eventId,
+      event_name: record.eventName,
+      contribution_id: record.contributionId,
+      amount: record.amount,
+      date: record.date,
+      receipt_url: record.receiptUrl,
+      or_number: record.orNumber,
+      recorded_by: record.recordedBy,
     };
+
+    const result = await offlineSyncService.mutation<PaymentRecord>({
+      table: "payments",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...record }) as PaymentRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("payments")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          studentName: data.student_name,
+          eventId: data.event_id || undefined,
+          eventName: data.event_name || undefined,
+          contributionId: data.contribution_id || undefined,
+          amount: data.amount,
+          date: data.date,
+          receiptUrl: data.receipt_url || undefined,
+          orNumber: data.or_number || undefined,
+          recordedBy: data.recorded_by,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to create payment");
+    return result;
   },
 
   async update(
@@ -890,29 +1098,51 @@ export const paymentsService = {
     if (record.recordedBy !== undefined)
       updateData.recorded_by = record.recordedBy;
 
-    const { data, error } = await getSupabase()
-      .from("payments")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<PaymentRecord>({
+      table: "payments",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({ ...(current as PaymentRecord), ...record, id }) as PaymentRecord,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("payments")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      studentName: data.student_name,
-      eventId: data.event_id || undefined,
-      eventName: data.event_name || undefined,
-      contributionId: data.contribution_id,
-      amount: data.amount,
-      date: data.date,
-      receiptUrl: data.receipt_url || undefined,
-      orNumber: data.or_number || undefined,
-      recordedBy: data.recorded_by,
-    };
+        if (error) throw error;
+        return {
+          id: data.id,
+          studentId: data.student_id,
+          studentName: data.student_name,
+          eventId: data.event_id || undefined,
+          eventName: data.event_name || undefined,
+          contributionId: data.contribution_id,
+          amount: data.amount,
+          date: data.date,
+          receiptUrl: data.receipt_url || undefined,
+          orNumber: data.or_number || undefined,
+          recordedBy: data.recorded_by,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to update payment");
+    return result;
   },
 
+  // NOT wired to offlineSyncService: this reads a contribution first to find
+  // which payments belong to it, then deletes across two tables. The
+  // mutation() queue only knows how to replay a single { table, kind,
+  // recordId, payload } operation, so a read-then-multi-delete like this
+  // can't be represented as one queued item. It still works fully online;
+  // offline, it will throw like it did before this change. If offline
+  // deletion of contributions/payments turns out to matter, this needs its
+  // own design (e.g. queuing two explicit mutations after reading the
+  // contribution while still online).
   async delete(id: string): Promise<void> {
     const supabase = getSupabase();
 
@@ -949,25 +1179,27 @@ export const paymentsService = {
 // ============================================
 export const transactionsService = {
   async getAll(): Promise<Transaction[]> {
-    const { data, error } = await getSupabase()
-      .from("transactions")
-      .select("*")
-      .order("date", { ascending: false });
+    return cachedRead<Transaction>("transactions", async () => {
+      const { data, error } = await getSupabase()
+        .from("transactions")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        date: item.date,
-        description: item.description,
-        eventId: item.event_id || undefined,
-        eventName: item.event_name || undefined,
-        amount: item.amount,
-        type: item.type,
-        responsibleOfficer: item.responsible_officer,
-        receiptUrl: item.receipt_url || undefined,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          date: item.date,
+          description: item.description,
+          eventId: item.event_id || undefined,
+          eventName: item.event_name || undefined,
+          amount: item.amount,
+          type: item.type,
+          responsibleOfficer: item.responsible_officer,
+          receiptUrl: item.receipt_url || undefined,
+        })) || []
+      );
+    });
   },
 
   async getByEventId(eventId: string): Promise<Transaction[]> {
@@ -994,34 +1226,48 @@ export const transactionsService = {
   },
 
   async create(record: Omit<Transaction, "id">): Promise<Transaction> {
-    const { data, error } = await getSupabase()
-      .from("transactions")
-      .insert({
-        id: createRecordId(),
-        date: record.date,
-        description: record.description,
-        event_id: record.eventId,
-        event_name: record.eventName,
-        amount: record.amount,
-        type: record.type,
-        responsible_officer: record.responsibleOfficer,
-        receipt_url: record.receiptUrl,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      id: data.id,
-      date: data.date,
-      description: data.description,
-      eventId: data.event_id || undefined,
-      eventName: data.event_name || undefined,
-      amount: data.amount,
-      type: data.type,
-      responsibleOfficer: data.responsible_officer,
-      receiptUrl: data.receipt_url || undefined,
+    const id = createRecordId();
+    const payload = {
+      date: record.date,
+      description: record.description,
+      event_id: record.eventId,
+      event_name: record.eventName,
+      amount: record.amount,
+      type: record.type,
+      responsible_officer: record.responsibleOfficer,
+      receipt_url: record.receiptUrl,
     };
+
+    const result = await offlineSyncService.mutation<Transaction>({
+      table: "transactions",
+      kind: "create",
+      recordId: id,
+      payload,
+      makeLocal: () => ({ id, ...record }) as Transaction,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("transactions")
+          .insert({ id, ...payload })
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          id: data.id,
+          date: data.date,
+          description: data.description,
+          eventId: data.event_id || undefined,
+          eventName: data.event_name || undefined,
+          amount: data.amount,
+          type: data.type,
+          responsibleOfficer: data.responsible_officer,
+          receiptUrl: data.receipt_url || undefined,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to create transaction");
+    return result;
   },
 
   async update(id: string, record: Partial<Transaction>): Promise<Transaction> {
@@ -1039,34 +1285,55 @@ export const transactionsService = {
     if (record.receiptUrl !== undefined)
       updateData.receipt_url = record.receiptUrl;
 
-    const { data, error } = await getSupabase()
-      .from("transactions")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<Transaction>({
+      table: "transactions",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({ ...(current as Transaction), ...record, id }) as Transaction,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("transactions")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      date: data.date,
-      description: data.description,
-      eventId: data.event_id || undefined,
-      eventName: data.event_name || undefined,
-      amount: data.amount,
-      type: data.type,
-      responsibleOfficer: data.responsible_officer,
-      receiptUrl: data.receipt_url || undefined,
-    };
+        if (error) throw error;
+        return {
+          id: data.id,
+          date: data.date,
+          description: data.description,
+          eventId: data.event_id || undefined,
+          eventName: data.event_name || undefined,
+          amount: data.amount,
+          type: data.type,
+          responsibleOfficer: data.responsible_officer,
+          receiptUrl: data.receipt_url || undefined,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to update transaction");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
-      .from("transactions")
-      .delete()
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "transactions",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("transactions")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 
   async getFinancialSummary(): Promise<{
@@ -1098,25 +1365,27 @@ export const transactionsService = {
 // ============================================
 export const feedbackService = {
   async getAll(): Promise<FeedbackItem[]> {
-    const { data, error } = await getSupabase()
-      .from("feedback")
-      .select("*")
-      .order("submitted_at", { ascending: false });
+    return cachedRead<FeedbackItem>("feedback", async () => {
+      const { data, error } = await getSupabase()
+        .from("feedback")
+        .select("*")
+        .order("submitted_at", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title || undefined,
-        message: item.message,
-        studentName: item.student_name || undefined,
-        studentId: item.student_id || undefined,
-        isAnonymous: item.is_anonymous,
-        submittedAt: item.submitted_at,
-        status: item.status,
-      })) || []
-    );
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          type: item.type,
+          title: item.title || undefined,
+          message: item.message,
+          studentName: item.student_name || undefined,
+          studentId: item.student_id || undefined,
+          isAnonymous: item.is_anonymous,
+          submittedAt: item.submitted_at,
+          status: item.status,
+        })) || []
+      );
+    });
   },
 
   async getByType(type: FeedbackItem["type"]): Promise<FeedbackItem[]> {
@@ -1165,25 +1434,43 @@ export const feedbackService = {
     );
   },
 
+  // Returns void to match the original signature. Because there's no
+  // makeLocal here, an offline-queued feedback submission won't appear in
+  // getAll()'s cache until it replays on reconnect (the item is still
+  // queued and will sync - it just isn't reflected locally in the
+  // meantime). Fine for the common case (students submitting feedback
+  // aren't officers, so isEnabled() is false for them and this always goes
+  // straight to executeOnline anyway); revisit if officers need to see
+  // their own offline feedback submissions immediately.
   async create(item: Omit<FeedbackItem, "id" | "submittedAt">): Promise<void> {
-    const { error } = await getSupabase()
-      .from("feedback")
-      .insert({
-        id: createRecordId(),
-        type: item.type,
-        title: item.title || null,
-        message: item.message,
-        student_name: item.studentName || null,
-        student_id: item.studentId || null,
-        is_anonymous: item.isAnonymous,
-        submitted_at: new Date().toISOString(),
-        status: item.status ?? "pending",
-      });
+    const id = createRecordId();
+    const payload = {
+      type: item.type,
+      title: item.title || null,
+      message: item.message,
+      student_name: item.studentName || null,
+      student_id: item.studentId || null,
+      is_anonymous: item.isAnonymous,
+      submitted_at: new Date().toISOString(),
+      status: item.status ?? "pending",
+    };
 
-    if (error) {
-      console.error("Feedback insert error:", error);
-      throw error;
-    }
+    await offlineSyncService.mutation<void>({
+      table: "feedback",
+      kind: "create",
+      recordId: id,
+      payload,
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("feedback")
+          .insert({ id, ...payload });
+
+        if (error) {
+          console.error("Feedback insert error:", error);
+          throw error;
+        }
+      },
+    });
   },
 
   async update(id: string, item: Partial<FeedbackItem>): Promise<FeedbackItem> {
@@ -1198,46 +1485,75 @@ export const feedbackService = {
       updateData.is_anonymous = item.isAnonymous;
     if (item.status !== undefined) updateData.status = item.status;
 
-    const { data, error } = await getSupabase()
-      .from("feedback")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single();
+    const result = await offlineSyncService.mutation<FeedbackItem>({
+      table: "feedback",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({ ...(current as FeedbackItem), ...item, id }) as FeedbackItem,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("feedback")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-    if (error) throw error;
-    return {
-      id: data.id,
-      type: data.type,
-      title: data.title || undefined,
-      message: data.message,
-      studentName: data.student_name || undefined,
-      studentId: data.student_id || undefined,
-      isAnonymous: data.is_anonymous,
-      submittedAt: data.submitted_at,
-      status: data.status,
-    };
+        if (error) throw error;
+        return {
+          id: data.id,
+          type: data.type,
+          title: data.title || undefined,
+          message: data.message,
+          studentName: data.student_name || undefined,
+          studentId: data.student_id || undefined,
+          isAnonymous: data.is_anonymous,
+          submittedAt: data.submitted_at,
+          status: data.status,
+        };
+      },
+    });
+
+    if (!result) throw new Error("Failed to update feedback");
+    return result;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
-      .from("feedback")
-      .delete()
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "feedback",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("feedback")
+          .delete()
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 
   async updateStatus(
     id: string,
     status: FeedbackItem["status"],
   ): Promise<void> {
-    const { error } = await getSupabase()
-      .from("feedback")
-      .update({ status })
-      .eq("id", id);
+    await offlineSyncService.mutation<void>({
+      table: "feedback",
+      kind: "update",
+      recordId: id,
+      payload: { status },
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("feedback")
+          .update({ status })
+          .eq("id", id);
 
-    if (error) throw error;
+        if (error) throw error;
+      },
+    });
   },
 };
 
@@ -1401,19 +1717,24 @@ export const eventAllocationsService = {
 // BOARD MEMBERS SERVICE
 // ============================================
 export const boardMembersService = {
+  // Read-only from this service - board members are created via the
+  // invite-officer script, not through db.ts - so only the cache-fallback
+  // read pattern applies here.
   async listBoardMembers(): Promise<BoardMember[]> {
-    const { data, error } = await getSupabase()
-      .from("board_members")
-      .select("*")
-      .order("name");
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        name: item.name,
-        accountUserId: item.account_user_id ?? undefined,
-      })) || []
-    );
+    return cachedRead<BoardMember>("board_members", async () => {
+      const { data, error } = await getSupabase()
+        .from("board_members")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          name: item.name,
+          accountUserId: item.account_user_id ?? undefined,
+        })) || []
+      );
+    });
   },
 };
 
