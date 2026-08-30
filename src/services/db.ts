@@ -185,48 +185,84 @@ export const studentsService = {
     if (error) throw error;
   },
 
-  async createMany(students: Omit<Student, "id">[]): Promise<Student[]> {
-    const rows = students.map((s) => ({
-      id: createRecordId(),
-      student_id: s.studentId,
-      name: s.name,
-      program: s.program,
-      year_level: s.yearLevel,
-      section: s.section,
-    }));
-    const { data, error } = await getSupabase()
-      .from("students")
-      .insert(rows)
-      .select();
-    if (error) throw error;
-    return (data ?? []).map((item) => ({
-      id: item.id,
-      studentId: item.student_id,
-      name: item.name,
-      program: item.program,
-      yearLevel: item.year_level,
-      section: item.section,
-    }));
+  async createMany(students: Omit<Student, "id">[]): Promise<{
+    created: Student[];
+    failed: { index: number; studentId: string; name: string; error: string }[];
+  }> {
+    const created: Student[] = [];
+    const failed: {
+      index: number;
+      studentId: string;
+      name: string;
+      error: string;
+    }[] = [];
+
+    for (let i = 0; i < students.length; i++) {
+      const s = students[i];
+      const { data, error } = await getSupabase()
+        .from("students")
+        .insert({
+          id: createRecordId(),
+          student_id: s.studentId,
+          name: s.name,
+          program: s.program,
+          year_level: s.yearLevel,
+          section: s.section,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        failed.push({
+          index: i,
+          studentId: s.studentId,
+          name: s.name,
+          error: error.message,
+        });
+        continue;
+      }
+
+      created.push({
+        id: data.id,
+        studentId: data.student_id,
+        name: data.name,
+        program: data.program,
+        yearLevel: data.year_level,
+        section: data.section,
+      });
+    }
+
+    return { created, failed };
   },
 
   async search(query: string): Promise<Student[]> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .select("*")
-      .or(`name.ilike.%${query}%,student_id.ilike.%${query}%`)
-      .order("name");
-
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        name: item.name,
-        program: item.program,
-        yearLevel: item.year_level,
-        section: item.section,
-      })) || []
+    const pattern = `%${query}%`;
+    const [byName, byId] = await Promise.all([
+      getSupabase()
+        .from("students")
+        .select("*")
+        .ilike("name", pattern)
+        .order("name"),
+      getSupabase()
+        .from("students")
+        .select("*")
+        .ilike("student_id", pattern)
+        .order("name"),
+    ]);
+    if (byName.error) throw byName.error;
+    if (byId.error) throw byId.error;
+    const seen = new Map<string, Record<string, unknown>>();
+    [...(byName.data ?? []), ...(byId.data ?? [])].forEach((item) =>
+      seen.set(item.id, item),
     );
+    return [...seen.values()].map((item) => ({
+      id: item.id as string,
+      studentId: item.student_id as string,
+      name: item.name as string,
+      program: item.program as string,
+      yearLevel: item.year_level as number,
+      section: item.section as string,
+    }));
   },
 };
 

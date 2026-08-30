@@ -222,6 +222,7 @@ export default function EventManagementSection({
     afternoonTimeIn: "",
     afternoonTimeOut: "",
   });
+  const [eventDateTbd, setEventDateTbd] = useState(false);
 
   // Payment form
   const [paymentForm, setPaymentForm] = useState({
@@ -369,6 +370,7 @@ export default function EventManagementSection({
 
   const openAddEventModal = () => {
     setEditingEvent(null);
+
     setEventForm({
       name: "",
       allocationAmount: 0,
@@ -378,20 +380,28 @@ export default function EventManagementSection({
       afternoonTimeIn: "",
       afternoonTimeOut: "",
     });
+
+    setEventDateTbd(false);
     setShowEventModal(true);
   };
 
   const handleOpenEditEvent = (event: Event) => {
     setEditingEvent(event);
+
+    const isTbd = !event.date || event.date === "TBD";
+
+    setEventDateTbd(isTbd);
+
     setEventForm({
       name: event.name,
       allocationAmount: event.allocationAmount,
-      date: event.date ?? "",
+      date: isTbd ? "" : (event.date ?? ""),
       morningTimeIn: event.morningTimeIn ?? "",
       morningTimeOut: event.morningTimeOut ?? "",
       afternoonTimeIn: event.afternoonTimeIn ?? "",
       afternoonTimeOut: event.afternoonTimeOut ?? "",
     });
+
     setShowEventModal(true);
   };
 
@@ -401,7 +411,7 @@ export default function EventManagementSection({
       const newEvent = await eventsService.create({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
-        date: eventForm.date,
+        date: eventDateTbd ? "TBD" : eventForm.date,
         morningTimeIn: eventForm.morningTimeIn || undefined,
         morningTimeOut: eventForm.morningTimeOut || undefined,
         afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
@@ -418,6 +428,7 @@ export default function EventManagementSection({
         afternoonTimeIn: "",
         afternoonTimeOut: "",
       });
+      setEventDateTbd(false);
       toast.success("Event created successfully");
     } catch (error) {
       console.error("Error creating event:", error);
@@ -434,7 +445,7 @@ export default function EventManagementSection({
       const updated = await eventsService.update(editingEvent.id, {
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
-        date: eventForm.date,
+        date: eventDateTbd ? "TBD" : eventForm.date,
         morningTimeIn: eventForm.morningTimeIn || undefined,
         morningTimeOut: eventForm.morningTimeOut || undefined,
         afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
@@ -452,6 +463,7 @@ export default function EventManagementSection({
         afternoonTimeIn: "",
         afternoonTimeOut: "",
       });
+      setEventDateTbd(false);
       toast.success("Event updated successfully");
     } catch (error) {
       console.error("Error updating event:", error);
@@ -1059,11 +1071,21 @@ export default function EventManagementSection({
 
   // Upcoming events listed soonest first.
   const todaysISO = today();
-  const sortedEvents = useMemo(
-    () =>
-      [...events].sort((a, b) => (a.date || "").localeCompare(b.date || "")),
-    [events],
-  );
+  const sortedEvents = useMemo(() => {
+    return [...events].sort((a, b) => {
+      const aTbd = !a.date || a.date === "TBD";
+      const bTbd = !b.date || b.date === "TBD";
+
+      if (aTbd && !bTbd) return 1;
+      if (!aTbd && bTbd) return -1;
+
+      if (aTbd && bTbd) {
+        return a.name.localeCompare(b.name);
+      }
+
+      return (a.date ?? "").localeCompare(b.date ?? "");
+    });
+  }, [events]);
 
   // Event ids assigned to the signed-in board member (used to highlight
   // the board member's own assignments in the events table).
@@ -1266,9 +1288,10 @@ export default function EventManagementSection({
                             </div>
                           </td>
                           <td className="text-text-secondary whitespace-nowrap">
-                            {event.date ? (
+                            {event.date && event.date !== "TBD" ? (
                               <div className="flex items-center gap-2">
                                 <span>{formatDate(event.date)}</span>
+
                                 {event.date >= todaysISO && (
                                   <span
                                     className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
@@ -1284,7 +1307,9 @@ export default function EventManagementSection({
                                 )}
                               </div>
                             ) : (
-                              "-"
+                              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                                TBD
+                              </span>
                             )}
                           </td>
                           <td className="text-text-secondary whitespace-nowrap">
@@ -2415,16 +2440,61 @@ export default function EventManagementSection({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-dark mb-1">
-                Date
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-dark">
+                  Date
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextValue = !eventDateTbd;
+
+                    setEventDateTbd(nextValue);
+
+                    if (nextValue) {
+                      setEventForm({
+                        ...eventForm,
+                        date: "",
+                      });
+                    }
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    eventDateTbd ? "bg-red" : "bg-gray-300"
+                  }`}
+                  aria-label="Toggle date TBD"
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      eventDateTbd ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-text-secondary">
+                  Mark date as To Be Determined
+                </span>
+
+                {eventDateTbd && (
+                  <span className="text-xs font-semibold text-red">TBD</span>
+                )}
+              </div>
+
               <input
                 type="date"
                 value={eventForm.date}
                 onChange={(e) =>
-                  setEventForm({ ...eventForm, date: e.target.value })
+                  setEventForm({
+                    ...eventForm,
+                    date: e.target.value,
+                  })
                 }
-                className="glass-input w-full px-4 py-2"
+                disabled={eventDateTbd}
+                className={`glass-input w-full px-4 py-2 ${
+                  eventDateTbd ? "opacity-50 cursor-not-allowed" : ""
+                }`}
               />
             </div>
 
@@ -2556,7 +2626,11 @@ export default function EventManagementSection({
               <button
                 onClick={editingEvent ? handleUpdateEvent : handleAddEvent}
                 className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
-                disabled={saving || !eventForm.name || !eventForm.date}
+                disabled={
+                  saving ||
+                  !eventForm.name ||
+                  (!eventDateTbd && !eventForm.date)
+                }
               >
                 {saving ? (
                   <>

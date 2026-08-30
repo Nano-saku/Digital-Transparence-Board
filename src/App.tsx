@@ -55,9 +55,9 @@ function App() {
       .restoreSession()
       .then((session) => {
         setAuth(session);
-        if (session && currentView === "admin-login") {
-          setCurrentView("admin-dashboard");
-        }
+        setCurrentView((prev) =>
+          session && prev === "admin-login" ? "admin-dashboard" : prev,
+        );
       })
       .catch((error) => console.error("Failed to restore session:", error))
       .finally(() => setAuthReady(true));

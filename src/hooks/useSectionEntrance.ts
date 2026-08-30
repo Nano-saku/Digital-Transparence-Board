@@ -34,29 +34,27 @@ export interface SectionEntranceTarget {
 export function useSectionEntrance(
   sectionRef: RefObject<HTMLElement | null>,
   targets: SectionEntranceTarget[],
-  deps: DependencyList = []
+  deps: DependencyList = [],
 ): void {
   // Targets capture refs (stable for the life of the component) and are only
   // read inside the effect, so they are intentionally not listed in `deps`.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!sectionRef.current) return;
-    const ctx = gsap.context(
-      () => {
-        const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-        for (const target of targets) {
-          const elements = target.selector
-            ? target.ref.current?.querySelectorAll(target.selector)
-            : target.ref.current;
-          if (!elements || ("length" in elements && elements.length === 0)) {
-            continue;
-          }
-          tl.fromTo(elements, target.from, target.to, target.position);
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+      for (const target of targets) {
+        const elements = target.selector
+          ? target.ref.current?.querySelectorAll(target.selector)
+          : target.ref.current;
+        if (!elements || ("length" in elements && elements.length === 0)) {
+          continue;
         }
-      },
-      sectionRef as RefObject<HTMLElement>
-    );
+        tl.fromTo(elements, target.from, target.to, target.position);
+      }
+    }, sectionRef as RefObject<HTMLElement>);
 
     return () => ctx.revert();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

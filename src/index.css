@@ -2,7 +2,7 @@
    DSSC LSC Santa Cruz — Reimagined  |  Digital Transparency Board
    Google Fonts: Poppins (headings/display) + Inter (body)
 ───────────────────────────────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -42,26 +42,31 @@
     --sidebar-ring: 38 52% 55%;
 
     /* DSSC custom tokens */
-    --dssc-royal-blue:         #1B2E8C;
-    --dssc-deep-navy:          #0E1A4D;
-    --dssc-metallic-blue:      #3A5FE0;
-    --dssc-metallic-highlight: #6E8CFF;
-    --dssc-off-white:          #F4F6FC;
-    --dssc-gold:               #C9A34E;
-    --dssc-silver-gray:        #B8C1D9;
-    --dssc-border:             #E2E6F5;
-    --grad-seal-metallic:      linear-gradient(135deg, #6E8CFF 0%, #3A5FE0 35%, #1B2E8C 70%, #0E1A4D 100%);
-    --grad-card-accent:        linear-gradient(90deg, #1B2E8C 0%, #3A5FE0 100%);
-    --grad-btn-primary:        linear-gradient(90deg, #1B2E8C 0%, #3A5FE0 100%);
-    --status-success:          #2E9E5B;
-    --status-warning:          #D9A441;
-    --status-danger:           #C74B4B;
-    --glass-bg:                rgba(255,255,255,0.60);
-    --glass-border:            rgba(255,255,255,0.70);
-    --glass-shadow:            0 18px 50px rgba(14,26,77,0.10);
+    --dssc-royal-blue: #1b2e8c;
+    --dssc-deep-navy: #0e1a4d;
+    --dssc-metallic-blue: #3a5fe0;
+    --dssc-metallic-highlight: #6e8cff;
+    --dssc-off-white: #f4f6fc;
+    --dssc-gold: #c9a34e;
+    --dssc-silver-gray: #b8c1d9;
+    --dssc-border: #e2e6f5;
+    --grad-seal-metallic: linear-gradient(
+      135deg,
+      #6e8cff 0%,
+      #3a5fe0 35%,
+      #1b2e8c 70%,
+      #0e1a4d 100%
+    );
+    --grad-card-accent: linear-gradient(90deg, #1b2e8c 0%, #3a5fe0 100%);
+    --grad-btn-primary: linear-gradient(90deg, #1b2e8c 0%, #3a5fe0 100%);
+    --status-success: #2e9e5b;
+    --status-warning: #d9a441;
+    --status-danger: #c74b4b;
+    --glass-bg: rgba(255, 255, 255, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.7);
+    --glass-shadow: 0 18px 50px rgba(14, 26, 77, 0.1);
   }
 }
-
 
 /* ─── Base Resets ─────────────────────────────────────────────────────────── */
 @layer base {
@@ -79,8 +84,13 @@
     overflow-x: hidden;
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Poppins', 'Segoe UI', sans-serif;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Poppins", "Segoe UI", sans-serif;
     font-weight: 700;
     letter-spacing: 0.02em;
     color: var(--dssc-deep-navy);
@@ -89,7 +99,6 @@
 
 /* ─── Component Classes ───────────────────────────────────────────────────── */
 @layer components {
-
   /* ── Glass Card ─────────────────────────────────────────────────────────── */
   .glass-card {
     background: var(--glass-bg);
@@ -111,12 +120,14 @@
 
   /* ── DSSC Solid Card ────────────────────────────────────────────────────── */
   .dssc-card {
-    background: #FFFFFF;
+    background: #ffffff;
     border: 1px solid var(--dssc-border);
     border-left: 4px solid var(--dssc-royal-blue);
     border-radius: 12px;
     box-shadow: 0 4px 12px rgba(14, 26, 77, 0.08);
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
+    transition:
+      box-shadow 0.2s ease,
+      transform 0.2s ease;
   }
 
   .dssc-card:hover {
@@ -130,7 +141,7 @@
   }
 
   .gradient-bg-red {
-    background: linear-gradient(135deg, #0E1A4D 0%, #1B2E8C 50%, #3A5FE0 100%);
+    background: linear-gradient(135deg, #0e1a4d 0%, #1b2e8c 50%, #3a5fe0 100%);
   }
 
   .gradient-bg-warm {
@@ -175,7 +186,7 @@
     border-radius: 8px;
     color: var(--dssc-royal-blue);
     font-weight: 500;
-    font-family: 'Poppins', sans-serif;
+    font-family: "Poppins", sans-serif;
     transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
@@ -193,9 +204,9 @@
     background: var(--grad-btn-primary);
     border: none;
     border-radius: 8px;
-    color: #FFFFFF;
+    color: #ffffff;
     font-weight: 600;
-    font-family: 'Poppins', sans-serif;
+    font-family: "Poppins", sans-serif;
     transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
@@ -216,12 +227,12 @@
 
   /* ── Secondary Button ────────────────────────────────────────────────── */
   .btn-secondary {
-    background: #FFFFFF;
+    background: #ffffff;
     border: 1.5px solid var(--dssc-royal-blue);
     border-radius: 8px;
     color: var(--dssc-royal-blue);
     font-weight: 500;
-    font-family: 'Poppins', sans-serif;
+    font-family: "Poppins", sans-serif;
     transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
@@ -231,7 +242,7 @@
   .btn-secondary:hover {
     background: var(--dssc-off-white);
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(14, 26, 77, 0.10);
+    box-shadow: 0 6px 16px rgba(14, 26, 77, 0.1);
   }
 
   /* ── Table Styles ────────────────────────────────────────────────────── */
@@ -249,12 +260,12 @@
   .glass-table th {
     background: var(--dssc-royal-blue);
     padding: 12px 16px;
-    text-align: left;
+    text-align: center;
     font-weight: 600;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #FFFFFF;
+    color: #ffffff;
     border-bottom: 2px solid var(--dssc-metallic-blue);
   }
 
@@ -262,7 +273,8 @@
     padding: 13px 16px;
     border-bottom: 1px solid var(--dssc-border);
     color: var(--dssc-deep-navy);
-    background: #FFFFFF;
+    background: #ffffff;
+    text-align: center;
   }
 
   .glass-table tr:last-child td {
@@ -310,7 +322,7 @@
   /* ── DSSC Verified Badge ─────────────────────────────────────────────── */
   .dssc-badge-verified {
     background: var(--dssc-deep-navy);
-    color: #FFFFFF;
+    color: #ffffff;
     border: 1px solid var(--dssc-gold);
     padding: 3px 12px;
     border-radius: 9999px;
@@ -323,9 +335,9 @@
 
   /* ── Navigation ──────────────────────────────────────────────────────── */
   .nav-link {
-    color: rgba(255, 255, 255, 0.80);
+    color: rgba(255, 255, 255, 0.8);
     font-weight: 500;
-    font-family: 'Poppins', sans-serif;
+    font-family: "Poppins", sans-serif;
     font-size: 0.875rem;
     transition: color 0.2s ease;
     position: relative;
@@ -333,7 +345,7 @@
   }
 
   .nav-link:hover {
-    color: #FFFFFF;
+    color: #ffffff;
   }
 
   .nav-link.active {
@@ -341,7 +353,7 @@
   }
 
   .nav-link.active::after {
-    content: '';
+    content: "";
     position: absolute;
     bottom: -4px;
     left: 0;
@@ -352,7 +364,10 @@
   }
 
   /* ── Scrollbar ───────────────────────────────────────────────────────── */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
 
   ::-webkit-scrollbar-track {
     background: var(--dssc-off-white);
@@ -360,7 +375,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(27, 46, 140, 0.30);
+    background: rgba(27, 46, 140, 0.3);
     border-radius: 4px;
   }
 
@@ -371,15 +386,27 @@
 
 /* ─── Utility Layer ───────────────────────────────────────────────────────── */
 @layer utilities {
-  .text-balance { text-wrap: balance; }
-  .animation-delay-100 { animation-delay: 100ms; }
-  .animation-delay-200 { animation-delay: 200ms; }
-  .animation-delay-300 { animation-delay: 300ms; }
-  .animation-delay-400 { animation-delay: 400ms; }
-  .animation-delay-500 { animation-delay: 500ms; }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
 
   .dssc-section-title {
-    font-family: 'Poppins', sans-serif;
+    font-family: "Poppins", sans-serif;
     font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -387,11 +414,10 @@
   }
 
   .dssc-tagline {
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
     font-style: italic;
     color: var(--dssc-gold);
     font-size: 0.875rem;
     letter-spacing: 0.01em;
   }
 }
-
