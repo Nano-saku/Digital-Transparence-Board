@@ -281,38 +281,19 @@ export const studentsService = {
     }[] = [];
 
     for (let i = 0; i < students.length; i++) {
-      const s = students[i];
-      const { data, error } = await getSupabase()
-        .from("students")
-        .insert({
-          id: createRecordId(),
-          student_id: s.studentId,
-          name: s.name,
-          program: s.program,
-          year_level: s.yearLevel,
-          section: s.section,
-        })
-        .select()
-        .single();
+      const student = students[i];
 
-      if (error) {
+      try {
+        const result = await this.create(student);
+        created.push(result);
+      } catch (error) {
         failed.push({
           index: i,
-          studentId: s.studentId,
-          name: s.name,
-          error: error.message,
+          studentId: student.studentId,
+          name: student.name,
+          error: error instanceof Error ? error.message : String(error),
         });
-        continue;
       }
-
-      created.push({
-        id: data.id,
-        studentId: data.student_id,
-        name: data.name,
-        program: data.program,
-        yearLevel: data.year_level,
-        section: data.section,
-      });
     }
 
     return { created, failed };
@@ -523,54 +504,72 @@ export const attendanceService = {
   },
 
   async getByStudentId(studentId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .select("*")
-      .eq("student_id", studentId)
-      .order("date", { ascending: false });
+    return cachedRead<AttendanceRecord>("attendance", async () => {
+      const { data, error } = await getSupabase()
+        .from("attendance")
+        .select("*")
+        .eq("student_id", studentId)
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        date: item.date,
-        status: item.status,
-        session: (item.session ?? "morning") as
-          | "morning"
-          | "afternoon"
-          | "evening",
-        timeIn: item.time_in ?? undefined,
-        timeOut: item.time_out ?? undefined,
-      })) || []
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          date: item.date,
+          status: item.status,
+          session: (item.session ?? "morning") as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: item.time_in ?? undefined,
+          timeOut: item.time_out ?? undefined,
+        })) || []
+      );
+    }).then((records) =>
+      records
+        .filter((record) => record.studentId === studentId)
+        .sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        ),
     );
   },
 
   async getByEventId(eventId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("date", { ascending: false });
+    return cachedRead<AttendanceRecord>("attendance", async () => {
+      const { data, error } = await getSupabase()
+        .from("attendance")
+        .select("*")
+        .eq("event_id", eventId)
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        date: item.date,
-        status: item.status,
-        session: (item.session ?? "morning") as
-          | "morning"
-          | "afternoon"
-          | "evening",
-        timeIn: item.time_in ?? undefined,
-        timeOut: item.time_out ?? undefined,
-      })) || []
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          date: item.date,
+          status: item.status,
+          session: (item.session ?? "morning") as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: item.time_in ?? undefined,
+          timeOut: item.time_out ?? undefined,
+        })) || []
+      );
+    }).then((records) =>
+      records
+        .filter((record) => record.eventId === eventId)
+        .sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        ),
     );
   },
 
@@ -578,29 +577,40 @@ export const attendanceService = {
     eventId: string,
     session: "morning" | "afternoon" | "evening",
   ): Promise<AttendanceRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .select("*")
-      .eq("event_id", eventId)
-      .eq("session", session)
-      .order("date", { ascending: false });
+    return cachedRead<AttendanceRecord>("attendance", async () => {
+      const { data, error } = await getSupabase()
+        .from("attendance")
+        .select("*")
+        .eq("event_id", eventId)
+        .eq("session", session)
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        date: item.date,
-        status: item.status,
-        session: (item.session ?? session) as
-          | "morning"
-          | "afternoon"
-          | "evening",
-        timeIn: item.time_in ?? undefined,
-        timeOut: item.time_out ?? undefined,
-      })) || []
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          date: item.date,
+          status: item.status,
+          session: (item.session ?? session) as
+            | "morning"
+            | "afternoon"
+            | "evening",
+          timeIn: item.time_in ?? undefined,
+          timeOut: item.time_out ?? undefined,
+        })) || []
+      );
+    }).then((records) =>
+      records
+        .filter(
+          (record) => record.eventId === eventId && record.session === session,
+        )
+        .sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+        ),
     );
   },
 

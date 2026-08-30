@@ -27,6 +27,53 @@ const ROLE_LABELS: Record<UserRole, string> = {
   auditor: "Council Auditor",
   "board-member": "Board Member",
 };
+const AUTH_CACHE_KEY = "dtb-offline-auth-session";
+
+interface CachedAuthSession {
+  userId: string;
+  role: UserRole;
+  displayName: string;
+}
+function saveCachedAuthSession(session: AuthSession): void {
+  try {
+    localStorage.setItem(
+      AUTH_CACHE_KEY,
+      JSON.stringify({
+        userId: session.user.id,
+        role: session.role,
+        displayName: session.displayName,
+      } satisfies CachedAuthSession),
+    );
+  } catch (error) {
+    console.warn("Failed to cache auth session:", error);
+  }
+}
+
+function getCachedAuthSession(user: User): CachedAuthSession | null {
+  try {
+    const raw = localStorage.getItem(AUTH_CACHE_KEY);
+
+    if (!raw) return null;
+
+    const cached = JSON.parse(raw) as CachedAuthSession;
+
+    // Never use another user's cached role.
+    if (cached.userId !== user.id) return null;
+
+    return cached;
+  } catch (error) {
+    console.warn("Failed to read cached auth session:", error);
+    return null;
+  }
+}
+
+function clearCachedAuthSession(): void {
+  try {
+    localStorage.removeItem(AUTH_CACHE_KEY);
+  } catch (error) {
+    console.warn("Failed to clear cached auth session:", error);
+  }
+}
 
 /** Reads the officer's role from public.user_roles. */
 interface RoleRecord {
@@ -110,11 +157,15 @@ export const authService = {
       );
     }
 
-    return {
+    const authSession: AuthSession = {
       user: data.user,
       role: roleRecord.role,
       displayName: roleRecord.name || toDisplayName(data.user, roleRecord.role),
     };
+
+    saveCachedAuthSession(authSession);
+
+    return authSession;
   },
 
   /** Restores a persisted session after a page reload (null when signed out). */
@@ -123,23 +174,63 @@ export const authService = {
       data: { session },
       error,
     } = await getSupabase().auth.getSession();
-    if (error || !session?.user) return null;
 
-    const roleRecord = await fetchRole(session.user.id);
-    if (!roleRecord) {
-      // The account lost its role (e.g. role row deleted) — sign out.
-      await getSupabase().auth.signOut();
+    if (error || !session?.user) {
       return null;
     }
-    return {
-      user: session.user,
-      role: roleRecord.role,
-      displayName:
-        roleRecord.name || toDisplayName(session.user, roleRecord.role),
-    };
+
+    const cached = getCachedAuthSession(session.user);
+
+    try {
+      const roleRecord = await fetchRole(session.user.id);
+
+      if (roleRecord) {
+        const authSession: AuthSession = {
+          user: session.user,
+          role: roleRecord.role,
+          displayName:
+            roleRecord.name || toDisplayName(session.user, roleRecord.role),
+        };
+
+        saveCachedAuthSession(authSession);
+
+        return authSession;
+      }
+
+      /*
+       * If Supabase is reachable but the user genuinely has no role,
+       * this account should not remain authenticated as an officer.
+       */
+      if (navigator.onLine) {
+        clearCachedAuthSession();
+        await getSupabase().auth.signOut();
+        return null;
+      }
+    } catch (error) {
+      console.warn(
+        "Could not verify role online. Attempting offline auth recovery:",
+        error,
+      );
+    }
+
+    /*
+     * Offline fallback:
+     * Supabase still has a valid persisted session, but we cannot
+     * query user_roles. Restore the previously verified local role.
+     */
+    if (cached) {
+      return {
+        user: session.user,
+        role: cached.role,
+        displayName: cached.displayName,
+      };
+    }
+
+    return null;
   },
 
   async signOut(): Promise<void> {
+    clearCachedAuthSession();
     await getSupabase().auth.signOut();
   },
 

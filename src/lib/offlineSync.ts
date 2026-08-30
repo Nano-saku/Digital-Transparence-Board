@@ -35,7 +35,10 @@ interface QueuedMutation {
 }
 
 interface OfflineDatabase extends IDBDatabase {
-  transaction(storeNames: "tables" | "mutations", mode?: IDBTransactionMode): IDBTransaction;
+  transaction(
+    storeNames: "tables" | "mutations",
+    mode?: IDBTransactionMode,
+  ): IDBTransaction;
 }
 
 const DB_NAME = "digital-transparency-board-offline";
@@ -49,20 +52,25 @@ const OFFICER_ROLES: readonly UserRole[] = [
 ];
 
 const hasIndexedDb = (): boolean => typeof indexedDB !== "undefined";
-const onlineNow = (): boolean => typeof navigator === "undefined" || navigator.onLine;
-const cacheKey = (ownerId: string, table: TableName): string => `${ownerId}:${table}`;
+const onlineNow = (): boolean =>
+  typeof navigator === "undefined" || navigator.onLine;
+const cacheKey = (ownerId: string, table: TableName): string =>
+  `${ownerId}:${table}`;
 
 const request = <T>(value: IDBRequest<T>): Promise<T> =>
   new Promise((resolve, reject) => {
     value.onsuccess = () => resolve(value.result);
-    value.onerror = () => reject(value.error ?? new Error("IndexedDB request failed"));
+    value.onerror = () =>
+      reject(value.error ?? new Error("IndexedDB request failed"));
   });
 
 const transactionDone = (transaction: IDBTransaction): Promise<void> =>
   new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed"));
   });
 
 const openDatabase = (): Promise<OfflineDatabase> =>
@@ -70,19 +78,38 @@ const openDatabase = (): Promise<OfflineDatabase> =>
     const open = indexedDB.open(DB_NAME, DB_VERSION);
     open.onupgradeneeded = () => {
       const database = open.result;
-      if (!database.objectStoreNames.contains("tables")) database.createObjectStore("tables", { keyPath: "key" });
+      if (!database.objectStoreNames.contains("tables"))
+        database.createObjectStore("tables", { keyPath: "key" });
       if (!database.objectStoreNames.contains("mutations")) {
-        const mutations = database.createObjectStore("mutations", { keyPath: "key" });
+        const mutations = database.createObjectStore("mutations", {
+          keyPath: "key",
+        });
         mutations.createIndex("by_owner_created", ["ownerId", "createdAt"]);
       }
     };
     open.onsuccess = () => resolve(open.result as OfflineDatabase);
-    open.onerror = () => reject(open.error ?? new Error("Could not open offline storage"));
+    open.onerror = () =>
+      reject(open.error ?? new Error("Could not open offline storage"));
   });
 
 const networkFailure = (error: unknown): boolean => {
-  const message = error instanceof Error ? error.message : String(error);
-  return /failed to fetch|network(?:error)?|offline|load failed|fetch failed|timeout/i.test(message);
+  let message = "";
+
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error
+  ) {
+    message = String((error as { message: unknown }).message);
+  } else {
+    message = String(error);
+  }
+
+  return /failed to fetch|network(?:error)?|offline|load failed|fetch failed|timeout/i.test(
+    message,
+  );
 };
 
 /**
@@ -154,7 +181,8 @@ class OfflineSyncService {
   }
 
   private async database(): Promise<OfflineDatabase> {
-    if (!hasIndexedDb) throw new Error("Offline storage is not available in this browser.");
+    if (!hasIndexedDb)
+      throw new Error("Offline storage is not available in this browser.");
     return openDatabase();
   }
 
@@ -162,7 +190,9 @@ class OfflineSyncService {
     if (!this.isEnabled() || !this.ownerId) return null;
     const database = await this.database();
     const transaction = database.transaction("tables", "readonly");
-    const entry = await request(transaction.objectStore("tables").get(cacheKey(this.ownerId, table))) as CachedTable<T> | undefined;
+    const entry = (await request(
+      transaction.objectStore("tables").get(cacheKey(this.ownerId, table)),
+    )) as CachedTable<T> | undefined;
     await transactionDone(transaction);
     return entry?.records ?? null;
   }
@@ -175,34 +205,68 @@ class OfflineSyncService {
     const key = cacheKey(this.ownerId, table);
     let next = records;
     if (merge) {
-      const current = await request(store.get(key)) as CachedTable<T> | undefined;
-      const byId = new Map((current?.records ?? []).map((record) => [String((record as { id?: unknown }).id), record]));
-      records.forEach((record) => byId.set(String((record as { id?: unknown }).id), record));
+      const current = (await request(store.get(key))) as
+        | CachedTable<T>
+        | undefined;
+      const byId = new Map(
+        (current?.records ?? []).map((record) => [
+          String((record as { id?: unknown }).id),
+          record,
+        ]),
+      );
+      records.forEach((record) =>
+        byId.set(String((record as { id?: unknown }).id), record),
+      );
       next = [...byId.values()];
     }
-    store.put({ key, ownerId: this.ownerId, table, records: next, updatedAt: Date.now() } satisfies CachedTable<T>);
+    store.put({
+      key,
+      ownerId: this.ownerId,
+      table,
+      records: next,
+      updatedAt: Date.now(),
+    } satisfies CachedTable<T>);
     await transactionDone(transaction);
   }
 
-  private async mutateCache<T>(table: TableName, kind: MutationKind, recordId: string, makeLocal?: (current: T | undefined) => T): Promise<T | undefined> {
+  private async mutateCache<T>(
+    table: TableName,
+    kind: MutationKind,
+    recordId: string,
+    makeLocal?: (current: T | undefined) => T,
+  ): Promise<T | undefined> {
     if (!this.isEnabled() || !this.ownerId) return undefined;
     const current = await this.read<T>(table);
     const records = current ?? [];
-    const index = records.findIndex((record) => String((record as { id?: unknown }).id) === recordId);
+    const index = records.findIndex(
+      (record) => String((record as { id?: unknown }).id) === recordId,
+    );
     if (kind === "delete") {
-      if (index >= 0) await this.cache(table, records.filter((_, itemIndex) => itemIndex !== index));
+      if (index >= 0)
+        await this.cache(
+          table,
+          records.filter((_, itemIndex) => itemIndex !== index),
+        );
       return undefined;
     }
     const next = makeLocal?.(index >= 0 ? records[index] : undefined);
     if (!next) return undefined;
-    const nextRecords = index >= 0
-      ? records.map((record, itemIndex) => (itemIndex === index ? next : record))
-      : [...records, next];
+    const nextRecords =
+      index >= 0
+        ? records.map((record, itemIndex) =>
+            itemIndex === index ? next : record,
+          )
+        : [...records, next];
     await this.cache(table, nextRecords);
     return next;
   }
 
-  private async enqueue(mutation: Omit<QueuedMutation, "key" | "ownerId" | "createdAt" | "attempts">): Promise<void> {
+  private async enqueue(
+    mutation: Omit<
+      QueuedMutation,
+      "key" | "ownerId" | "createdAt" | "attempts"
+    >,
+  ): Promise<void> {
     if (!this.ownerId) return;
     const database = await this.database();
     const transaction = database.transaction("mutations", "readwrite");
@@ -225,7 +289,12 @@ class OfflineSyncService {
     executeOnline: () => Promise<T>;
   }): Promise<T | undefined> {
     const queueOffline = async (): Promise<T | undefined> => {
-      const local = await this.mutateCache<T>(params.table, params.kind, params.recordId, params.makeLocal);
+      const local = await this.mutateCache<T>(
+        params.table,
+        params.kind,
+        params.recordId,
+        params.makeLocal,
+      );
       await this.enqueue({
         id: crypto.randomUUID(),
         table: params.table,
@@ -242,7 +311,12 @@ class OfflineSyncService {
     if (this.isOffline()) return queueOffline();
     try {
       const result = await params.executeOnline();
-      await this.mutateCache<T>(params.table, params.kind, params.recordId, () => result);
+      await this.mutateCache<T>(
+        params.table,
+        params.kind,
+        params.recordId,
+        () => result,
+      );
       return result;
     } catch (error) {
       if (!networkFailure(error)) throw error;
@@ -260,8 +334,17 @@ class OfflineSyncService {
     if (!this.ownerId) return [];
     const database = await this.database();
     const transaction = database.transaction("mutations", "readonly");
-    const index = transaction.objectStore("mutations").index("by_owner_created");
-    const entries = await request(index.getAll(IDBKeyRange.bound([this.ownerId, 0], [this.ownerId, Number.MAX_SAFE_INTEGER])));
+    const index = transaction
+      .objectStore("mutations")
+      .index("by_owner_created");
+    const entries = await request(
+      index.getAll(
+        IDBKeyRange.bound(
+          [this.ownerId, 0],
+          [this.ownerId, Number.MAX_SAFE_INTEGER],
+        ),
+      ),
+    );
     await transactionDone(transaction);
     return entries as QueuedMutation[];
   }
@@ -273,7 +356,10 @@ class OfflineSyncService {
     await transactionDone(transaction);
   }
 
-  private async recordFailure(mutation: QueuedMutation, error: unknown): Promise<void> {
+  private async recordFailure(
+    mutation: QueuedMutation,
+    error: unknown,
+  ): Promise<void> {
     const database = await this.database();
     const transaction = database.transaction("mutations", "readwrite");
     transaction.objectStore("mutations").put({
@@ -291,13 +377,19 @@ class OfflineSyncService {
       // Client-created ids are primary keys. Upsert makes an interrupted replay
       // idempotent: if Supabase accepted a prior request but the response was
       // lost, this retry updates that exact same row instead of creating a copy.
-      ({ error } = await query.upsert({ id: mutation.recordId, ...mutation.payload }, { onConflict: "id" }));
+      ({ error } = await query.upsert(
+        { id: mutation.recordId, ...mutation.payload },
+        { onConflict: "id" },
+      ));
     } else if (mutation.kind === "update") {
-      ({ error } = await query.update(mutation.payload).eq("id", mutation.recordId));
+      ({ error } = await query
+        .update(mutation.payload)
+        .eq("id", mutation.recordId));
     } else {
       ({ error } = await query.delete().eq("id", mutation.recordId));
     }
-    if (error) throw new Error(error.message ?? "Supabase synchronization failed");
+    if (error)
+      throw new Error(error.message ?? "Supabase synchronization failed");
   }
 
   async sync(): Promise<void> {
