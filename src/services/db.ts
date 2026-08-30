@@ -115,59 +115,72 @@ export const studentsService = {
   },
 
   async getById(id: string): Promise<Student | null> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .select("*")
-      .eq("id", id)
-      .single();
+    const students = await cachedRead<Student>("students", async () => {
+      const { data, error } = await getSupabase().from("students").select("*");
 
-    if (error) return null;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      name: data.name,
-      program: data.program,
-      yearLevel: data.year_level,
-      section: data.section,
-    };
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          name: item.name,
+          program: item.program,
+          yearLevel: item.year_level,
+          section: item.section,
+        })) || []
+      );
+    });
+
+    return students.find((student) => student.id === id) ?? null;
   },
 
   async getByStudentId(studentId: string): Promise<Student | null> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .select("*")
-      .eq("student_id", studentId)
-      .single();
+    const students = await cachedRead<Student>("students", async () => {
+      const { data, error } = await getSupabase().from("students").select("*");
 
-    if (error) return null;
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      name: data.name,
-      program: data.program,
-      yearLevel: data.year_level,
-      section: data.section,
-    };
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          name: item.name,
+          program: item.program,
+          yearLevel: item.year_level,
+          section: item.section,
+        })) || []
+      );
+    });
+
+    return students.find((student) => student.studentId === studentId) ?? null;
   },
 
   async getByName(name: string): Promise<Student | null> {
-    const { data, error } = await getSupabase()
-      .from("students")
-      .select("*")
-      .ilike("name", `%${name}%`)
-      .single();
+    const students = await cachedRead<Student>("students", async () => {
+      const { data, error } = await getSupabase().from("students").select("*");
 
-    if (error) return null;
-    return data
-      ? {
-          id: data.id,
-          studentId: data.student_id,
-          name: data.name,
-          program: data.program,
-          yearLevel: data.year_level,
-          section: data.section,
-        }
-      : null;
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          name: item.name,
+          program: item.program,
+          yearLevel: item.year_level,
+          section: item.section,
+        })) || []
+      );
+    });
+
+    const searchName = name.toLowerCase();
+
+    return (
+      students.find((student) =>
+        student.name.toLowerCase().includes(searchName),
+      ) ?? null
+    );
   },
 
   async create(student: Omit<Student, "id">): Promise<Student> {
@@ -782,67 +795,96 @@ export const contributionsService = {
   },
 
   async getByStudentId(studentId: string): Promise<ContributionRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .select("*")
-      .eq("student_id", studentId)
-      .order("id", { ascending: false });
+    const contributions = await cachedRead<ContributionRecord>(
+      "contributions",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("contributions")
+          .select("*")
+          .order("id", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        requiredAmount: item.required_amount,
-        amountPaid: item.amount_paid,
-        remainingBalance: item.remaining_balance,
-      })) || []
+        if (error) throw error;
+
+        return (
+          data?.map((item) => ({
+            id: item.id,
+            studentId: item.student_id,
+            eventId: item.event_id,
+            eventName: item.event_name,
+            requiredAmount: item.required_amount,
+            amountPaid: item.amount_paid,
+            remainingBalance: item.remaining_balance,
+          })) || []
+        );
+      },
     );
+
+    return contributions
+      .filter((record) => record.studentId === studentId)
+      .sort((a, b) => b.id.localeCompare(a.id));
   },
   async getByStudentAndEvent(
     studentId: string,
     eventId: string,
   ): Promise<ContributionRecord | null> {
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .select("*")
-      .eq("student_id", studentId)
-      .eq("event_id", eventId)
-      .single();
+    const contributions = await cachedRead<ContributionRecord>(
+      "contributions",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("contributions")
+          .select("*");
 
-    if (error) return null;
+        if (error) throw error;
 
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      requiredAmount: data.required_amount,
-      amountPaid: data.amount_paid,
-      remainingBalance: data.remaining_balance,
-    };
+        return (
+          data?.map((item) => ({
+            id: item.id,
+            studentId: item.student_id,
+            eventId: item.event_id,
+            eventName: item.event_name,
+            requiredAmount: item.required_amount,
+            amountPaid: item.amount_paid,
+            remainingBalance: item.remaining_balance,
+          })) || []
+        );
+      },
+    );
+
+    return (
+      contributions.find(
+        (record) =>
+          record.studentId === studentId && record.eventId === eventId,
+      ) ?? null
+    );
   },
   async getByEventId(eventId: string): Promise<ContributionRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("contributions")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("id", { ascending: false });
+    const contributions = await cachedRead<ContributionRecord>(
+      "contributions",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("contributions")
+          .select("*")
+          .order("id", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        requiredAmount: item.required_amount,
-        amountPaid: item.amount_paid,
-        remainingBalance: item.remaining_balance,
-      })) || []
+        if (error) throw error;
+
+        return (
+          data?.map((item) => ({
+            id: item.id,
+            studentId: item.student_id,
+            eventId: item.event_id,
+            eventName: item.event_name,
+            requiredAmount: item.required_amount,
+            amountPaid: item.amount_paid,
+            remainingBalance: item.remaining_balance,
+          })) || []
+        );
+      },
     );
+
+    return contributions
+      .filter((record) => record.eventId === eventId)
+      .sort((a, b) => b.id.localeCompare(a.id));
   },
 
   async create(
