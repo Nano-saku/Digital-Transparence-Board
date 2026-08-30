@@ -193,10 +193,27 @@ export default function EventManagementSection({
   staffName,
 }: EventManagementSectionProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
+
+  // App.tsx renders this component for the event/payment/attendance
+  // management routes without a `key`, so navigating between them updates
+  // props on the same mounted instance rather than remounting it. Without
+  // this, activeTab keeps whatever value it had on first mount and never
+  // reflects a later nav click to a different tab.
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
+  const [showAttendanceClearConfirm, setShowAttendanceClearConfirm] =
+    useState(false);
+
+  const [attendanceToClear, setAttendanceToClear] = useState<{
+    id: string;
+    studentName: string;
+  } | null>(null);
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
@@ -364,9 +381,12 @@ export default function EventManagementSection({
   const sectionRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (showLoader = true) => {
     try {
-      setLoading(true);
+      if (showLoader) {
+        setLoading(true);
+      }
+
       const [eventsData, studentsData, paymentsData, attendanceData] =
         await Promise.all([
           eventsService.getAll(),
@@ -374,14 +394,12 @@ export default function EventManagementSection({
           paymentsService.getAll(),
           attendanceService.getAll(),
         ]);
+
       setEvents(eventsData);
       setStudents(studentsData);
       setPayments(paymentsData);
       setAttendanceRecords(attendanceData);
 
-      // Board members are read from the production catalog; the list powers the
-      // "assign members" picker. Falls back to an empty list when the
-      // RLS policy has not been provisioned yet.
       try {
         setBoardMembers(await boardMembersService.listBoardMembers());
       } catch (membersError) {
@@ -392,7 +410,9 @@ export default function EventManagementSection({
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
     } finally {
-      setLoading(false);
+      if (showLoader) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -411,7 +431,7 @@ export default function EventManagementSection({
         "attendance",
         "board_members",
       ],
-      loadData,
+      () => loadData(false),
       "event-management",
     );
   }, [loadData]);
@@ -542,6 +562,27 @@ export default function EventManagementSection({
         return;
       }
 
+      // Resolve the contribution record first (create it if this student has
+      // no row for the event yet — e.g. a student added without seeded
+      // contribution data), so the payment can be created already linked to
+      // it via contributionId. This has to happen before paymentsService.create
+      // below: a payment with no contributionId can never be cascade-deleted
+      // when its contribution is deleted.
+      let contribution = await contributionsService.getByStudentAndEvent(
+        student.id,
+        event.id,
+      );
+      if (!contribution) {
+        contribution = await contributionsService.create({
+          studentId: student.id,
+          eventId: event.id,
+          eventName: event.name,
+          requiredAmount: event.allocationAmount,
+          amountPaid: 0,
+          remainingBalance: event.allocationAmount,
+        });
+      }
+
       // An official receipt is generated automatically (as SVG, uploaded to
       // the "receipts" Storage bucket) and attached to the payment.
       let receiptUrl: string | undefined;
@@ -572,40 +613,21 @@ export default function EventManagementSection({
         studentName: student.name,
         eventId: paymentForm.eventId,
         eventName: event.name,
+        contributionId: contribution.id,
         amount: paymentForm.amount,
         date: today(),
         recordedBy: staffName || "Council Officer",
         receiptUrl,
       });
 
-      // Update contribution record (create it first when this student has no
-      // row for the event — e.g. a student added without seeded contribution
-      // data — so the student's "Contribution Records" panel stays accurate).
-      const contributions = await contributionsService.getByStudentId(
-        student.id,
-      );
-      const contribution = contributions.find((c) => c.eventId === event.id);
-      if (contribution) {
-        await contributionsService.update(contribution.id, {
-          amountPaid: contribution.amountPaid + paymentForm.amount,
-          remainingBalance: Math.max(
-            0,
-            contribution.remainingBalance - paymentForm.amount,
-          ),
-        });
-      } else {
-        await contributionsService.create({
-          studentId: student.id,
-          eventId: event.id,
-          eventName: event.name,
-          requiredAmount: event.allocationAmount,
-          amountPaid: paymentForm.amount,
-          remainingBalance: Math.max(
-            0,
-            event.allocationAmount - paymentForm.amount,
-          ),
-        });
-      }
+      // Update the contribution's running totals now that the payment exists.
+      await contributionsService.update(contribution.id, {
+        amountPaid: contribution.amountPaid + paymentForm.amount,
+        remainingBalance: Math.max(
+          0,
+          contribution.remainingBalance - paymentForm.amount,
+        ),
+      });
 
       toast.success("Payment recorded successfully!");
       setPaymentForm({ studentId: "", eventId: "", amount: 0 });
@@ -720,6 +742,57 @@ export default function EventManagementSection({
       console.error("Error saving attendance status:", error);
       toast.error(`Failed to save attendance — ${errorMessage(error)}`);
     }
+  };
+  const confirmClearAttendance = async () => {
+    if (!attendanceToClear) return;
+
+    try {
+      await attendanceService.delete(attendanceToClear.id);
+
+      // Immediately remove the deleted record from local state.
+      setAttendanceRecords((prev) =>
+        prev.filter((record) => record.id !== attendanceToClear.id),
+      );
+
+      // If this was the student currently shown as "Last Scanned",
+      // remove that indicator too.
+      if (
+        lastScannedStudentId &&
+        attendanceMap.get(lastScannedStudentId)?.id === attendanceToClear.id
+      ) {
+        setLastScannedStudentId(null);
+        setLastScanTime(null);
+      }
+
+      toast.success(
+        `${attendanceToClear.studentName}'s ${attendanceSession} attendance has been cleared.`,
+      );
+
+      // Close the dialog and clear the selected record.
+      setShowAttendanceClearConfirm(false);
+      setAttendanceToClear(null);
+    } catch (error) {
+      console.error("Error clearing attendance:", error);
+
+      toast.error(
+        `Failed to clear ${attendanceToClear.studentName}'s attendance.`,
+      );
+    }
+  };
+  const handleClearAttendance = (student: Student) => {
+    const record = attendanceMap.get(student.id);
+
+    if (!record) {
+      toast.error("No attendance record exists for this student.");
+      return;
+    }
+
+    setAttendanceToClear({
+      id: record.id,
+      studentName: student.name,
+    });
+
+    setShowAttendanceClearConfirm(true);
   };
 
   /** Manual time-in / time-out edit (24h "HH:MM") - saved immediately. */
@@ -1252,7 +1325,7 @@ export default function EventManagementSection({
             </div>
           </div>
 
-          {canManageEvents && (
+          {canManageEvents && activeTab === "event-management" && (
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={openAddEventModal}
@@ -1893,7 +1966,6 @@ export default function EventManagementSection({
                               <th className="text-center">Status</th>
                               <th>Time In</th>
                               <th>Time Out</th>
-                              <th className="text-center">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2192,6 +2264,7 @@ export default function EventManagementSection({
                             <th>Event</th>
                             <th>Time In</th>
                             <th>Time Out</th>
+                            <th className="text-center">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2310,13 +2383,35 @@ export default function EventManagementSection({
                                     ariaLabel="Time out"
                                   />
                                 </td>
+                                <td className="text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleClearAttendance(student)
+                                    }
+                                    disabled={!record}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                      record
+                                        ? "text-red-500 hover:bg-red/10 hover:text-red-600"
+                                        : "text-text-secondary/40 cursor-not-allowed"
+                                    }`}
+                                    title={
+                                      record
+                                        ? "Clear attendance record"
+                                        : "No attendance record to clear"
+                                    }
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Clear
+                                  </button>
+                                </td>
                               </tr>
                             );
                           })}
                           {filteredStudents.length === 0 && (
                             <tr>
                               <td
-                                colSpan={8}
+                                colSpan={9}
                                 className="text-center text-text-secondary py-6"
                               >
                                 {scannedCourse && scannedSection
@@ -2484,7 +2579,9 @@ export default function EventManagementSection({
 
       {/* Add/Edit Event Modal */}
       <Dialog
-        open={showEventModal || !!editingEvent}
+        open={
+          activeTab === "event-management" && (showEventModal || !!editingEvent)
+        }
         onOpenChange={(open) => {
           if (!open) {
             setShowEventModal(false);
@@ -2794,7 +2891,74 @@ export default function EventManagementSection({
           </div>
         </DialogContent>
       </Dialog>
+      {showAttendanceClearConfirm && attendanceToClear && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => {
+            setShowAttendanceClearConfirm(false);
+            setAttendanceToClear(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-white/60 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-red/10 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-red" />
+                </div>
 
+                <div className="flex-1">
+                  <h3 className="font-display font-semibold text-lg text-dark">
+                    Clear Attendance?
+                  </h3>
+
+                  <p className="mt-2 text-sm text-text-secondary leading-relaxed">
+                    Are you sure you want to clear{" "}
+                    <span className="font-semibold text-dark">
+                      {attendanceToClear.studentName}
+                    </span>
+                    's{" "}
+                    <span className="font-semibold text-dark capitalize">
+                      {attendanceSession}
+                    </span>{" "}
+                    attendance?
+                  </p>
+
+                  <p className="mt-2 text-xs text-text-secondary leading-relaxed">
+                    This will permanently remove the attendance record. The
+                    student will become unrecorded and can be marked again
+                    afterward.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50/70 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAttendanceClearConfirm(false);
+                  setAttendanceToClear(null);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmClearAttendance}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red text-white text-sm font-medium hover:bg-red/90 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear Attendance
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Delete Event Confirmation Dialog */}
       <Dialog
         open={showDeleteConfirm}

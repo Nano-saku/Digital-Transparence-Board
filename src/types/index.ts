@@ -84,6 +84,7 @@ export interface PaymentRecord {
   studentName: string;
   eventId: string;
   eventName: string;
+  contributionId: string;
   amount: number;
   date: string;
   receiptUrl?: string;

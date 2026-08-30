@@ -162,15 +162,16 @@ export const studentsService = {
     };
   },
 
-  async update(id: string, student: Partial<Student>): Promise<Student> {
+  async update(id: string, record: Partial<Student>): Promise<Student> {
     const updateData: Record<string, unknown> = {};
-    if (student.studentId !== undefined)
-      updateData.student_id = student.studentId;
-    if (student.name !== undefined) updateData.name = student.name;
-    if (student.program !== undefined) updateData.program = student.program;
-    if (student.yearLevel !== undefined)
-      updateData.year_level = student.yearLevel;
-    if (student.section !== undefined) updateData.section = student.section;
+
+    if (record.studentId !== undefined)
+      updateData.student_id = record.studentId;
+    if (record.name !== undefined) updateData.name = record.name;
+    if (record.program !== undefined) updateData.program = record.program;
+    if (record.yearLevel !== undefined)
+      updateData.year_level = record.yearLevel;
+    if (record.section !== undefined) updateData.section = record.section;
 
     const { data, error } = await getSupabase()
       .from("students")
@@ -180,6 +181,7 @@ export const studentsService = {
       .single();
 
     if (error) throw error;
+
     return {
       id: data.id,
       studentId: data.student_id,
@@ -635,7 +637,29 @@ export const contributionsService = {
       })) || []
     );
   },
+  async getByStudentAndEvent(
+    studentId: string,
+    eventId: string,
+  ): Promise<ContributionRecord | null> {
+    const { data, error } = await getSupabase()
+      .from("contributions")
+      .select("*")
+      .eq("student_id", studentId)
+      .eq("event_id", eventId)
+      .single();
 
+    if (error) return null;
+
+    return {
+      id: data.id,
+      studentId: data.student_id,
+      eventId: data.event_id,
+      eventName: data.event_name,
+      requiredAmount: data.required_amount,
+      amountPaid: data.amount_paid,
+      remainingBalance: data.remaining_balance,
+    };
+  },
   async getByEventId(eventId: string): Promise<ContributionRecord[]> {
     const { data, error } = await getSupabase()
       .from("contributions")
@@ -748,8 +772,9 @@ export const paymentsService = {
         id: item.id,
         studentId: item.student_id,
         studentName: item.student_name,
-        eventId: item.event_id || undefined,
-        eventName: item.event_name || undefined,
+        eventId: item.event_id,
+        eventName: item.event_name,
+        contributionId: item.contribution_id,
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
@@ -774,6 +799,7 @@ export const paymentsService = {
         studentName: item.student_name,
         eventId: item.event_id || undefined,
         eventName: item.event_name || undefined,
+        contributionId: item.contribution_id,
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
@@ -798,6 +824,7 @@ export const paymentsService = {
         studentName: item.student_name,
         eventId: item.event_id || undefined,
         eventName: item.event_name || undefined,
+        contributionId: item.contribution_id,
         amount: item.amount,
         date: item.date,
         receiptUrl: item.receipt_url || undefined,
@@ -816,6 +843,7 @@ export const paymentsService = {
         student_name: record.studentName,
         event_id: record.eventId,
         event_name: record.eventName,
+        contribution_id: record.contributionId, // ADD THIS
         amount: record.amount,
         date: record.date,
         receipt_url: record.receiptUrl,
@@ -826,12 +854,14 @@ export const paymentsService = {
       .single();
 
     if (error) throw error;
+
     return {
       id: data.id,
       studentId: data.student_id,
       studentName: data.student_name,
       eventId: data.event_id || undefined,
       eventName: data.event_name || undefined,
+      contributionId: data.contribution_id || undefined, // ADD THIS
       amount: data.amount,
       date: data.date,
       receiptUrl: data.receipt_url || undefined,
@@ -874,6 +904,7 @@ export const paymentsService = {
       studentName: data.student_name,
       eventId: data.event_id || undefined,
       eventName: data.event_name || undefined,
+      contributionId: data.contribution_id,
       amount: data.amount,
       date: data.date,
       receiptUrl: data.receipt_url || undefined,
@@ -883,12 +914,33 @@ export const paymentsService = {
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabase()
+    const supabase = getSupabase();
+
+    // Get the contribution first so we know which student/event it belongs to
+    const { data: contribution, error: contributionError } = await supabase
+      .from("contributions")
+      .select("student_id, event_id")
+      .eq("id", id)
+      .single();
+
+    if (contributionError) throw contributionError;
+
+    // Delete related payments
+    const { error: paymentError } = await supabase
       .from("payments")
+      .delete()
+      .eq("student_id", contribution.student_id)
+      .eq("event_id", contribution.event_id);
+
+    if (paymentError) throw paymentError;
+
+    // Delete the contribution
+    const { error: contributionDeleteError } = await supabase
+      .from("contributions")
       .delete()
       .eq("id", id);
 
-    if (error) throw error;
+    if (contributionDeleteError) throw contributionDeleteError;
   },
 };
 

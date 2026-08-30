@@ -58,7 +58,8 @@ export default function StudentManagementSection({
     yearLevel: 1,
     section: "",
   });
-
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
   // Load students from database
   useEffect(() => {
     loadStudents();
@@ -202,19 +203,29 @@ export default function StudentManagementSection({
     }
   };
 
-  const handleDeleteStudent = async (id: string) => {
-    if (confirm("Are you sure you want to delete this student?")) {
-      try {
-        await studentsService.delete(id);
-        setStudents(students.filter((s) => s.id !== id));
-        toast.success("Student deleted successfully");
-      } catch (error) {
-        console.error("Error deleting student:", error);
-        toast.error("Failed to delete student");
-      }
+  const handleDeleteStudent = (student: Student) => {
+    setStudentToDelete(student);
+    setShowDeleteConfirm(true);
+  };
+  const confirmDeleteStudent = async () => {
+    if (!studentToDelete) return;
+
+    try {
+      await studentsService.delete(studentToDelete.id);
+
+      setStudents((prev) =>
+        prev.filter((student) => student.id !== studentToDelete.id),
+      );
+
+      toast.success(`${studentToDelete.name} has been deleted.`);
+
+      setShowDeleteConfirm(false);
+      setStudentToDelete(null);
+    } catch (error) {
+      console.error("Error deleting student:", error);
+      toast.error(`Failed to delete ${studentToDelete.name}.`);
     }
   };
-
   const openEditModal = (student: Student) => {
     setEditingStudent(student);
     setFormData({
@@ -488,7 +499,7 @@ export default function StudentManagementSection({
                             <Edit2 className="w-4 h-4 text-blue-600" />
                           </button>
                           <button
-                            onClick={() => handleDeleteStudent(student.id)}
+                            onClick={() => handleDeleteStudent(student)}
                             className="p-2 rounded-lg hover:bg-red-500/10"
                             title="Delete"
                           >
@@ -675,7 +686,61 @@ export default function StudentManagementSection({
           </div>
         </DialogContent>
       </Dialog>
+      {/* Delete Student Confirmation Dialog */}
+      <Dialog
+        open={showDeleteConfirm}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeleteConfirm(false);
+            setStudentToDelete(null);
+          }
+        }}
+      >
+        <DialogContent className="glass-card-strong max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Delete Student
+            </DialogTitle>
+          </DialogHeader>
 
+          <div className="space-y-4 mt-4">
+            <p className="text-sm text-text-secondary">
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-dark">
+                {studentToDelete?.name}
+              </span>
+              ?
+            </p>
+
+            <p className="text-xs text-text-secondary/80">
+              This action cannot be undone. The student's record will be
+              permanently removed from the system.
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setStudentToDelete(null);
+                }}
+                className="flex-1 glass-button px-4 py-2.5"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteStudent}
+                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-red !border-none"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Student
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Attendance QR Code Modal */}
       <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
     </section>

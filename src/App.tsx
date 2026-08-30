@@ -1,25 +1,43 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense, lazy } from "react";
 import type { ViewState, Student, UserRole } from "@/types";
 import { studentsService } from "@/services/db";
 import { authService, type AuthSession } from "@/services/auth";
 import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
+import SyncStatusBadge from "@/components/SyncStatusBadge";
 
-// Sections
+// Public-facing sections load eagerly — most visitors land here first.
 import Navigation from "@/sections/Navigation";
 import LandingSection from "@/sections/LandingSection";
 import StudentRecordSection from "@/sections/StudentRecordSection";
 import TransparencyBoardSection from "@/sections/TransparencyBoardSection";
 import FeedbackSection from "@/sections/FeedbackSection";
-import AdminLoginSection from "@/sections/AdminLoginSection";
-import ForgotPasswordSection from "@/sections/ForgotPasswordSection";
-import ResetPasswordSection from "@/sections/ResetPasswordSection";
-import AdminDashboardSection from "@/sections/AdminDashboardSection";
-import StudentManagementSection from "@/sections/StudentManagementSection";
-import EventManagementSection from "@/sections/EventManagementSection";
-import ContributionManagementSection from "@/sections/ContributionManagementSection";
-import FeedbackManagementSection from "@/sections/FeedbackManagementSection";
 import FooterSection from "@/sections/FooterSection";
+
+// Admin-only sections — lazy-loaded behind the login wall so the public
+// landing page isn't paying for code most visitors never touch.
+const AdminLoginSection = lazy(() => import("@/sections/AdminLoginSection"));
+const ForgotPasswordSection = lazy(
+  () => import("@/sections/ForgotPasswordSection"),
+);
+const ResetPasswordSection = lazy(
+  () => import("@/sections/ResetPasswordSection"),
+);
+const AdminDashboardSection = lazy(
+  () => import("@/sections/AdminDashboardSection"),
+);
+const StudentManagementSection = lazy(
+  () => import("@/sections/StudentManagementSection"),
+);
+const EventManagementSection = lazy(
+  () => import("@/sections/EventManagementSection"),
+);
+const ContributionManagementSection = lazy(
+  () => import("@/sections/ContributionManagementSection"),
+);
+const FeedbackManagementSection = lazy(
+  () => import("@/sections/FeedbackManagementSection"),
+);
 
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Admin",
@@ -28,7 +46,14 @@ const ROLE_LABEL: Record<UserRole, string> = {
   auditor: "Auditor",
   "board-member": "Board Member",
 };
-
+const SectionFallback = () => (
+  <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
+    <div className="text-center">
+      <div className="w-10 h-10 border-4 border-red/20 border-t-red rounded-full animate-spin mx-auto mb-4" />
+      <p className="text-text-secondary">Loading...</p>
+    </div>
+  </section>
+);
 function App() {
   const [currentView, setCurrentView] = useState<ViewState>("landing");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -332,17 +357,18 @@ function App() {
     <div ref={mainRef} className="min-h-screen">
       {/* Toast notifications */}
       <Toaster position="top-center" richColors />
-
+      <SyncStatusBadge />
       {/* Navigation */}
       <Navigation
         currentView={currentView}
         onNavigate={navigateTo}
         role={auth ? role : null}
       />
-
       {/* Main Content */}
-      <main className="relative">{renderView()}</main>
-
+      // after
+      <main className="relative">
+        <Suspense fallback={<SectionFallback />}>{renderView()}</Suspense>
+      </main>
       {/* Footer - only show on landing page */}
       {currentView === "landing" && <FooterSection onNavigate={navigateTo} />}
     </div>

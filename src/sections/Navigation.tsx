@@ -7,7 +7,15 @@ interface NavigationProps {
   role: UserRole | null;
 }
 
-type NavItem = { label: string; view: ViewState };
+type NavItem = {
+  label: string;
+  view: ViewState;
+};
+
+type ManagementNavItem = {
+  label: string;
+  view: ViewState;
+};
 
 const PUBLIC_NAV_ITEMS: NavItem[] = [
   { label: "Records", view: "landing" },
@@ -16,21 +24,23 @@ const PUBLIC_NAV_ITEMS: NavItem[] = [
 ];
 
 // Nav items are filtered by the officer's role.
-function buildAdminNavItems(role: UserRole | null): NavItem[] {
-  return [
-    { label: "Dashboard", view: "admin-dashboard" },
-    ...(role === "admin" || role === "secretary"
-      ? [{ label: "Students", view: "student-management" as ViewState }]
-      : []),
+function buildAdminNavItems(role: UserRole | null): {
+  main: NavItem[];
+  management: ManagementNavItem[];
+} {
+  const management: ManagementNavItem[] = [
     ...(role
       ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),
+
     ...(role === "secretary"
       ? [{ label: "Attendance", view: "attendance-management" as ViewState }]
       : []),
+
     ...(role === "admin" || role === "treasurer" || role === "auditor"
       ? [{ label: "Payments", view: "payment-management" as ViewState }]
       : []),
+
     ...(role === "admin" || role === "treasurer" || role === "auditor"
       ? [
           {
@@ -39,14 +49,35 @@ function buildAdminNavItems(role: UserRole | null): NavItem[] {
           },
         ]
       : []),
+
     ...(role === "admin" || role === "treasurer" || role === "auditor"
-      ? [{ label: "Finances", view: "transaction-management" as ViewState }]
+      ? [
+          {
+            label: "Finances",
+            view: "transaction-management" as ViewState,
+          },
+        ]
       : []),
+  ];
+
+  const main: NavItem[] = [
+    { label: "Dashboard", view: "admin-dashboard" },
+
+    ...(role === "admin" || role === "secretary"
+      ? [{ label: "Students", view: "student-management" as ViewState }]
+      : []),
+
     ...(role === "board-member"
       ? [{ label: "Transparency", view: "transparency" as ViewState }]
       : []),
+
     { label: "Feedback", view: "feedback-management" },
   ];
+
+  return {
+    main,
+    management,
+  };
 }
 
 export default function Navigation({
@@ -56,15 +87,7 @@ export default function Navigation({
 }: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 50);
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  const [isManagementOpen, setIsManagementOpen] = useState(false);
 
   const isLoggedIn = !!role;
   const adminViews: ViewState[] = [
@@ -79,8 +102,25 @@ export default function Navigation({
   ];
   const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
 
-  const navItems = isLoggedIn ? buildAdminNavItems(role) : PUBLIC_NAV_ITEMS;
+  const adminNav = isLoggedIn
+    ? buildAdminNavItems(role)
+    : { main: [], management: [] };
 
+  const navItems = isLoggedIn ? adminNav.main : PUBLIC_NAV_ITEMS;
+  const managementItems = isLoggedIn ? adminNav.management : [];
+
+  const isManagementView = managementItems.some(
+    (item) => item.view === currentView,
+  );
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
   if (!isPublicPage && !isLoggedIn) {
     return null;
   }
@@ -135,6 +175,57 @@ export default function Navigation({
               </button>
             ))}
 
+            {/* Management Dropdown */}
+            {isLoggedIn && managementItems.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setIsManagementOpen((prev) => !prev)}
+                  className={`nav-link text-sm font-medium flex items-center gap-1 ${
+                    isManagementView ? "active" : ""
+                  }`}
+                >
+                  <span>Management</span>
+                  <span
+                    className={`text-xs transition-transform duration-200 ${
+                      isManagementOpen ? "rotate-180" : ""
+                    }`}
+                  >
+                    ▾
+                  </span>
+                </button>
+
+                {isManagementOpen && (
+                  <div
+                    className="absolute top-full right-0 mt-3 w-52 rounded-xl overflow-hidden shadow-xl"
+                    style={{
+                      background: "rgba(14,26,77,0.98)",
+                      border: "1px solid rgba(201,163,78,0.20)",
+                      backdropFilter: "blur(16px)",
+                    }}
+                  >
+                    <div className="p-2">
+                      {managementItems.map((item) => (
+                        <button
+                          key={item.label}
+                          onClick={() => {
+                            go(item.view);
+                            setIsManagementOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                            currentView === item.view
+                              ? "bg-royal-blue/40 text-lsc-gold"
+                              : "text-white/80 hover:text-white hover:bg-white/5"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Admin Access Link */}
             {!isLoggedIn && (
               <button
@@ -184,6 +275,48 @@ export default function Navigation({
                 {item.label}
               </button>
             ))}
+            {isLoggedIn && managementItems.length > 0 && (
+              <div className="mt-1">
+                <button
+                  onClick={() => setIsManagementOpen((prev) => !prev)}
+                  className={`w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors flex items-center justify-between ${
+                    isManagementView
+                      ? "bg-royal-blue/40 text-lsc-gold"
+                      : "text-white/80 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  <span>Management</span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isManagementOpen ? "rotate-180" : ""
+                    }`}
+                  >
+                    ▾
+                  </span>
+                </button>
+
+                {isManagementOpen && (
+                  <div className="ml-3 mt-1 space-y-1 border-l border-white/10 pl-2">
+                    {managementItems.map((item) => (
+                      <button
+                        key={item.label}
+                        onClick={() => {
+                          go(item.view);
+                          setIsManagementOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
+                          currentView === item.view
+                            ? "bg-royal-blue/30 text-lsc-gold"
+                            : "text-white/70 hover:text-white hover:bg-white/5"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {!isLoggedIn && (
               <button
