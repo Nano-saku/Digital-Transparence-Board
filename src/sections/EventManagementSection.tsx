@@ -47,6 +47,8 @@ import {
 } from "@/services/db";
 import type {
   Event,
+  EventSchedule,
+  EventSession,
   Student,
   PaymentRecord,
   AttendanceRecord,
@@ -213,16 +215,71 @@ export default function EventManagementSection({
   // Delete confirmation dialog state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
-  const [eventForm, setEventForm] = useState({
+  const [eventForm, setEventForm] = useState<{
+    name: string;
+    allocationAmount: number;
+    date: string;
+    schedules: EventSchedule[];
+  }>({
     name: "",
     allocationAmount: 0,
     date: "",
-    morningTimeIn: "",
-    morningTimeOut: "",
-    afternoonTimeIn: "",
-    afternoonTimeOut: "",
+    schedules: [],
   });
+  const [scheduleToAdd, setScheduleToAdd] = useState<EventSession | "">("");
   const [eventDateTbd, setEventDateTbd] = useState(false);
+  const addSchedule = () => {
+    if (!scheduleToAdd) return;
+
+    const alreadyExists = eventForm.schedules.some(
+      (schedule) => schedule.period === scheduleToAdd,
+    );
+
+    if (alreadyExists) {
+      toast.error("This schedule has already been added");
+      return;
+    }
+
+    setEventForm((prev) => ({
+      ...prev,
+      schedules: [
+        ...prev.schedules,
+        {
+          period: scheduleToAdd,
+          timeInEnabled: true,
+          timeOutEnabled: true,
+          timeIn: "",
+          timeOut: "",
+        },
+      ],
+    }));
+
+    setScheduleToAdd("");
+  };
+  const removeSchedule = (period: EventSession) => {
+    setEventForm((prev) => ({
+      ...prev,
+      schedules: prev.schedules.filter(
+        (schedule) => schedule.period !== period,
+      ),
+    }));
+  };
+  const updateSchedule = (
+    period: EventSession,
+    updates: Partial<EventSchedule>,
+  ) => {
+    setEventForm((prev) => ({
+      ...prev,
+      schedules: prev.schedules.map((schedule) =>
+        schedule.period === period
+          ? {
+              ...schedule,
+              ...updates,
+            }
+          : schedule,
+      ),
+    }));
+  };
 
   // Payment form
   const [paymentForm, setPaymentForm] = useState({
@@ -272,9 +329,8 @@ export default function EventManagementSection({
   const [selectedEventForAttendance, setSelectedEventForAttendance] =
     useState("");
   const [attendanceSearch, setAttendanceSearch] = useState("");
-  const [attendanceSession, setAttendanceSession] = useState<
-    "morning" | "afternoon"
-  >("morning");
+  const [attendanceSession, setAttendanceSession] =
+    useState<EventSession>("morning");
   const [manualSearchQuery, setManualSearchQuery] = useState("");
 
   // Auto-filter state set by QR scan — when a student is scanned, the table
@@ -375,10 +431,7 @@ export default function EventManagementSection({
       name: "",
       allocationAmount: 0,
       date: "",
-      morningTimeIn: "",
-      morningTimeOut: "",
-      afternoonTimeIn: "",
-      afternoonTimeOut: "",
+      schedules: [],
     });
 
     setEventDateTbd(false);
@@ -388,18 +441,11 @@ export default function EventManagementSection({
   const handleOpenEditEvent = (event: Event) => {
     setEditingEvent(event);
 
-    const isTbd = !event.date || event.date === "TBD";
-
-    setEventDateTbd(isTbd);
-
     setEventForm({
       name: event.name,
       allocationAmount: event.allocationAmount,
-      date: isTbd ? "" : (event.date ?? ""),
-      morningTimeIn: event.morningTimeIn ?? "",
-      morningTimeOut: event.morningTimeOut ?? "",
-      afternoonTimeIn: event.afternoonTimeIn ?? "",
-      afternoonTimeOut: event.afternoonTimeOut ?? "",
+      date: event.date && event.date !== "TBD" ? event.date : "",
+      schedules: event.schedules ?? [],
     });
 
     setShowEventModal(true);
@@ -411,11 +457,9 @@ export default function EventManagementSection({
       const newEvent = await eventsService.create({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
-        date: eventDateTbd ? "TBD" : eventForm.date,
-        morningTimeIn: eventForm.morningTimeIn || undefined,
-        morningTimeOut: eventForm.morningTimeOut || undefined,
-        afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
-        afternoonTimeOut: eventForm.afternoonTimeOut || undefined,
+        date: eventForm.date,
+
+        schedules: eventForm.schedules,
       });
       setEvents([...events, newEvent]);
       setShowEventModal(false);
@@ -423,10 +467,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         date: "",
-        morningTimeIn: "",
-        morningTimeOut: "",
-        afternoonTimeIn: "",
-        afternoonTimeOut: "",
+        schedules: [],
       });
       setEventDateTbd(false);
       toast.success("Event created successfully");
@@ -446,10 +487,7 @@ export default function EventManagementSection({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         date: eventDateTbd ? "TBD" : eventForm.date,
-        morningTimeIn: eventForm.morningTimeIn || undefined,
-        morningTimeOut: eventForm.morningTimeOut || undefined,
-        afternoonTimeIn: eventForm.afternoonTimeIn || undefined,
-        afternoonTimeOut: eventForm.afternoonTimeOut || undefined,
+        schedules: eventForm.schedules,
       });
       setEvents(events.map((e) => (e.id === editingEvent.id ? updated : e)));
       setEditingEvent(null);
@@ -458,10 +496,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         date: "",
-        morningTimeIn: "",
-        morningTimeOut: "",
-        afternoonTimeIn: "",
-        afternoonTimeOut: "",
+        schedules: [],
       });
       setEventDateTbd(false);
       toast.success("Event updated successfully");
@@ -714,15 +749,14 @@ export default function EventManagementSection({
   const deriveScanStatus = (
     scanTimeHM: string,
     event?: Event,
-    session?: "morning" | "afternoon",
+    session?: EventSession,
   ): "present" | "late" => {
-    if (!event) return "present";
-    let sessionIn: string | undefined;
-    if (session === "afternoon") {
-      sessionIn = event.afternoonTimeIn || event.morningTimeIn || event.timeIn;
-    } else {
-      sessionIn = event.morningTimeIn || event.timeIn;
-    }
+    if (!event || !session) return "present";
+
+    const schedule = event.schedules?.find((s) => s.period === session);
+
+    const sessionIn = schedule?.timeIn;
+
     return sessionIn && compareTime24(scanTimeHM, sessionIn) > 0
       ? "late"
       : "present";
@@ -985,22 +1019,31 @@ export default function EventManagementSection({
 
     try {
       for (const event of todaysEvents) {
-        for (const session of ["morning", "afternoon"] as const) {
-          // Skip sessions this event does not hold.
+        for (const session of ["morning", "afternoon", "evening"] as const) {
+          const schedule = event.schedules?.find((s) => s.period === session);
+
+          // This event does not have this session.
+          if (!schedule) continue;
+
+          // This session has no attendance schedule.
           const holdsSession =
-            session === "morning"
-              ? !!(event.morningTimeIn || event.morningTimeOut)
-              : !!(event.afternoonTimeIn || event.afternoonTimeOut);
+            schedule.timeInEnabled ||
+            schedule.timeOutEnabled ||
+            !!schedule.timeIn ||
+            !!schedule.timeOut;
+
           if (!holdsSession) continue;
 
-          // Authoritative check against the DB so repeated sweeps never
-          // create duplicate Absent rows.
+          // Authoritative check against the DB.
           const existing = await attendanceService.getByEventIdAndSession(
             event.id,
             session,
           );
+
           const recordedIds = new Set(existing.map((r) => r.studentId));
+
           const missing = students.filter((s) => !recordedIds.has(s.id));
+
           if (missing.length === 0) continue;
 
           const saved = await Promise.all(
@@ -1016,7 +1059,6 @@ export default function EventManagementSection({
             ),
           );
 
-          // Merge into state, replacing any stale rows for this event+session.
           setAttendanceRecords((prev) => [
             ...prev.filter(
               (r) => !(r.eventId === event.id && r.session === session),
@@ -1054,18 +1096,26 @@ export default function EventManagementSection({
 
   /** Morning / Afternoon schedule label for the events list (12h AM/PM). */
   const scheduleLabel = (event: Event): string => {
-    const hasMorning = !!(event.morningTimeIn || event.morningTimeOut);
-    const hasAfternoon = !!(event.afternoonTimeIn || event.afternoonTimeOut);
-    if (!hasMorning && !hasAfternoon) return "-";
-    return [
-      hasMorning
-        ? `Morning: ${formatTimeRange(event.morningTimeIn, event.morningTimeOut)}`
-        : null,
-      hasAfternoon
-        ? `Afternoon: ${formatTimeRange(event.afternoonTimeIn, event.afternoonTimeOut)}`
-        : null,
-    ]
-      .filter(Boolean)
+    if (!event.schedules || event.schedules.length === 0) {
+      return "-";
+    }
+
+    return event.schedules
+      .map((schedule) => {
+        const label =
+          schedule.period === "morning"
+            ? "☀ Morning"
+            : schedule.period === "afternoon"
+              ? "🌤 Afternoon"
+              : "🌙 Evening";
+
+        const time =
+          schedule.timeIn || schedule.timeOut
+            ? formatTimeRange(schedule.timeIn, schedule.timeOut)
+            : "Time not set";
+
+        return `${label}: ${time}`;
+      })
       .join(" | ");
   };
 
@@ -1600,17 +1650,20 @@ export default function EventManagementSection({
                     <select
                       value={attendanceSession}
                       onChange={(e) =>
-                        setAttendanceSession(
-                          e.target.value as "morning" | "afternoon",
-                        )
+                        setAttendanceSession(e.target.value as EventSession)
                       }
                       className="glass-input w-full px-4 py-3 text-sm"
                     >
                       <option value="morning">
-                        Morning (Time In / Time Out)
+                        ☀ Morning (Time In / Time Out)
                       </option>
+
                       <option value="afternoon">
-                        Afternoon (Time In / Time Out)
+                        🌤 Afternoon (Time In / Time Out)
+                      </option>
+
+                      <option value="evening">
+                        🌙 Evening (Time In / Time Out)
                       </option>
                     </select>
                   </div>
@@ -2011,13 +2064,36 @@ export default function EventManagementSection({
                       </span>
                       <span className="text-xs text-text-secondary">
                         Schedule:{" "}
-                        {attendanceSession === "morning"
-                          ? selectedAttendanceEvent?.morningTimeIn
-                            ? `${selectedAttendanceEvent.morningTimeIn} - ${selectedAttendanceEvent.morningTimeOut}`
-                            : "Not set"
-                          : selectedAttendanceEvent?.afternoonTimeIn
-                            ? `${selectedAttendanceEvent.afternoonTimeIn} - ${selectedAttendanceEvent.afternoonTimeOut}`
-                            : "Not set"}
+                        {(() => {
+                          const schedule =
+                            selectedAttendanceEvent?.schedules?.find(
+                              (s) => s.period === attendanceSession,
+                            );
+
+                          if (!schedule) return "Not set";
+
+                          const timeIn = schedule.timeIn
+                            ? formatTime12(schedule.timeIn)
+                            : null;
+
+                          const timeOut = schedule.timeOut
+                            ? formatTime12(schedule.timeOut)
+                            : null;
+
+                          if (timeIn && timeOut) {
+                            return `${timeIn} - ${timeOut}`;
+                          }
+
+                          if (timeIn) {
+                            return `${timeIn} - Time Out not set`;
+                          }
+
+                          if (timeOut) {
+                            return `Time In not set - ${timeOut}`;
+                          }
+
+                          return "Not set";
+                        })()}
                       </span>
                       {scannedCourse && scannedSection && (
                         <button
@@ -2416,7 +2492,7 @@ export default function EventManagementSection({
           }
         }}
       >
-        <DialogContent className="glass-card-strong max-w-md">
+        <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
               {editingEvent ? "Edit Event" : "Create New Event"}
@@ -2500,69 +2576,142 @@ export default function EventManagementSection({
 
             {/* Morning and Afternoon schedules - the scanner derives Present/Late
                 from the scan time vs. the applicable session's Time In. */}
-            <div className="rounded-xl border border-white/50 bg-white/30 p-3 space-y-4">
+            <div className="rounded-xl border border-white/50 bg-white/30 p-4 space-y-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                  Morning Schedule
+                <p className="text-sm font-semibold text-dark">
+                  Attendance Schedule
                 </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1">
-                      Scheduled Time In
-                    </label>
-                    <TimeInput12
-                      value={eventForm.morningTimeIn}
-                      onChange={(v) =>
-                        setEventForm({ ...eventForm, morningTimeIn: v })
-                      }
-                      ariaLabel="Morning scheduled time in"
-                    />
+
+                <p className="text-xs text-text-secondary mt-1">
+                  Add only the sessions required for this event.
+                </p>
+              </div>
+
+              {/* Add Schedule */}
+
+              <div className="flex gap-2">
+                <select
+                  value={scheduleToAdd}
+                  onChange={(e) =>
+                    setScheduleToAdd(e.target.value as EventSession | "")
+                  }
+                  className="glass-input flex-1 px-3 py-2"
+                >
+                  <option value="">Select time of day</option>
+
+                  <option value="morning">☀ Morning</option>
+
+                  <option value="afternoon">🌤 Afternoon</option>
+
+                  <option value="evening">🌙 Evening</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={addSchedule}
+                  disabled={!scheduleToAdd}
+                  className="btn-primary px-4 py-2 flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add
+                </button>
+              </div>
+
+              {/* Added schedules */}
+
+              {eventForm.schedules.map((schedule) => (
+                <div
+                  key={schedule.period}
+                  className="rounded-lg border border-white/50 bg-white/40 p-3 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-dark capitalize">
+                      {schedule.period === "morning" && "☀ Morning"}
+
+                      {schedule.period === "afternoon" && "🌤 Afternoon"}
+
+                      {schedule.period === "evening" && "🌙 Evening"}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() => removeSchedule(schedule.period)}
+                      className="text-xs text-red hover:underline"
+                    >
+                      Remove
+                    </button>
                   </div>
+
+                  {/* TIME IN */}
+
                   <div>
-                    <label className="block text-sm font-medium text-dark mb-1">
-                      Scheduled Time Out
+                    <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
+                      <input
+                        type="checkbox"
+                        checked={schedule.timeInEnabled}
+                        onChange={(e) =>
+                          updateSchedule(schedule.period, {
+                            timeInEnabled: e.target.checked,
+
+                            timeIn: e.target.checked ? schedule.timeIn : "",
+                          })
+                        }
+                      />
+                      Enable Time In
                     </label>
-                    <TimeInput12
-                      value={eventForm.morningTimeOut}
-                      onChange={(v) =>
-                        setEventForm({ ...eventForm, morningTimeOut: v })
-                      }
-                      ariaLabel="Morning scheduled time out"
-                    />
+
+                    {schedule.timeInEnabled && (
+                      <TimeInput12
+                        value={schedule.timeIn ?? ""}
+                        onChange={(value) =>
+                          updateSchedule(schedule.period, {
+                            timeIn: value,
+                          })
+                        }
+                        ariaLabel={`${schedule.period} time in`}
+                      />
+                    )}
+                  </div>
+
+                  {/* TIME OUT */}
+
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
+                      <input
+                        type="checkbox"
+                        checked={schedule.timeOutEnabled}
+                        onChange={(e) =>
+                          updateSchedule(schedule.period, {
+                            timeOutEnabled: e.target.checked,
+
+                            timeOut: e.target.checked ? schedule.timeOut : "",
+                          })
+                        }
+                      />
+                      Enable Time Out
+                    </label>
+
+                    {schedule.timeOutEnabled && (
+                      <TimeInput12
+                        value={schedule.timeOut ?? ""}
+                        onChange={(value) =>
+                          updateSchedule(schedule.period, {
+                            timeOut: value,
+                          })
+                        }
+                        ariaLabel={`${schedule.period} time out`}
+                      />
+                    )}
                   </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                  Afternoon Schedule
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1">
-                      Scheduled Time In
-                    </label>
-                    <TimeInput12
-                      value={eventForm.afternoonTimeIn}
-                      onChange={(v) =>
-                        setEventForm({ ...eventForm, afternoonTimeIn: v })
-                      }
-                      ariaLabel="Afternoon scheduled time in"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1">
-                      Scheduled Time Out
-                    </label>
-                    <TimeInput12
-                      value={eventForm.afternoonTimeOut}
-                      onChange={(v) =>
-                        setEventForm({ ...eventForm, afternoonTimeOut: v })
-                      }
-                      ariaLabel="Afternoon scheduled time out"
-                    />
-                  </div>
+              ))}
+
+              {eventForm.schedules.length === 0 && (
+                <div className="text-center py-4 text-sm text-text-secondary">
+                  No attendance schedules added. This event will not require
+                  scheduled attendance.
                 </div>
-              </div>
+              )}
             </div>
 
             <div>
@@ -2603,13 +2752,6 @@ export default function EventManagementSection({
                   ))}
                 </div>
               </div>
-            )}
-
-            {canManageEvents && boardMembers.length === 0 && (
-              <p className="text-xs text-text-secondary">
-                No board member accounts yet — create them in Supabase (see
-                supabase/create_officer_accounts.sql).
-              </p>
             )}
 
             <div className="flex gap-3 pt-4">

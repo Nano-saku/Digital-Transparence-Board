@@ -2,6 +2,7 @@ import { getSupabase } from "../lib/supabase";
 import type {
   Student,
   Event,
+  EventSchedule,
   AttendanceRecord,
   ContributionRecord,
   PaymentRecord,
@@ -22,8 +23,13 @@ const mapEvent = (item: Record<string, unknown>): Event => {
   const memberIds = Array.isArray(item.assigned_member_ids)
     ? (item.assigned_member_ids as string[])
     : [];
+
   const memberNames = Array.isArray(item.assigned_member_names)
     ? (item.assigned_member_names as string[])
+    : [];
+
+  const schedules = Array.isArray(item.schedules)
+    ? (item.schedules as EventSchedule[])
     : [];
 
   return {
@@ -31,12 +37,20 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     name: item.name as string,
     allocationAmount: item.allocation_amount as number,
     date: (item.date as string | null) ?? undefined,
+
+    schedules,
+
     timeIn: (item.time_in as string | null) || undefined,
     timeOut: (item.time_out as string | null) || undefined,
+
     morningTimeIn: (item.morning_time_in as string | null) || undefined,
+
     morningTimeOut: (item.morning_time_out as string | null) || undefined,
+
     afternoonTimeIn: (item.afternoon_time_in as string | null) || undefined,
+
     afternoonTimeOut: (item.afternoon_time_out as string | null) || undefined,
+
     assignedMembers: memberIds.map((memberId, index) => ({
       memberId,
       memberName: memberNames[index] ?? "Unknown member",
@@ -299,6 +313,7 @@ export const eventsService = {
         name: event.name,
         allocation_amount: event.allocationAmount,
         date: event.date,
+        schedules: event.schedules ?? [],
         time_in: event.timeIn ?? "",
         time_out: event.timeOut ?? "",
         morning_time_in: event.morningTimeIn ?? "",
@@ -322,6 +337,9 @@ export const eventsService = {
     if (event.name !== undefined) updateData.name = event.name;
     if (event.allocationAmount !== undefined)
       updateData.allocation_amount = event.allocationAmount;
+    if (event.schedules !== undefined) {
+      updateData.schedules = event.schedules;
+    }
     if (event.date !== undefined) updateData.date = event.date;
     if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
     if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
@@ -379,7 +397,10 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
-        session: (item.session ?? "morning") as "morning" | "afternoon",
+        session: (item.session ?? "morning") as
+          | "morning"
+          | "afternoon"
+          | "evening",
         timeIn: item.time_in ?? undefined,
         timeOut: item.time_out ?? undefined,
       })) || []
@@ -402,7 +423,10 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
-        session: (item.session ?? "morning") as "morning" | "afternoon",
+        session: (item.session ?? "morning") as
+          | "morning"
+          | "afternoon"
+          | "evening",
         timeIn: item.time_in ?? undefined,
         timeOut: item.time_out ?? undefined,
       })) || []
@@ -425,7 +449,10 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
-        session: (item.session ?? "morning") as "morning" | "afternoon",
+        session: (item.session ?? "morning") as
+          | "morning"
+          | "afternoon"
+          | "evening",
         timeIn: item.time_in ?? undefined,
         timeOut: item.time_out ?? undefined,
       })) || []
@@ -434,7 +461,7 @@ export const attendanceService = {
 
   async getByEventIdAndSession(
     eventId: string,
-    session: "morning" | "afternoon",
+    session: "morning" | "afternoon" | "evening",
   ): Promise<AttendanceRecord[]> {
     const { data, error } = await getSupabase()
       .from("attendance")
@@ -452,7 +479,10 @@ export const attendanceService = {
         eventName: item.event_name,
         date: item.date,
         status: item.status,
-        session: (item.session ?? session) as "morning" | "afternoon",
+        session: (item.session ?? session) as
+          | "morning"
+          | "afternoon"
+          | "evening",
         timeIn: item.time_in ?? undefined,
         timeOut: item.time_out ?? undefined,
       })) || []
@@ -486,7 +516,10 @@ export const attendanceService = {
       eventName: data.event_name,
       date: data.date,
       status: data.status,
-      session: (data.session ?? "morning") as "morning" | "afternoon",
+      session: (data.session ?? "morning") as
+        | "morning"
+        | "afternoon"
+        | "evening",
       timeIn: data.time_in ?? undefined,
       timeOut: data.time_out ?? undefined,
     };
@@ -523,7 +556,10 @@ export const attendanceService = {
       eventName: data.event_name,
       date: data.date,
       status: data.status,
-      session: (data.session ?? "morning") as "morning" | "afternoon",
+      session: (data.session ?? "morning") as
+        | "morning"
+        | "afternoon"
+        | "evening",
       timeIn: data.time_in ?? undefined,
       timeOut: data.time_out ?? undefined,
     };

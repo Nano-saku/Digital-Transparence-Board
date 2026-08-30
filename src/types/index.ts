@@ -8,34 +8,39 @@ export interface Student {
   section: string;
 }
 
+export type EventSession = "morning" | "afternoon" | "evening";
+
+export interface EventSchedule {
+  period: EventSession;
+
+  timeInEnabled: boolean;
+  timeOutEnabled: boolean;
+
+  timeIn?: string;
+  timeOut?: string;
+}
 // Event Types
 export interface Event {
   id: string;
   name: string;
   allocationAmount: number;
   date?: string;
-  /**
-   * Morning / Afternoon scheduled attendance windows, each 24h "HH:MM" (e.g.
-   * "06:00" for a 6:00 AM start). The QR scanner compares each scan's actual
-   * time against these to auto-derive attendance status: Present when scanned
-   * on/before the applicable session's Time In, Late when scanned after it,
-   * Absent when never scanned (auto-marked at 10:00 PM on the event day).
-   * The Morning window applies until the Afternoon window begins, then the
-   * Afternoon Time In is used.
-   */
+
+  schedules?: EventSchedule[];
+
+  // Legacy fields - keep temporarily for older events
   morningTimeIn?: string;
   morningTimeOut?: string;
   afternoonTimeIn?: string;
   afternoonTimeOut?: string;
-  /**
-   * Legacy single-session schedule (24h "HH:MM") kept for events created
-   * before the Morning/Afternoon split. The DB mapper treats time_in/time_out
-   * as the Morning window when the new Morning columns are empty.
-   */
+
   timeIn?: string;
   timeOut?: string;
-  /** Catalog member snapshots assigned to this event. */
-  assignedMembers?: { memberId: string; memberName: string }[];
+
+  assignedMembers?: {
+    memberId: string;
+    memberName: string;
+  }[];
 }
 
 // Attendance Types
@@ -51,7 +56,7 @@ export interface AttendanceRecord {
    * Each event has separate attendance tracking for Morning Time In/Out
    * and Afternoon Time In/Out.
    */
-  session: "morning" | "afternoon";
+  session: EventSession;
   /**
    * Time-in / time-out captured automatically from the QR scan time (24h
    * "HH:MM", e.g. "06:00"). Time In is set when the student's QR is scanned
