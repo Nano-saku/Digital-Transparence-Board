@@ -1032,53 +1032,65 @@ export const paymentsService = {
   },
 
   async getByStudentId(studentId: string): Promise<PaymentRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("payments")
-      .select("*")
-      .eq("student_id", studentId)
-      .order("date", { ascending: false });
+    const payments = await cachedRead<PaymentRecord>("payments", async () => {
+      const { data, error } = await getSupabase()
+        .from("payments")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        studentName: item.student_name,
-        eventId: item.event_id || undefined,
-        eventName: item.event_name || undefined,
-        contributionId: item.contribution_id,
-        amount: item.amount,
-        date: item.date,
-        receiptUrl: item.receipt_url || undefined,
-        orNumber: item.or_number || undefined,
-        recordedBy: item.recorded_by,
-      })) || []
-    );
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          studentName: item.student_name,
+          eventId: item.event_id || undefined,
+          eventName: item.event_name || undefined,
+          contributionId: item.contribution_id,
+          amount: item.amount,
+          date: item.date,
+          receiptUrl: item.receipt_url || undefined,
+          orNumber: item.or_number || undefined,
+          recordedBy: item.recorded_by,
+        })) || []
+      );
+    });
+
+    return payments
+      .filter((payment) => payment.studentId === studentId)
+      .sort((a, b) => b.date.localeCompare(a.date));
   },
 
   async getByEventId(eventId: string): Promise<PaymentRecord[]> {
-    const { data, error } = await getSupabase()
-      .from("payments")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("date", { ascending: false });
+    const payments = await cachedRead<PaymentRecord>("payments", async () => {
+      const { data, error } = await getSupabase()
+        .from("payments")
+        .select("*")
+        .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        studentName: item.student_name,
-        eventId: item.event_id || undefined,
-        eventName: item.event_name || undefined,
-        contributionId: item.contribution_id,
-        amount: item.amount,
-        date: item.date,
-        receiptUrl: item.receipt_url || undefined,
-        orNumber: item.or_number || undefined,
-        recordedBy: item.recorded_by,
-      })) || []
-    );
+      if (error) throw error;
+
+      return (
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          studentName: item.student_name,
+          eventId: item.event_id || undefined,
+          eventName: item.event_name || undefined,
+          contributionId: item.contribution_id,
+          amount: item.amount,
+          date: item.date,
+          receiptUrl: item.receipt_url || undefined,
+          orNumber: item.or_number || undefined,
+          recordedBy: item.recorded_by,
+        })) || []
+      );
+    });
+
+    return payments
+      .filter((payment) => payment.eventId === eventId)
+      .sort((a, b) => b.date.localeCompare(a.date));
   },
 
   async create(record: Omit<PaymentRecord, "id">): Promise<PaymentRecord> {
