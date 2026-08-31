@@ -1267,28 +1267,36 @@ export const transactionsService = {
   },
 
   async getByEventId(eventId: string): Promise<Transaction[]> {
-    const { data, error } = await getSupabase()
-      .from("transactions")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("date", { ascending: false });
+    const transactions = await cachedRead<Transaction>(
+      "transactions",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("transactions")
+          .select("*")
+          .order("date", { ascending: false });
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        date: item.date,
-        description: item.description,
-        eventId: item.event_id || undefined,
-        eventName: item.event_name || undefined,
-        amount: item.amount,
-        type: item.type,
-        responsibleOfficer: item.responsible_officer,
-        receiptUrl: item.receipt_url || undefined,
-      })) || []
+        if (error) throw error;
+
+        return (
+          data?.map((item) => ({
+            id: item.id,
+            date: item.date,
+            description: item.description,
+            eventId: item.event_id || undefined,
+            eventName: item.event_name || undefined,
+            amount: item.amount,
+            type: item.type,
+            responsibleOfficer: item.responsible_officer,
+            receiptUrl: item.receipt_url || undefined,
+          })) || []
+        );
+      },
     );
-  },
 
+    return transactions
+      .filter((transaction) => transaction.eventId === eventId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  },
   async create(record: Omit<Transaction, "id">): Promise<Transaction> {
     const id = createRecordId();
     const payload = {
@@ -1405,22 +1413,21 @@ export const transactionsService = {
     expense: number;
     balance: number;
   }> {
-    const { data, error } = await getSupabase()
-      .from("transactions")
-      .select("type, amount");
+    const transactions = await this.getAll();
 
-    if (error) throw error;
+    const income = transactions
+      .filter((transaction) => transaction.type === "income")
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-    const income =
-      data
-        ?.filter((t) => t.type === "income")
-        .reduce((sum, t) => sum + t.amount, 0) || 0;
-    const expense =
-      data
-        ?.filter((t) => t.type === "expense")
-        .reduce((sum, t) => sum + t.amount, 0) || 0;
+    const expense = transactions
+      .filter((transaction) => transaction.type === "expense")
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-    return { income, expense, balance: income - expense };
+    return {
+      income,
+      expense,
+      balance: income - expense,
+    };
   },
 };
 
@@ -1453,49 +1460,25 @@ export const feedbackService = {
   },
 
   async getByType(type: FeedbackItem["type"]): Promise<FeedbackItem[]> {
-    const { data, error } = await getSupabase()
-      .from("feedback")
-      .select("*")
-      .eq("type", type)
-      .order("submitted_at", { ascending: false });
+    const feedback = await this.getAll();
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title || undefined,
-        message: item.message,
-        studentName: item.student_name || undefined,
-        studentId: item.student_id || undefined,
-        isAnonymous: item.is_anonymous,
-        submittedAt: item.submitted_at,
-        status: item.status,
-      })) || []
-    );
+    return feedback
+      .filter((item) => item.type === type)
+      .sort(
+        (a, b) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+      );
   },
 
   async getByStatus(status: FeedbackItem["status"]): Promise<FeedbackItem[]> {
-    const { data, error } = await getSupabase()
-      .from("feedback")
-      .select("*")
-      .eq("status", status)
-      .order("submitted_at", { ascending: false });
+    const feedback = await this.getAll();
 
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title || undefined,
-        message: item.message,
-        studentName: item.student_name || undefined,
-        studentId: item.student_id || undefined,
-        isAnonymous: item.is_anonymous,
-        submittedAt: item.submitted_at,
-        status: item.status,
-      })) || []
-    );
+    return feedback
+      .filter((item) => item.status === status)
+      .sort(
+        (a, b) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+      );
   },
 
   // Returns void to match the original signature. Because there's no
