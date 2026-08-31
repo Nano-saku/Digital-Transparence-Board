@@ -393,6 +393,7 @@ export default function EventManagementSection({
           studentsService.getAll(),
           paymentsService.getAll(),
           attendanceService.getAll(),
+          contributionsService.getAll(),
         ]);
 
       setEvents(eventsData);

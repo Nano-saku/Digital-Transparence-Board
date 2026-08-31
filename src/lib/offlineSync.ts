@@ -261,6 +261,23 @@ class OfflineSyncService {
     return next;
   }
 
+  // Date.now() alone is only millisecond-resolution. A contribution create
+  // followed immediately by a payment create that references it (the normal
+  // "first payment for this event" flow) can enqueue within the same
+  // millisecond, tying their by_owner_created sort key — at which point
+  // IndexedDB falls back to ordering by the random `key` UUID instead of
+  // insertion order, so the dependent payment can replay *before* the
+  // contribution it points to even exists in the database. Tracking the
+  // last-issued timestamp and never handing out the same value twice
+  // guarantees strict FIFO replay order regardless of clock resolution.
+  private lastMutationTimestamp = 0;
+
+  private nextMutationTimestamp(): number {
+    const now = Date.now();
+    this.lastMutationTimestamp = Math.max(now, this.lastMutationTimestamp + 1);
+    return this.lastMutationTimestamp;
+  }
+
   private async enqueue(
     mutation: Omit<
       QueuedMutation,
@@ -274,7 +291,7 @@ class OfflineSyncService {
       ...mutation,
       key: crypto.randomUUID(),
       ownerId: this.ownerId,
-      createdAt: Date.now(),
+      createdAt: this.nextMutationTimestamp(),
       attempts: 0,
     } satisfies QueuedMutation);
     await transactionDone(transaction);
@@ -354,6 +371,38 @@ class OfflineSyncService {
     const transaction = database.transaction("mutations", "readwrite");
     transaction.objectStore("mutations").delete(key);
     await transactionDone(transaction);
+  }
+
+  /** Number of local changes that have not yet reached Supabase — queued
+   *  because we were offline, or stuck after a failed replay. */
+  async pendingCount(): Promise<number> {
+    return (await this.queuedMutations()).length;
+  }
+
+  /**
+   * The change that is currently blocking sync, if any. Mutations replay in
+   * strict creation order (so a create is never applied after its own
+   * update), which means a single bad mutation stalls every mutation queued
+   * behind it. Surfacing *this specific one* — table + the real Postgres/
+   * PostgREST error — is what actually tells you why nothing is reaching
+   * the database, instead of a generic "sync failed".
+   */
+  async firstFailure(): Promise<{ table: TableName; message: string } | null> {
+    const [next] = await this.queuedMutations();
+    if (!next?.lastError) return null;
+    return { table: next.table, message: next.lastError };
+  }
+
+  /**
+   * Permanently drops the oldest queued mutation without sending it to
+   * Supabase. Use only when a change can never succeed (e.g. it was created
+   * against a schema that has since changed) and is blocking every
+   * mutation queued after it. This does not touch the database — the
+   * change is simply forgotten on this device.
+   */
+  async discardOldest(): Promise<void> {
+    const [next] = await this.queuedMutations();
+    if (next) await this.removeMutation(next.key);
   }
 
   private async recordFailure(
