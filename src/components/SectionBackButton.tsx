@@ -14,7 +14,11 @@ export default function SectionBackButton({
 }: SectionBackButtonProps) {
   if (!label) {
     return (
-      <button onClick={onClick} className={`p-2.5 ${className}`.trim()} aria-label="Go back">
+      <button
+        onClick={onClick}
+        className={`p-2.5 ${className}`.trim()}
+        aria-label="Go back"
+      >
         <ArrowLeft className="w-5 h-5 text-royal-blue" />
       </button>
     );

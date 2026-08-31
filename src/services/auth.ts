@@ -253,6 +253,19 @@ export const authService = {
    * (i.e. after the PASSWORD_RECOVERY event has fired), or while an officer
    * is normally signed in.
    */
+  async hasRecoverySession(): Promise<boolean> {
+    const {
+      data: { session },
+      error,
+    } = await getSupabase().auth.getSession();
+
+    if (error) {
+      console.error("Could not check recovery session:", error);
+      return false;
+    }
+
+    return Boolean(session);
+  },
   async updatePassword(newPassword: string): Promise<void> {
     const { error } = await getSupabase().auth.updateUser({
       password: newPassword,
@@ -266,11 +279,16 @@ export const authService = {
    * Returns an unsubscribe function.
    */
   onPasswordRecovery(callback: () => void): () => void {
+    const supabase = getSupabase();
+
     const {
       data: { subscription },
-    } = getSupabase().auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") callback();
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY" && session) {
+        callback();
+      }
     });
+
     return () => subscription.unsubscribe();
   },
 };

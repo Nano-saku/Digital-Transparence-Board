@@ -42,6 +42,7 @@ export default function StudentManagementSection({
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [filterProgram, setFilterProgram] = useState("");
   const [filterYear, setFilterYear] = useState("");
+  const [filterSection, setFilterSection] = useState("");
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -93,21 +94,44 @@ export default function StudentManagementSection({
         student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesProgram =
         !filterProgram || student.program === filterProgram;
+
       const matchesYear =
         !filterYear || student.yearLevel.toString() === filterYear;
-      return matchesSearch && matchesProgram && matchesYear;
+
+      const matchesSection =
+        !filterSection ||
+        student.section?.trim().replace(/^\d+/, "") === filterSection;
+
+      return matchesSearch && matchesProgram && matchesYear && matchesSection;
     });
-  }, [students, searchTerm, filterProgram, filterYear]);
+  }, [students, searchTerm, filterProgram, filterYear, filterSection]);
 
   const programs = useMemo(
-    () => [...new Set(students.map((s) => s.program))],
+    () =>
+      [
+        ...new Set(
+          students
+            .map((s) => s.program?.trim())
+            .filter((program): program is string => Boolean(program)),
+        ),
+      ].sort(),
     [students],
   );
   const yearLevels = useMemo(
     () => [...new Set(students.map((s) => s.yearLevel))].sort(),
     [students],
   );
-
+  const sections = useMemo(
+    () =>
+      [
+        ...new Set(
+          students
+            .map((s) => s.section?.trim().replace(/^\d+/, ""))
+            .filter((section): section is string => Boolean(section)),
+        ),
+      ].sort(),
+    [students],
+  );
   const handleAddStudent = async () => {
     const studentId = formData.studentId.trim();
     const name = formData.name.trim();
@@ -434,6 +458,20 @@ export default function StudentManagementSection({
               <option key={year} value={year}>
                 {year}
                 {getOrdinalSuffix(year)} Year
+              </option>
+            ))}
+          </select>
+          <select
+            value={filterSection}
+            onChange={(e) => setFilterSection(e.target.value)}
+            className="glass-input px-4 py-2 text-sm"
+            disabled={loading}
+          >
+            <option value="">All Sections</option>
+
+            {sections.map((section) => (
+              <option key={section} value={section}>
+                Section {section}
               </option>
             ))}
           </select>

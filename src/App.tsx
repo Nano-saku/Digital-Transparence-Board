@@ -92,8 +92,10 @@ function App() {
   // lands here via a password-reset email link (see authService.requestPasswordReset).
   useEffect(() => {
     const unsubscribe = authService.onPasswordRecovery(() => {
+      setAuth(null);
       setCurrentView("admin-reset-password");
     });
+
     return unsubscribe;
   }, []);
 
@@ -152,11 +154,24 @@ function App() {
   // Finish the "forgot password" flow: set the new password, then sign the
   // recovery session out so the officer re-authenticates normally.
   const handleSetNewPassword = async (newPassword: string) => {
+    const hasSession = await authService.hasRecoverySession();
+
+    if (!hasSession) {
+      throw new Error(
+        "Your password reset session is no longer valid. Please request a new reset link.",
+      );
+    }
+
     await authService.updatePassword(newPassword);
+
     await authService.signOut();
+
     setAuth(null);
     setCurrentView("admin-login");
-    toast.success("Password updated. Please sign in with your new password.");
+
+    toast.success(
+      "Password updated successfully. Please sign in with your new password.",
+    );
   };
 
   // Handle navigation

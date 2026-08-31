@@ -28,26 +28,51 @@ interface FeedbackManagementSectionProps {
 
 type FeedbackFilter = "all" | FeedbackItem["type"];
 
-const FILTERS: { value: FeedbackFilter; label: string; icon: typeof MessageCircle }[] = [
+const FILTERS: {
+  value: FeedbackFilter;
+  label: string;
+  icon: typeof MessageCircle;
+}[] = [
   { value: "all", label: "All", icon: Inbox },
   { value: "inquiry", label: "Inquiries", icon: MessageCircle },
   { value: "complaint", label: "Complaints", icon: AlertTriangle },
   { value: "suggestion", label: "Suggestions", icon: Lightbulb },
 ];
 
-const TYPE_META: Record<FeedbackItem["type"], { label: string; icon: typeof MessageCircle; color: string }> = {
-  inquiry: { label: "Inquiry", icon: MessageCircle, color: "bg-blue-100 text-blue-600" },
-  complaint: { label: "Complaint", icon: AlertTriangle, color: "bg-red/10 text-red-500" },
-  suggestion: { label: "Suggestion", icon: Lightbulb, color: "bg-yellow-100 text-yellow-600" },
+const TYPE_META: Record<
+  FeedbackItem["type"],
+  { label: string; icon: typeof MessageCircle; color: string }
+> = {
+  inquiry: {
+    label: "Inquiry",
+    icon: MessageCircle,
+    color: "bg-blue-100 text-blue-600",
+  },
+  complaint: {
+    label: "Complaint",
+    icon: AlertTriangle,
+    color: "bg-red/10 text-red-500",
+  },
+  suggestion: {
+    label: "Suggestion",
+    icon: Lightbulb,
+    color: "bg-yellow-100 text-yellow-600",
+  },
 };
 
-const STATUS_META: Record<FeedbackItem["status"], { label: string; color: string }> = {
+const STATUS_META: Record<
+  FeedbackItem["status"],
+  { label: string; color: string }
+> = {
   pending: { label: "Pending", color: "bg-yellow-100 text-yellow-600" },
   "in-progress": { label: "In Progress", color: "bg-blue-100 text-blue-600" },
   resolved: { label: "Resolved", color: "bg-green-100 text-green-600" },
 };
 
-export default function FeedbackManagementSection({ onBack, role }: FeedbackManagementSectionProps) {
+export default function FeedbackManagementSection({
+  onBack,
+  role,
+}: FeedbackManagementSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -82,11 +107,16 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
     },
   ]);
 
-  const handleStatusChange = async (id: string, status: FeedbackItem["status"]) => {
+  const handleStatusChange = async (
+    id: string,
+    status: FeedbackItem["status"],
+  ) => {
     try {
       setUpdatingId(id);
       await feedbackService.updateStatus(id, status);
-      setItems((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
+      setItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, status } : item)),
+      );
       toast.success(`Marked as ${STATUS_META[status].label.toLowerCase()}`);
     } catch (error) {
       console.error("Error updating feedback:", error);
@@ -108,14 +138,18 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
     }
   };
 
-  const filtered = filter === "all" ? items : items.filter((item) => item.type === filter);
+  const filtered =
+    filter === "all" ? items : items.filter((item) => item.type === filter);
 
   return (
     <section
       ref={sectionRef}
       className="min-h-screen w-full gradient-bg-warm relative overflow-hidden py-20 lg:py-24"
     >
-      <div ref={contentRef} className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
+      <div
+        ref={contentRef}
+        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
+      >
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
@@ -136,7 +170,9 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
           {FILTERS.map((f) => {
             const Icon = f.icon;
             const count =
-              f.value === "all" ? items.length : items.filter((i) => i.type === f.value).length;
+              f.value === "all"
+                ? items.length
+                : items.filter((i) => i.type === f.value).length;
             return (
               <button
                 key={f.value}
@@ -147,9 +183,11 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
               >
                 <Icon className="w-4 h-4" />
                 {f.label}
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                  filter === f.value ? "bg-white/20" : "bg-red/15"
-                }`}>
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded-full ${
+                    filter === f.value ? "bg-white/20" : "bg-red/15"
+                  }`}
+                >
                   {count}
                 </span>
               </button>
@@ -164,7 +202,11 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
         {!loading && (
           <div className="space-y-4">
             {filtered.length === 0 && (
-              <SectionEmptyState message="No feedback found" icon={Inbox} card />
+              <SectionEmptyState
+                message="No feedback found"
+                icon={Inbox}
+                card
+              />
             )}
 
             {filtered.map((item) => (
@@ -194,28 +236,96 @@ interface FeedbackCardProps {
   onDelete: (item: FeedbackItem) => void;
 }
 
-function FeedbackCard({ item, isAdmin, updating, onStatusChange, onDelete }: FeedbackCardProps) {
+function FeedbackCard({
+  item,
+  isAdmin,
+  updating,
+  onStatusChange,
+  onDelete,
+}: FeedbackCardProps) {
   const TypeIcon = TYPE_META[item.type].icon;
   const typeColor = TYPE_META[item.type].color;
   const statusColor = STATUS_META[item.status].color;
 
   return (
-    <div className="glass-card p-5 lg:p-6">
-      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+    <div className="glass-card p-5 lg:p-6 h-fit">
+      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 lg:h-fit">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className={`px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${typeColor}`}>
+            <span
+              className={`px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${typeColor}`}
+            >
               <TypeIcon className="w-3.5 h-3.5" />
               {TYPE_META[item.type].label}
             </span>
-            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+            <span
+              className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColor}`}
+            >
               {STATUS_META[item.status].label}
             </span>
-            <span className="text-xs text-text-secondary">{formatDate(item.submittedAt)}</span>
+            <span className="text-xs text-text-secondary">
+              {formatDate(item.submittedAt)}
+            </span>
+            {/* Actions */}
+            <div className="ml-auto flex flex-wrap items-center justify-start gap-2 flex-shrink-0">
+              {isAdmin ? (
+                <>
+                  <button
+                    onClick={() => onStatusChange(item.id, "pending")}
+                    title="Mark pending"
+                    className={`p-2 rounded-lg ${
+                      item.status === "pending"
+                        ? "text-yellow-600"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => onStatusChange(item.id, "in-progress")}
+                    title="Mark in progress"
+                    className={`p-2 rounded-lg ${
+                      item.status === "in-progress"
+                        ? "text-blue-600"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    <Wrench className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => onStatusChange(item.id, "resolved")}
+                    title="Mark resolved"
+                    className={`p-2 rounded-lg ${
+                      item.status === "resolved"
+                        ? "text-green-600"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                  </button>
+                  {updating && (
+                    <Loader2 className="w-4 h-4 animate-spin text-text-secondary" />
+                  )}
+                  <button
+                    onClick={() => onDelete(item)}
+                    title="Delete"
+                    className="p-2 rounded-lg hover:bg-red-500/10 text-red-500"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs text-text-secondary">
+                  Status controlled by the Administrator
+                </span>
+              )}
+            </div>
           </div>
 
           {item.title && (
-            <h3 className="font-display font-semibold text-lg text-dark mb-1">{item.title}</h3>
+            <h3 className="font-display font-semibold text-lg text-dark mb-1">
+              {item.title}
+            </h3>
           )}
           <p className="text-sm text-text-secondary mb-3">{item.message}</p>
 
@@ -227,59 +337,13 @@ function FeedbackCard({ item, isAdmin, updating, onStatusChange, onDelete }: Fee
             ) : (
               <>
                 <span className="flex items-center gap-1">
-                  <User className="w-3.5 h-3.5" /> {item.studentName || "Unknown"}
+                  <User className="w-3.5 h-3.5" />{" "}
+                  {item.studentName || "Unknown"}
                 </span>
                 {item.studentId && <span>{item.studentId}</span>}
               </>
             )}
           </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-          {isAdmin ? (
-            <>
-              <button
-onClick={() => onStatusChange(item.id, "pending")}
-                title="Mark pending"
-                className={`p-2 rounded-lg ${
-                  item.status === "pending" ? "text-yellow-600" : "text-text-secondary"
-                }`}
-              >
-                <Clock className="w-4 h-4" />
-              </button>
-              <button
-onClick={() => onStatusChange(item.id, "in-progress")}
-                title="Mark in progress"
-                className={`p-2 rounded-lg ${
-                  item.status === "in-progress" ? "text-blue-600" : "text-text-secondary"
-                }`}
-              >
-                <Wrench className="w-4 h-4" />
-              </button>
-              <button
-onClick={() => onStatusChange(item.id, "resolved")}
-                title="Mark resolved"
-                className={`p-2 rounded-lg ${
-                  item.status === "resolved" ? "text-green-600" : "text-text-secondary"
-                }`}
-              >
-                <CheckCircle className="w-4 h-4" />
-              </button>
-              {updating && <Loader2 className="w-4 h-4 animate-spin text-text-secondary" />}
-              <button
-onClick={() => onDelete(item)}
-                title="Delete"
-                className="p-2 rounded-lg hover:bg-red-500/10 text-red-500"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </>
-          ) : (
-            <span className="text-xs text-text-secondary">
-              Status controlled by the Administrator
-            </span>
-          )}
         </div>
       </div>
     </div>
