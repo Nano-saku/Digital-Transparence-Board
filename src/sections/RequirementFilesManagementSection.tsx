@@ -107,8 +107,8 @@ export default function RequirementFilesManagementSection({
       const data = await studentRequirementFilesService.getAll();
       setFiles(data);
     } catch (error) {
-      console.error("Error loading requirement files:", error);
-      toast.error("Failed to load requirement files");
+      console.error("Error loading files:", error);
+      toast.error("Failed to load files");
     } finally {
       setLoading(false);
     }
@@ -123,7 +123,7 @@ export default function RequirementFilesManagementSection({
     return (
       <SectionLayout title="Council Files" onBack={onBack}>
         <SectionEmptyState
-          message="You do not have permission to manage requirement files."
+          message="You do not have permission to manage files."
           icon={EyeOff}
           card
         />
@@ -155,7 +155,7 @@ export default function RequirementFilesManagementSection({
 
   const handleSubmit = async () => {
     if (!title.trim()) {
-      toast.error("Please provide a title for the requirement file.");
+      toast.error("Please provide a title for the file.");
       return;
     }
     if (modal?.type === "create" && !selectedFile) {
@@ -174,7 +174,7 @@ export default function RequirementFilesManagementSection({
           createdBy: userId,
         });
         setFiles((prev) => [created, ...prev]);
-        toast.success("Requirement file uploaded successfully.");
+        toast.success("File uploaded successfully.");
       } else if (modal?.type === "edit" && modal.file) {
         const updated = await studentRequirementFilesService.update(
           modal.file.id,
@@ -187,12 +187,12 @@ export default function RequirementFilesManagementSection({
         setFiles((prev) =>
           prev.map((f) => (f.id === updated.id ? updated : f)),
         );
-        toast.success("Requirement file updated.");
+        toast.success("File updated.");
       }
       setModal(null);
     } catch (error) {
-      console.error("Error saving requirement file:", error);
-      toast.error("Failed to save the requirement file. Please try again.");
+      console.error("Error saving file:", error);
+      toast.error("Failed to save the file. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -247,11 +247,11 @@ export default function RequirementFilesManagementSection({
     try {
       await studentRequirementFilesService.delete(deleteTarget.id);
       setFiles((prev) => prev.filter((f) => f.id !== deleteTarget.id));
-      toast.success("Requirement file deleted.");
+      toast.success("File deleted.");
       setDeleteTarget(null);
     } catch (error) {
-      console.error("Error deleting requirement file:", error);
-      toast.error("Failed to delete the requirement file. Please try again.");
+      console.error("Error deleting file:", error);
+      toast.error("Failed to delete the file. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -320,7 +320,7 @@ export default function RequirementFilesManagementSection({
 
   return (
     <SectionLayout
-      title="Student Requirement Files"
+      title="Council Files"
       subtitle="Upload and manage the documents students need (Admin only)"
       onBack={onBack}
       gradientClass="gradient-bg-orange"
@@ -338,7 +338,7 @@ export default function RequirementFilesManagementSection({
         <SectionLoader />
       ) : files.length === 0 ? (
         <SectionEmptyState
-          message="No requirement files uploaded yet. Click “Upload File” to add the first one."
+          message="No files uploaded yet. Click “Upload File” to add the first one."
           icon={FolderOpen}
           card
         />
@@ -470,7 +470,7 @@ export default function RequirementFilesManagementSection({
                         <button
                           onClick={() => setDeleteTarget(file)}
                           className="p-2 rounded-lg text-red hover:bg-red/10"
-                          title="Delete requirement file"
+                          title="Delete file"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -492,9 +492,7 @@ export default function RequirementFilesManagementSection({
         <DialogContent className="glass-card-strong max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
-              {modal?.type === "create"
-                ? "Upload Requirement File"
-                : "Edit Requirement File"}
+              {modal?.type === "create" ? "Upload File" : "Edit File"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-2">
@@ -751,7 +749,7 @@ export default function RequirementFilesManagementSection({
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
-        title="Delete Requirement File"
+        title="Delete File"
         description={`Are you sure you want to delete "${deleteTarget?.title}"? The file will be permanently removed.`}
         warningText="This action cannot be undone."
         confirmLabel="Delete File"
