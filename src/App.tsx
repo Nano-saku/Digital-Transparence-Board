@@ -29,6 +29,9 @@ const AdminDashboardSection = lazy(
 const StudentManagementSection = lazy(
   () => import("@/sections/StudentManagementSection"),
 );
+const RequirementFilesManagementSection = lazy(
+  () => import("@/sections/RequirementFilesManagementSection"),
+);
 const EventManagementSection = lazy(
   () => import("@/sections/EventManagementSection"),
 );
@@ -37,6 +40,9 @@ const ContributionManagementSection = lazy(
 );
 const FeedbackManagementSection = lazy(
   () => import("@/sections/FeedbackManagementSection"),
+);
+const ReportManagementSection = lazy(
+  () => import("@/sections/ReportManagementSection"),
 );
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -199,12 +205,16 @@ function App() {
     switch (view) {
       case "student-management":
         return role === "admin" || role === "secretary";
+      case "requirement-files-management":
+        return role === "admin";
       case "contribution-management":
         return role === "admin" || role === "treasurer" || role === "auditor";
       case "payment-management":
       case "transaction-management":
         return role === "admin" || role === "treasurer" || role === "auditor";
       case "attendance-management":
+        return role === "admin" || role === "secretary";
+      case "report-management":
         return role === "admin" || role === "secretary";
       case "event-management":
         return true; // any staff member may view the event schedule
@@ -299,6 +309,17 @@ function App() {
           renderAdminLogin()
         );
 
+      case "requirement-files-management":
+        return canAccess("requirement-files-management") ? (
+          <RequirementFilesManagementSection
+            role={role!}
+            userId={auth?.user.id ?? ""}
+            onBack={() => navigateTo("admin-dashboard")}
+          />
+        ) : (
+          renderAdminLogin()
+        );
+
       case "event-management":
       case "payment-management":
         return canAccess(currentView) ? (
@@ -351,6 +372,15 @@ function App() {
         return canAccess(currentView) ? (
           <FeedbackManagementSection
             role={role!}
+            onBack={() => navigateTo("admin-dashboard")}
+          />
+        ) : (
+          renderAdminLogin()
+        );
+
+      case "report-management":
+        return canAccess(currentView) ? (
+          <ReportManagementSection
             onBack={() => navigateTo("admin-dashboard")}
           />
         ) : (

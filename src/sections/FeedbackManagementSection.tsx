@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   MessageCircle,
   AlertTriangle,
@@ -16,10 +16,10 @@ import type { FeedbackItem, UserRole } from "@/types";
 import { feedbackService } from "@/services/db";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/format";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionBackButton from "@/components/SectionBackButton";
+import SectionLayout from "@/components/common/SectionLayout";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 
 interface FeedbackManagementSectionProps {
   onBack: () => void;
@@ -73,13 +73,12 @@ export default function FeedbackManagementSection({
   onBack,
   role,
 }: FeedbackManagementSectionProps) {
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [filter, setFilter] = useState<FeedbackFilter>("all");
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [feedbackToDelete, setFeedbackToDelete] = useState<FeedbackItem | null>(null);
 
   const isAdmin = role === "admin";
 
@@ -98,14 +97,6 @@ export default function FeedbackManagementSection({
   useEffect(() => {
     loadFeedback();
   }, []);
-
-  useSectionEntrance(sectionRef, [
-    {
-      ref: contentRef,
-      from: { y: "6vh", opacity: 0 },
-      to: { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" },
-    },
-  ]);
 
   const handleStatusChange = async (
     id: string,
@@ -126,15 +117,23 @@ export default function FeedbackManagementSection({
     }
   };
 
-  const handleDelete = async (item: FeedbackItem) => {
-    if (!window.confirm("Delete this feedback? This cannot be undone.")) return;
+  const openDeleteConfirm = (item: FeedbackItem) => {
+    setFeedbackToDelete(item);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!feedbackToDelete) return;
     try {
-      await feedbackService.delete(item.id);
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      await feedbackService.delete(feedbackToDelete.id);
+      setItems((prev) => prev.filter((i) => i.id !== feedbackToDelete.id));
       toast.success("Feedback deleted");
     } catch (error) {
       console.error("Error deleting feedback:", error);
       toast.error("Failed to delete feedback");
+    } finally {
+      setShowDeleteConfirm(false);
+      setFeedbackToDelete(null);
     }
   };
 
@@ -142,28 +141,13 @@ export default function FeedbackManagementSection({
     filter === "all" ? items : items.filter((item) => item.type === filter);
 
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-warm relative overflow-hidden py-20 lg:py-24"
+    <>
+    <SectionLayout
+      title="Feedback Inbox"
+      subtitle="All complaints, inquiries, and suggestions from students"
+      onBack={onBack}
+      gradientClass="gradient-bg-warm"
     >
-      <div
-        ref={contentRef}
-        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
-      >
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8">
-          <div className="flex items-center gap-4">
-            <SectionBackButton onClick={onBack} />
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Feedback Inbox
-              </h1>
-              <p className="text-text-secondary text-sm">
-                All complaints, inquiries, and suggestions from students
-              </p>
-            </div>
-          </div>
-        </div>
 
         {/* Filter tabs */}
         <div className="glass-card p-1.5 mb-6 inline-flex flex-wrap gap-1 rounded-xl">
@@ -216,14 +200,25 @@ export default function FeedbackManagementSection({
                 isAdmin={isAdmin}
                 updating={updatingId === item.id}
                 onStatusChange={handleStatusChange}
-                onDelete={handleDelete}
+                onDelete={openDeleteConfirm}
               />
             ))}
           </div>
         )}
-      </div>
-    </section>
-  );
+    </SectionLayout>
+
+    <ConfirmDialog
+      open={showDeleteConfirm}
+      onClose={() => {
+        setShowDeleteConfirm(false);
+        setFeedbackToDelete(null);
+      }}
+      onConfirm={confirmDelete}
+      title="Delete Feedback"
+      description="Are you sure you want to delete this feedback? This cannot be undone."
+      confirmLabel="Delete Feedback"
+    />
+  </>);
 }
 // ------------------------------------------------------------------
 // Feedback card

@@ -1,6 +1,5 @@
-﻿import { useState, useEffect, useRef, useMemo, type ChangeEvent } from "react";
+﻿import { useState, useEffect, useMemo } from "react";
 import {
-  Search,
   Plus,
   Edit2,
   Trash2,
@@ -11,10 +10,11 @@ import {
   QrCode,
 } from "lucide-react";
 import { getOrdinalSuffix } from "@/lib/format";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionBackButton from "@/components/SectionBackButton";
+import SectionLayout from "@/components/common/SectionLayout";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
+import SearchFilterBar from "@/components/common/SearchFilterBar";
 import { studentsService } from "@/services/db";
 import type { Student } from "@/types";
 import {
@@ -25,9 +25,10 @@ import {
 } from "@/components/ui/dialog";
 import StudentQrModal from "@/components/StudentQrModal";
 import { toast } from "sonner";
-import { readSheet } from "read-excel-file/browser";
-import { parseCsv, excelRowsToRecords, pickField } from "@/lib/spreadsheet";
+import { pickField } from "@/lib/spreadsheet";
 import { ATTENDANCE_COURSES } from "@/lib/kmeans";
+import { useSearch } from "@/hooks/useSearch";
+import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface StudentManagementSectionProps {
   onBack: () => void;
 }
@@ -37,19 +38,10 @@ export default function StudentManagementSection({
 }: StudentManagementSectionProps) {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-  const [filterProgram, setFilterProgram] = useState("");
-  const [filterYear, setFilterYear] = useState("");
-  const [filterSection, setFilterSection] = useState("");
   const [saving, setSaving] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const [qrStudent, setQrStudent] = useState<Student | null>(null);
-
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
 
   // Form state for adding/editing
   const [formData, setFormData] = useState({
@@ -79,32 +71,16 @@ export default function StudentManagementSection({
     }
   };
 
-  useSectionEntrance(sectionRef, [
-    {
-      ref: contentRef,
-      from: { y: "6vh", opacity: 0 },
-      to: { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" },
-    },
-  ]);
-
-  const filteredStudents = useMemo(() => {
-    return students.filter((student) => {
-      const matchesSearch =
-        student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesProgram =
-        !filterProgram || student.program === filterProgram;
-
-      const matchesYear =
-        !filterYear || student.yearLevel.toString() === filterYear;
-
-      const matchesSection =
-        !filterSection ||
-        student.section?.trim().replace(/^\d+/, "") === filterSection;
-
-      return matchesSearch && matchesProgram && matchesYear && matchesSection;
+  const { searchTerm, setSearchTerm, filters, setFilter, filtered: filteredStudents } =
+    useSearch<Student>({
+      items: students,
+      searchKeys: ["name", "studentId"],
+      filters: {
+        program: (s) => s.program,
+        year: (s) => s.yearLevel.toString(),
+        section: (s) => s.section?.trim().replace(/^\d+/, "") ?? "",
+      },
     });
-  }, [students, searchTerm, filterProgram, filterYear, filterSection]);
 
   const programs = useMemo(
     () =>
@@ -329,114 +305,67 @@ export default function StudentManagementSection({
     }
   };
 
-  const handleImportFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
-    if (!file) return;
-
-    const isCsv = file.name.toLowerCase().endsWith(".csv");
-    const isExcel = file.name.toLowerCase().endsWith(".xlsx");
-    if (!isCsv && !isExcel) {
-      toast.error("Please upload a .csv or .xlsx file");
-      return;
-    }
-
-    try {
-      setImporting(true);
-      const rows = isCsv
-        ? parseCsv(await file.text())
-        : excelRowsToRecords(await readSheet(file));
-      await importStudentRows(rows);
-    } catch (error) {
-      console.error(`Error importing ${isCsv ? "CSV" : "Excel"} file:`, error);
-      toast.error(`Failed to import ${isCsv ? "CSV" : "Excel"} file`);
-    } finally {
-      setImporting(false);
-    }
-  };
+  // Shared CSV / Excel file-read shell + importing state (row mapping handled by
+  // importStudentRows above).
+  const { importing, handleFileSelected, importInputRef } = useSpreadsheetImport(
+    {
+      onRows: importStudentRows,
+    },
+  );
 
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
+    <SectionLayout
+      title="Student Management"
+      subtitle="Manage student records and information"
+      onBack={onBack}
+      headerActions={
+        <>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="glass-button px-4 py-2.5 text-sm"
+            disabled={loading || importing}
+            title="Import students from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID, Name, Program, Year Level, Section."
+          >
+            {importing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="w-4 h-4" />
+            )}
+            <span className="hidden sm:inline">
+              {importing ? "Importing..." : "Upload CSV / Excel"}
+            </span>
+          </button>
+          <button
+            onClick={openAddModal}
+            className="btn-primary px-4 py-2.5 text-sm"
+            disabled={loading || importing}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Student</span>
+          </button>
+        </>
+      }
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-40 left-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-40 right-20 w-96 h-96 rounded-full bg-white blur-3xl" />
-      </div>
-
-      {/* Content */}
-      <div
-        ref={contentRef}
-        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
-      >
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            <SectionBackButton onClick={onBack} />
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Student Management
-              </h1>
-              <p className="text-text-secondary text-sm">
-                Manage student records and information
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => importInputRef.current?.click()}
-              className="glass-button px-4 py-2.5 text-sm"
-              disabled={loading || importing}
-              title="Import students from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID, Name, Program, Year Level, Section."
-            >
-              {importing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <FileSpreadsheet className="w-4 h-4" />
-              )}
-              <span className="hidden sm:inline">
-                {importing ? "Importing..." : "Upload CSV / Excel"}
-              </span>
-            </button>
-            <button
-              onClick={openAddModal}
-              className="btn-primary px-4 py-2.5 text-sm"
-              disabled={loading || importing}
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Student</span>
-            </button>
-          </div>
-
-          {/* Hidden file input for CSV / Excel import */}
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            className="hidden"
-            onChange={handleImportFileSelected}
-          />
-        </div>
+      {/* Hidden file input for CSV / Excel import */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
 
         {/* Filters */}
         <div className="glass-card p-4 mb-4 flex flex-wrap gap-3">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-            <input
-              type="text"
-              placeholder="Search students..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="glass-input pl-10 pr-4 py-2 text-sm w-full"
-              disabled={loading}
-            />
-          </div>
+          <SearchFilterBar
+            value={searchTerm}
+            onChange={setSearchTerm}
+            placeholder="Search students..."
+            className="flex-1 min-w-[200px]"
+          />
           <select
-            value={filterProgram}
-            onChange={(e) => setFilterProgram(e.target.value)}
+            value={filters.program}
+            onChange={(e) => setFilter("program", e.target.value)}
             className="glass-input px-4 py-2 text-sm"
             disabled={loading}
           >
@@ -448,8 +377,8 @@ export default function StudentManagementSection({
             ))}
           </select>
           <select
-            value={filterYear}
-            onChange={(e) => setFilterYear(e.target.value)}
+            value={filters.year}
+            onChange={(e) => setFilter("year", e.target.value)}
             className="glass-input px-4 py-2 text-sm"
             disabled={loading}
           >
@@ -462,8 +391,8 @@ export default function StudentManagementSection({
             ))}
           </select>
           <select
-            value={filterSection}
-            onChange={(e) => setFilterSection(e.target.value)}
+            value={filters.section}
+            onChange={(e) => setFilter("section", e.target.value)}
             className="glass-input px-4 py-2 text-sm"
             disabled={loading}
           >
@@ -572,7 +501,6 @@ export default function StudentManagementSection({
             <strong className="text-dark">{filteredStudents.length}</strong>
           </span>
         </div>
-      </div>
 
       {/* Add/Edit Modal */}
       <Dialog
@@ -725,63 +653,21 @@ export default function StudentManagementSection({
         </DialogContent>
       </Dialog>
       {/* Delete Student Confirmation Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={showDeleteConfirm}
-        onOpenChange={(open) => {
-          if (!open) {
-            setShowDeleteConfirm(false);
-            setStudentToDelete(null);
-          }
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setStudentToDelete(null);
         }}
-      >
-        <DialogContent className="glass-card-strong max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              Delete Student
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            <p className="text-sm text-text-secondary">
-              Are you sure you want to delete{" "}
-              <span className="font-medium text-dark">
-                {studentToDelete?.name}
-              </span>
-              ?
-            </p>
-
-            <p className="text-xs text-text-secondary/80">
-              This action cannot be undone. The student's record will be
-              permanently removed from the system.
-            </p>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setStudentToDelete(null);
-                }}
-                className="flex-1 glass-button px-4 py-2.5"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={confirmDeleteStudent}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-red !border-none"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Student
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+        onConfirm={confirmDeleteStudent}
+        title="Delete Student"
+        description={`Are you sure you want to delete ${studentToDelete?.name ?? "this student"}?`}
+        warningText="This action cannot be undone. The student's record will be permanently removed from the system."
+        confirmLabel="Delete Student"
+      />
       {/* Attendance QR Code Modal */}
       <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
-    </section>
+    </SectionLayout>
   );
 }
 

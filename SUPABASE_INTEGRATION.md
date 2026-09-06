@@ -137,8 +137,6 @@ results.
 | `payments`             | Cash receipts                               | `PaymentRecord`              |
 | `transactions`         | Income/expense ledger entries               | `Transaction`                |
 | `feedback`             | Student feedback (inquiry/complaint/suggestion) | `FeedbackItem`            |
-| `financial_summaries`  | Single-row summary (id = `'main'`)          | `FinancialSummary`           |
-| `event_allocations`    | Per-event budget allocation (id = event id) | `EventAllocation`            |
 
 Column names are `snake_case` in the database and are mapped to the app's
 `camelCase` fields inside `src/services/db.ts`.
@@ -218,10 +216,12 @@ that the Firebase version had, so the UI sections do not need changes:
 
 - `studentsService` — `getAll`, `getById`, `getByStudentId`, `getByName`, `create`, `update`, `delete`, `search`
 - `eventsService` — `getAll`, `getById`, `create`, `update`, `delete`
-- `attendanceService` — `getAll`, `getById`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`, `getStatsByEventId`
+- `attendanceService` — `getAll`, `getById`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`
 - `contributionsService` — `getAll`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`
 - `paymentsService` — `getAll`, `getById`, `getByStudentId`, `getByEventId`, `create`, `update`, `delete`
-- `transactionsService` — `getAll`, `getById`, `getByEventId`, `create`, `update`, `delete`, `getFinancialSummary`
+- `transactionsService` — `getAll`, `getById`, `getByEventId`, `create`, `update`, `delete`
 - `feedbackService` — `getAll`, `getById`, `getByType`, `getByStatus`, `create`, `update`, `delete`, `updateStatus`
-- `financialSummaryService` — `get`, `update`
-- `eventAllocationsService` — `getAll`, `getByEventId`, `create`, `update`, `delete`
+- `boardMembersService` — `listBoardMembers`
+- `financialReportingService` — `getReport`, `subscribe`
+- `subscribeToTables` — helper for live postgres change subscriptions
+- `studentRequirementFilesService` — `getAll`, `getPublished`, `create`, `update`, `replaceFile`, `delete`

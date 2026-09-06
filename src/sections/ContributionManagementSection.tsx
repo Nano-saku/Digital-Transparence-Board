@@ -1,10 +1,8 @@
 ﻿import {
   useState,
   useEffect,
-  useRef,
   useMemo,
   useCallback,
-  type ChangeEvent,
 } from "react";
 import {
   Search,
@@ -18,10 +16,11 @@ import {
   Coins,
   FileText,
 } from "lucide-react";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionBackButton from "@/components/SectionBackButton";
+import SectionLayout from "@/components/common/SectionLayout";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
+import SummaryCard from "@/components/common/SummaryCard";
 import {
   contributionsService,
   studentsService,
@@ -38,13 +37,9 @@ import {
 import { toast } from "sonner";
 import { formatPeso } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
-import {
-  parseCsv,
-  excelRowsToRecords,
-  pickField,
-  parseAmount,
-} from "@/lib/spreadsheet";
-import { readSheet } from "read-excel-file/browser";
+import { pickField, parseAmount } from "@/lib/spreadsheet";
+import { useSearch } from "@/hooks/useSearch";
+import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface ContributionManagementSectionProps {
   onBack: () => void;
 }
@@ -83,18 +78,11 @@ export default function ContributionManagementSection({
     null,
   );
   const [form, setForm] = useState<ContributionForm>(EMPTY_FORM);
-  const [importing, setImporting] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Filters
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterEvent, setFilterEvent] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [contributionToDelete, setContributionToDelete] =
     useState<ContributionRow | null>(null);
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -140,14 +128,6 @@ export default function ContributionManagementSection({
     );
   }, [loadData]);
 
-  useSectionEntrance(sectionRef, [
-    {
-      ref: contentRef,
-      from: { y: "6vh", opacity: 0 },
-      to: { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" },
-    },
-  ]);
-
   const sortedStudents = useMemo(
     () => [...students].sort((a, b) => a.name.localeCompare(b.name)),
     [students],
@@ -157,19 +137,15 @@ export default function ContributionManagementSection({
     [events],
   );
 
-  const filteredRecords = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return records.filter((record) => {
-      const matchesSearch =
-        !query ||
-        record.studentName.toLowerCase().includes(query) ||
-        record.studentId.toLowerCase().includes(query);
-      const matchesEvent = !filterEvent || record.eventId === filterEvent;
-      const matchesStatus =
-        !filterStatus || contributionStatus(record).label === filterStatus;
-      return matchesSearch && matchesEvent && matchesStatus;
+  const { searchTerm, setSearchTerm, filters, setFilter, filtered: filteredRecords } =
+    useSearch<ContributionRow>({
+      items: records,
+      searchKeys: ["studentName", "studentId"],
+      filters: {
+        eventId: (r) => r.eventId,
+        status: (r) => contributionStatus(r).label,
+      },
     });
-  }, [records, searchTerm, filterEvent, filterStatus]);
 
   // Summary stats
   const totalRequired = useMemo(
@@ -432,7 +408,6 @@ export default function ContributionManagementSection({
     }
 
     try {
-      setImporting(true);
       for (const payload of deduped) {
         await contributionsService.create(payload);
       }
@@ -449,122 +424,60 @@ export default function ContributionManagementSection({
     }
   };
 
-  const handleImportFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
-    if (!file) return;
-
-    const isCsv = file.name.toLowerCase().endsWith(".csv");
-    const isExcel = file.name.toLowerCase().endsWith(".xlsx");
-    if (!isCsv && !isExcel) {
-      toast.error("Please upload a .csv or .xlsx file");
-      return;
-    }
-
-    try {
-      setImporting(true);
-      const rows = isCsv
-        ? parseCsv(await file.text())
-        : excelRowsToRecords(await readSheet(file));
-      await importContributionRows(rows);
-    } catch (error) {
-      console.error(`Error importing ${isCsv ? "CSV" : "Excel"} file:`, error);
-      toast.error(`Failed to import ${isCsv ? "CSV" : "Excel"} file`);
-    } finally {
-      setImporting(false);
-    }
-  };
+  // Shared CSV / Excel file-read shell + importing state (row mapping + dedupe
+  // handled by importContributionRows above).
+  const { importing, handleFileSelected, importInputRef } = useSpreadsheetImport(
+    {
+      onRows: importContributionRows,
+    },
+  );
 
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
+    <SectionLayout
+      title="Contribution Records"
+      subtitle="Manage each student's contribution to every event"
+      onBack={onBack}
+      headerActions={
+        <>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="glass-button px-4 py-2.5 text-sm w-fit"
+            disabled={loading || importing}
+            title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid."
+          >
+            {importing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <FileText className="w-4 h-4" />
+            )}
+            <span>{importing ? "Importing..." : "Upload CSV / Excel"}</span>
+          </button>
+          <button
+            onClick={openAddModal}
+            className="btn-primary px-4 py-2.5 text-sm w-fit"
+            disabled={loading || importing}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Contribution</span>
+          </button>
+        </>
+      }
     >
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-40 left-20 w-72 h-72 rounded-full bg-white blur-3xl" />
-        <div className="absolute bottom-40 right-20 w-96 h-96 rounded-full bg-white blur-3xl" />
-      </div>
-
-      {/* Content */}
-      <div
-        ref={contentRef}
-        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
-      >
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            <SectionBackButton onClick={onBack} />
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Contribution Records
-              </h1>
-              <p className="text-text-secondary text-sm">
-                Manage each student's contribution to every event
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => importInputRef.current?.click()}
-              className="glass-button px-4 py-2.5 text-sm w-fit"
-              disabled={loading || importing}
-              title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid."
-            >
-              {importing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <FileText className="w-4 h-4" />
-              )}
-              <span>{importing ? "Importing..." : "Upload CSV / Excel"}</span>
-            </button>
-            <button
-              onClick={openAddModal}
-              className="btn-primary px-4 py-2.5 text-sm w-fit"
-              disabled={loading || importing}
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Contribution</span>
-            </button>
-          </div>
-
-          {/* Hidden file input for CSV / Excel import */}
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            className="hidden"
-            onChange={handleImportFileSelected}
-          />
-        </div>
+      {/* Hidden file input for CSV / Excel import */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
 
         {/* Summary stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-          <div className="glass-card px-4 py-3">
-            <p className="text-xs text-text-secondary">Total Records</p>
-            <p className="text-xl font-bold text-dark">
-              {records.length.toLocaleString()}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-xs text-text-secondary">Total Required</p>
-            <p className="text-xl font-bold text-purple-600">
-              {formatPeso(totalRequired)}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-xs text-text-secondary">Total Collected</p>
-            <p className="text-xl font-bold text-green-600">
-              {formatPeso(totalPaid)}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-xs text-text-secondary">Total Balance</p>
-            <p className="text-xl font-bold text-red">
-              {formatPeso(totalBalance)}
-            </p>
-          </div>
+          <SummaryCard icon={User} color="blue" value={records.length.toLocaleString()} label="Total Records" />
+          <SummaryCard icon={FileText} color="purple" value={formatPeso(totalRequired)} label="Total Required" />
+          <SummaryCard icon={Coins} color="green" value={formatPeso(totalPaid)} label="Total Collected" />
+          <SummaryCard icon={Calendar} color="red" value={formatPeso(totalBalance)} label="Total Balance" />
         </div>
 
         {/* Filters */}
@@ -581,8 +494,8 @@ export default function ContributionManagementSection({
             />
           </div>
           <select
-            value={filterEvent}
-            onChange={(e) => setFilterEvent(e.target.value)}
+            value={filters.eventId}
+            onChange={(e) => setFilter("eventId", e.target.value)}
             className="glass-input px-4 py-2 text-sm"
             disabled={loading}
           >
@@ -594,8 +507,8 @@ export default function ContributionManagementSection({
             ))}
           </select>
           <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
+            value={filters.status}
+            onChange={(e) => setFilter("status", e.target.value)}
             className="glass-input px-4 py-2 text-sm"
             disabled={loading}
           >
@@ -711,7 +624,6 @@ export default function ContributionManagementSection({
             <strong className="text-dark">{filteredRecords.length}</strong>
           </span>
         </div>
-      </div>
 
       {/* Add/Edit Modal */}
       <Dialog
@@ -856,64 +768,18 @@ export default function ContributionManagementSection({
         </DialogContent>
       </Dialog>
       {/* Delete Contribution Confirmation Dialog */}
-      <Dialog
+      <ConfirmDialog
         open={showDeleteConfirm}
-        onOpenChange={(open) => {
-          if (!open) {
-            setShowDeleteConfirm(false);
-            setContributionToDelete(null);
-          }
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setContributionToDelete(null);
         }}
-      >
-        <DialogContent className="glass-card-strong max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              Delete Contribution
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            <p className="text-sm text-text-secondary">
-              Are you sure you want to delete the contribution record for{" "}
-              <span className="font-medium text-dark">
-                {contributionToDelete?.studentName}
-              </span>
-              ?
-            </p>
-
-            <p className="text-xs text-text-secondary/80">
-              This action cannot be undone. This student's contribution record
-              for{" "}
-              <span className="font-medium">
-                {contributionToDelete?.eventName}
-              </span>{" "}
-              will be permanently removed.
-            </p>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setContributionToDelete(null);
-                }}
-                className="flex-1 glass-button px-4 py-2.5"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={confirmDeleteContribution}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-red !border-none"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Contribution
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </section>
+        onConfirm={confirmDeleteContribution}
+        title="Delete Contribution"
+        description={`Are you sure you want to delete the contribution record for ${contributionToDelete?.studentName ?? "this student"}?`}
+        warningText={`This action cannot be undone. This student's contribution record for ${contributionToDelete?.eventName ?? ""} will be permanently removed.`}
+        confirmLabel="Delete Contribution"
+      />
+    </SectionLayout>
   );
 }

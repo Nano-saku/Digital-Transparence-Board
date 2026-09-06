@@ -10,8 +10,24 @@ type TableName =
   | "payments"
   | "transactions"
   | "feedback"
-  | "board_members";
+  | "board_members"
+  | "student_requirement_files";
 type MutationKind = "create" | "update" | "delete";
+
+/**
+ * A file that still needs to be pushed to Supabase Storage before its owning
+ * DB mutation (a student_requirement_files create/replace) can be replayed.
+ * Stored in its own IndexedDB object store (keyed by the owning mutation's
+ * `key`) because Blobs are structured-cloneable but would bloat the mutation
+ * records and queries otherwise.
+ */
+interface PendingUpload {
+  key: string;
+  ownerId: string;
+  bucket: string;
+  path: string;
+  blob: Blob;
+}
 
 interface CachedTable<T = unknown> {
   key: string;
@@ -36,13 +52,17 @@ interface QueuedMutation {
 
 interface OfflineDatabase extends IDBDatabase {
   transaction(
-    storeNames: "tables" | "mutations",
+    storeNames:
+      | "tables"
+      | "mutations"
+      | "uploads"
+      | Array<"tables" | "mutations" | "uploads">,
     mode?: IDBTransactionMode,
   ): IDBTransaction;
 }
 
 const DB_NAME = "digital-transparency-board-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const OFFICER_ROLES: readonly UserRole[] = [
   "admin",
   "secretary",
@@ -86,6 +106,8 @@ const openDatabase = (): Promise<OfflineDatabase> =>
         });
         mutations.createIndex("by_owner_created", ["ownerId", "createdAt"]);
       }
+      if (!database.objectStoreNames.contains("uploads"))
+        database.createObjectStore("uploads", { keyPath: "key" });
     };
     open.onsuccess = () => resolve(open.result as OfflineDatabase);
     open.onerror = () =>
@@ -197,33 +219,16 @@ class OfflineSyncService {
     return entry?.records ?? null;
   }
 
-  async cache<T>(table: TableName, records: T[], merge = false): Promise<void> {
+  async cache<T>(table: TableName, records: T[]): Promise<void> {
     if (!this.isEnabled() || !this.ownerId) return;
     const database = await this.database();
     const transaction = database.transaction("tables", "readwrite");
     const store = transaction.objectStore("tables");
-    const key = cacheKey(this.ownerId, table);
-    let next = records;
-    if (merge) {
-      const current = (await request(store.get(key))) as
-        | CachedTable<T>
-        | undefined;
-      const byId = new Map(
-        (current?.records ?? []).map((record) => [
-          String((record as { id?: unknown }).id),
-          record,
-        ]),
-      );
-      records.forEach((record) =>
-        byId.set(String((record as { id?: unknown }).id), record),
-      );
-      next = [...byId.values()];
-    }
     store.put({
-      key,
+      key: cacheKey(this.ownerId, table),
       ownerId: this.ownerId,
       table,
-      records: next,
+      records,
       updatedAt: Date.now(),
     } satisfies CachedTable<T>);
     await transactionDone(transaction);
@@ -283,17 +288,31 @@ class OfflineSyncService {
       QueuedMutation,
       "key" | "ownerId" | "createdAt" | "attempts"
     >,
+    fileStorage?: { bucket: string; path: string; blob: Blob },
   ): Promise<void> {
     if (!this.ownerId) return;
     const database = await this.database();
-    const transaction = database.transaction("mutations", "readwrite");
+    const storeNames: "mutations" | ("mutations" | "uploads")[] = fileStorage
+      ? ["mutations", "uploads"]
+      : "mutations";
+    const transaction = database.transaction(storeNames, "readwrite");
+    const key = crypto.randomUUID();
     transaction.objectStore("mutations").put({
       ...mutation,
-      key: crypto.randomUUID(),
+      key,
       ownerId: this.ownerId,
       createdAt: this.nextMutationTimestamp(),
       attempts: 0,
     } satisfies QueuedMutation);
+    if (fileStorage) {
+      transaction.objectStore("uploads").put({
+        key,
+        ownerId: this.ownerId,
+        bucket: fileStorage.bucket,
+        path: fileStorage.path,
+        blob: fileStorage.blob,
+      } satisfies PendingUpload);
+    }
     await transactionDone(transaction);
   }
 
@@ -302,6 +321,7 @@ class OfflineSyncService {
     kind: MutationKind;
     recordId: string;
     payload: Record<string, unknown>;
+    fileStorage?: { bucket: string; path: string; blob: Blob };
     makeLocal?: (current: T | undefined) => T;
     executeOnline: () => Promise<T>;
   }): Promise<T | undefined> {
@@ -312,13 +332,16 @@ class OfflineSyncService {
         params.recordId,
         params.makeLocal,
       );
-      await this.enqueue({
-        id: crypto.randomUUID(),
-        table: params.table,
-        kind: params.kind,
-        recordId: params.recordId,
-        payload: params.payload,
-      });
+      await this.enqueue(
+        {
+          id: crypto.randomUUID(),
+          table: params.table,
+          kind: params.kind,
+          recordId: params.recordId,
+          payload: params.payload,
+        },
+        params.fileStorage,
+      );
       this.state = "offline";
       this.emit();
       return local;
@@ -402,7 +425,11 @@ class OfflineSyncService {
    */
   async discardOldest(): Promise<void> {
     const [next] = await this.queuedMutations();
-    if (next) await this.removeMutation(next.key);
+    if (!next) return;
+    await this.removeMutation(next.key);
+    // Drop any pending Storage blob parked for this mutation so it isn't
+    // orphaned now that the owning DB change is being forgotten.
+    await this.removeUpload(next.key);
   }
 
   private async recordFailure(
@@ -419,7 +446,73 @@ class OfflineSyncService {
     await transactionDone(transaction);
   }
 
+  /**
+   * Persists an in-flight `payload` back to the queued mutation record. Used
+   * after a pending Storage upload succeeds so a later DB write failure (or
+   * dropped response) doesn't replay the row without the file URL.
+   */
+  private async savePayload(
+    key: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const database = await this.database();
+    const transaction = database.transaction("mutations", "readwrite");
+    const store = transaction.objectStore("mutations");
+    const current = (await request(store.get(key))) as
+      | QueuedMutation
+      | undefined;
+    if (current) {
+      store.put({
+        ...current,
+        payload: { ...current.payload, ...payload },
+      });
+    }
+    await transactionDone(transaction);
+  }
+
+  private async pendingUpload(key: string): Promise<PendingUpload | null> {
+    if (!this.ownerId) return null;
+    const database = await this.database();
+    const transaction = database.transaction("uploads", "readonly");
+    const entry = (await request(
+      transaction.objectStore("uploads").get(key),
+    )) as PendingUpload | undefined;
+    await transactionDone(transaction);
+    return entry ?? null;
+  }
+
+  private async removeUpload(key: string): Promise<void> {
+    const database = await this.database();
+    const transaction = database.transaction("uploads", "readwrite");
+    transaction.objectStore("uploads").delete(key);
+    await transactionDone(transaction);
+  }
+
   private async replay(mutation: QueuedMutation): Promise<void> {
+    // student_requirement_files rows point at a file in Supabase Storage. When
+    // the create/replace was queued offline the blob was parked in the uploads
+    // store; push it to Storage first and stamp the resulting public URL into
+    // the payload so the DB insert/update below references a live file.
+    const upload = await this.pendingUpload(mutation.key);
+    if (upload && !mutation.payload.file_url) {
+      const { error: uploadError } = await getSupabase()
+        .storage.from(upload.bucket)
+        .upload(upload.path, upload.blob, {
+          upsert: false,
+          contentType: upload.blob.type,
+        });
+      if (uploadError) throw new Error(uploadError.message);
+      const { data } = getSupabase()
+        .storage.from(upload.bucket)
+        .getPublicUrl(upload.path);
+      mutation.payload.file_url = data.publicUrl;
+      // Persist the public URL so an interrupted sync (upload succeeded, DB
+      // write failed) doesn't replay the row without a file reference.
+      await this.savePayload(mutation.key, { file_url: data.publicUrl });
+      // The blob reached Storage; drop it so a retry skips the upload.
+      await this.removeUpload(mutation.key);
+    }
+
     const query = getSupabase().from(mutation.table);
     let error: { message?: string } | null = null;
     if (mutation.kind === "create") {

@@ -1,4 +1,4 @@
-import { getSupabase } from "../lib/supabase";
+﻿import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
 import type {
   Student,
@@ -9,10 +9,9 @@ import type {
   PaymentRecord,
   Transaction,
   FeedbackItem,
-  FinancialSummary,
   FinancialReport,
-  EventAllocation,
   BoardMember,
+  StudentRequirementFile,
 } from "../types";
 
 // Operational tables use TEXT primary keys so they remain compatible with the
@@ -112,27 +111,6 @@ export const studentsService = {
         })) || []
       );
     });
-  },
-
-  async getById(id: string): Promise<Student | null> {
-    const students = await cachedRead<Student>("students", async () => {
-      const { data, error } = await getSupabase().from("students").select("*");
-
-      if (error) throw error;
-
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          name: item.name,
-          program: item.program,
-          yearLevel: item.year_level,
-          section: item.section,
-        })) || []
-      );
-    });
-
-    return students.find((student) => student.id === id) ?? null;
   },
 
   async getByStudentId(studentId: string): Promise<Student | null> {
@@ -359,21 +337,6 @@ export const eventsService = {
     });
   },
 
-  async getById(id: string): Promise<Event | null> {
-    if (offlineSyncService.isOffline()) {
-      const cached = await offlineSyncService.read<Event>("events");
-      return cached?.find((event) => event.id === id) ?? null;
-    }
-    const { data, error } = await getSupabase()
-      .from("events")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error) return null;
-    return mapEvent(data);
-  },
-
   async create(event: Omit<Event, "id">): Promise<Event> {
     const id = createRecordId();
     const payload = {
@@ -551,41 +514,6 @@ export const attendanceService = {
     );
   },
 
-  async getByEventId(eventId: string): Promise<AttendanceRecord[]> {
-    return cachedRead<AttendanceRecord>("attendance", async () => {
-      const { data, error } = await getSupabase()
-        .from("attendance")
-        .select("*")
-        .eq("event_id", eventId)
-        .order("date", { ascending: false });
-
-      if (error) throw error;
-
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          date: item.date,
-          status: item.status,
-          session: (item.session ?? "morning") as
-            | "morning"
-            | "afternoon"
-            | "evening",
-          timeIn: item.time_in ?? undefined,
-          timeOut: item.time_out ?? undefined,
-        })) || []
-      );
-    }).then((records) =>
-      records
-        .filter((record) => record.eventId === eventId)
-        .sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-        ),
-    );
-  },
-
   async getByEventIdAndSession(
     eventId: string,
     session: "morning" | "afternoon" | "evening",
@@ -750,22 +678,6 @@ export const attendanceService = {
       },
     });
   },
-
-  async getStatsByEventId(
-    eventId: string,
-  ): Promise<{ present: number; absent: number; total: number }> {
-    const { data, error } = await getSupabase()
-      .from("attendance")
-      .select("status")
-      .eq("event_id", eventId);
-
-    if (error) throw error;
-
-    const present = data?.filter((r) => r.status === "present").length || 0;
-    const absent = data?.filter((r) => r.status === "absent").length || 0;
-
-    return { present, absent, total: present + absent };
-  },
 };
 
 // ============================================
@@ -857,36 +769,6 @@ export const contributionsService = {
       ) ?? null
     );
   },
-  async getByEventId(eventId: string): Promise<ContributionRecord[]> {
-    const contributions = await cachedRead<ContributionRecord>(
-      "contributions",
-      async () => {
-        const { data, error } = await getSupabase()
-          .from("contributions")
-          .select("*")
-          .order("id", { ascending: false });
-
-        if (error) throw error;
-
-        return (
-          data?.map((item) => ({
-            id: item.id,
-            studentId: item.student_id,
-            eventId: item.event_id,
-            eventName: item.event_name,
-            requiredAmount: item.required_amount,
-            amountPaid: item.amount_paid,
-            remainingBalance: item.remaining_balance,
-          })) || []
-        );
-      },
-    );
-
-    return contributions
-      .filter((record) => record.eventId === eventId)
-      .sort((a, b) => b.id.localeCompare(a.id));
-  },
-
   async create(
     record: Omit<ContributionRecord, "id">,
   ): Promise<ContributionRecord> {
@@ -1059,37 +941,6 @@ export const paymentsService = {
 
     return payments
       .filter((payment) => payment.studentId === studentId)
-      .sort((a, b) => b.date.localeCompare(a.date));
-  },
-
-  async getByEventId(eventId: string): Promise<PaymentRecord[]> {
-    const payments = await cachedRead<PaymentRecord>("payments", async () => {
-      const { data, error } = await getSupabase()
-        .from("payments")
-        .select("*")
-        .order("date", { ascending: false });
-
-      if (error) throw error;
-
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          studentName: item.student_name,
-          eventId: item.event_id || undefined,
-          eventName: item.event_name || undefined,
-          contributionId: item.contribution_id,
-          amount: item.amount,
-          date: item.date,
-          receiptUrl: item.receipt_url || undefined,
-          orNumber: item.or_number || undefined,
-          recordedBy: item.recorded_by,
-        })) || []
-      );
-    });
-
-    return payments
-      .filter((payment) => payment.eventId === eventId)
       .sort((a, b) => b.date.localeCompare(a.date));
   },
 
@@ -1266,37 +1117,6 @@ export const transactionsService = {
     });
   },
 
-  async getByEventId(eventId: string): Promise<Transaction[]> {
-    const transactions = await cachedRead<Transaction>(
-      "transactions",
-      async () => {
-        const { data, error } = await getSupabase()
-          .from("transactions")
-          .select("*")
-          .order("date", { ascending: false });
-
-        if (error) throw error;
-
-        return (
-          data?.map((item) => ({
-            id: item.id,
-            date: item.date,
-            description: item.description,
-            eventId: item.event_id || undefined,
-            eventName: item.event_name || undefined,
-            amount: item.amount,
-            type: item.type,
-            responsibleOfficer: item.responsible_officer,
-            receiptUrl: item.receipt_url || undefined,
-          })) || []
-        );
-      },
-    );
-
-    return transactions
-      .filter((transaction) => transaction.eventId === eventId)
-      .sort((a, b) => b.date.localeCompare(a.date));
-  },
   async create(record: Omit<Transaction, "id">): Promise<Transaction> {
     const id = createRecordId();
     const payload = {
@@ -1407,28 +1227,6 @@ export const transactionsService = {
       },
     });
   },
-
-  async getFinancialSummary(): Promise<{
-    income: number;
-    expense: number;
-    balance: number;
-  }> {
-    const transactions = await this.getAll();
-
-    const income = transactions
-      .filter((transaction) => transaction.type === "income")
-      .reduce((sum, transaction) => sum + transaction.amount, 0);
-
-    const expense = transactions
-      .filter((transaction) => transaction.type === "expense")
-      .reduce((sum, transaction) => sum + transaction.amount, 0);
-
-    return {
-      income,
-      expense,
-      balance: income - expense,
-    };
-  },
 };
 
 // ============================================
@@ -1457,17 +1255,6 @@ export const feedbackService = {
         })) || []
       );
     });
-  },
-
-  async getByType(type: FeedbackItem["type"]): Promise<FeedbackItem[]> {
-    const feedback = await this.getAll();
-
-    return feedback
-      .filter((item) => item.type === type)
-      .sort(
-        (a, b) =>
-          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
-      );
   },
 
   async getByStatus(status: FeedbackItem["status"]): Promise<FeedbackItem[]> {
@@ -1601,162 +1388,6 @@ export const feedbackService = {
         if (error) throw error;
       },
     });
-  },
-};
-
-// ============================================
-// FINANCIAL SUMMARY SERVICE
-// ============================================
-export const financialSummaryService = {
-  async get(): Promise<FinancialSummary | null> {
-    const { data, error } = await getSupabase()
-      .from("financial_summaries")
-      .select("*")
-      .single();
-
-    if (error) return null;
-    return {
-      totalBudget: data.total_budget,
-      totalFundsCollected: data.total_funds_collected,
-      totalFundsSpent: data.total_funds_spent,
-      remainingBudget: data.remaining_budget,
-      totalExpectedContributions: data.total_expected_contributions,
-    };
-  },
-
-  async update(summary: Partial<FinancialSummary>): Promise<FinancialSummary> {
-    const updateData: Record<string, unknown> = {};
-    if (summary.totalBudget !== undefined)
-      updateData.total_budget = summary.totalBudget;
-    if (summary.totalFundsCollected !== undefined)
-      updateData.total_funds_collected = summary.totalFundsCollected;
-    if (summary.totalFundsSpent !== undefined)
-      updateData.total_funds_spent = summary.totalFundsSpent;
-    if (summary.remainingBudget !== undefined)
-      updateData.remaining_budget = summary.remainingBudget;
-    if (summary.totalExpectedContributions !== undefined)
-      updateData.total_expected_contributions =
-        summary.totalExpectedContributions;
-
-    const { data, error } = await getSupabase()
-      .from("financial_summaries")
-      .update(updateData)
-      .eq("id", "main")
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      totalBudget: data.total_budget,
-      totalFundsCollected: data.total_funds_collected,
-      totalFundsSpent: data.total_funds_spent,
-      remainingBudget: data.remaining_budget,
-      totalExpectedContributions: data.total_expected_contributions,
-    };
-  },
-};
-
-// ============================================
-// EVENT ALLOCATIONS SERVICE
-// ============================================
-export const eventAllocationsService = {
-  async getAll(): Promise<EventAllocation[]> {
-    const { data, error } = await getSupabase()
-      .from("event_allocations")
-      .select("*")
-      .order("event_name", { ascending: true });
-
-    if (error) throw error;
-    return (
-      data?.map((item) => ({
-        eventId: item.event_id,
-        eventName: item.event_name,
-        allocationAmount: item.allocation_amount,
-        totalCollected: item.total_collected,
-        totalSpent: item.total_spent,
-        remainingBalance: item.remaining_balance,
-      })) || []
-    );
-  },
-
-  async getByEventId(eventId: string): Promise<EventAllocation | null> {
-    const { data, error } = await getSupabase()
-      .from("event_allocations")
-      .select("*")
-      .eq("event_id", eventId)
-      .single();
-
-    if (error) return null;
-    return {
-      eventId: data.event_id,
-      eventName: data.event_name,
-      allocationAmount: data.allocation_amount,
-      totalCollected: data.total_collected,
-      totalSpent: data.total_spent,
-      remainingBalance: data.remaining_balance,
-    };
-  },
-
-  async create(
-    allocation: Omit<EventAllocation, "id">,
-  ): Promise<EventAllocation> {
-    const { data, error } = await getSupabase()
-      .from("event_allocations")
-      .insert({
-        id: allocation.eventId,
-        event_id: allocation.eventId,
-        event_name: allocation.eventName,
-        allocation_amount: allocation.allocationAmount,
-        total_collected: allocation.totalCollected,
-        total_spent: allocation.totalSpent,
-        remaining_balance: allocation.remainingBalance,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      eventId: data.event_id,
-      eventName: data.event_name,
-      allocationAmount: data.allocation_amount,
-      totalCollected: data.total_collected,
-      totalSpent: data.total_spent,
-      remainingBalance: data.remaining_balance,
-    };
-  },
-
-  async update(
-    eventId: string,
-    allocation: Partial<EventAllocation>,
-  ): Promise<EventAllocation> {
-    const updateData: Record<string, unknown> = {};
-    if (allocation.eventName !== undefined)
-      updateData.event_name = allocation.eventName;
-    if (allocation.allocationAmount !== undefined)
-      updateData.allocation_amount = allocation.allocationAmount;
-    if (allocation.totalCollected !== undefined)
-      updateData.total_collected = allocation.totalCollected;
-    if (allocation.totalSpent !== undefined)
-      updateData.total_spent = allocation.totalSpent;
-    if (allocation.remainingBalance !== undefined)
-      updateData.remaining_balance = allocation.remainingBalance;
-
-    const { data, error } = await getSupabase()
-      .from("event_allocations")
-      .update(updateData)
-      .eq("event_id", eventId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return {
-      eventId: data.event_id,
-      eventName: data.event_name,
-      allocationAmount: data.allocation_amount,
-      totalCollected: data.total_collected,
-      totalSpent: data.total_spent,
-      remainingBalance: data.remaining_balance,
-    };
   },
 };
 
@@ -1917,3 +1548,284 @@ export const financialReportingService = {
     );
   },
 };
+
+// ============================================
+// STUDENT REQUIREMENT FILES SERVICE
+// ============================================
+const mapStudentRequirementFile = (
+  item: Record<string, unknown>,
+): StudentRequirementFile => ({
+  id: item.id as string,
+  title: item.title as string,
+  description: (item.description as string | null) || undefined,
+  fileUrl: item.file_url as string,
+  fileName: (item.file_name as string) ?? "",
+  fileSize: (item.file_size as number | null) ?? undefined,
+  fileType: (item.file_type as string | null) || undefined,
+  isPublished: (item.is_published as boolean) ?? false,
+  createdBy: (item.created_by as string) ?? "",
+  createdAt: (item.created_at as string) ?? "",
+  updatedAt: (item.updated_at as string) ?? "",
+});
+
+export const studentRequirementFilesService = {
+  async getAll(): Promise<StudentRequirementFile[]> {
+    return cachedRead<StudentRequirementFile>(
+      "student_requirement_files",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("student_requirement_files")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data ?? []).map(mapStudentRequirementFile);
+      },
+    );
+  },
+
+  async getPublished(): Promise<StudentRequirementFile[]> {
+    return cachedRead<StudentRequirementFile>(
+      "student_requirement_files",
+      async () => {
+        const { data, error } = await getSupabase()
+          .from("student_requirement_files")
+          .select("*")
+          .eq("is_published", true)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data ?? []).map(mapStudentRequirementFile);
+      },
+    );
+  },
+
+  async create(input: {
+    title: string;
+    description?: string;
+    file: Blob;
+    fileName: string;
+    isPublished?: boolean;
+    createdBy: string;
+  }): Promise<StudentRequirementFile> {
+    const extension = input.fileName.split(".").pop()?.toLowerCase() || "pdf";
+    // Precompute the storage path up front so the queued replay uploads the
+    // blob to the exact same location whether this ran online or offline.
+    const path = `requirements/${crypto.randomUUID()}.${extension}`;
+    const id = createRecordId();
+    const now = new Date().toISOString();
+    const payload = {
+      title: input.title,
+      description: input.description ?? "",
+      // file_url is stamped in during replay (offline) or executeOnline
+      // (online); keeping it in the payload lets replay persist it after the
+      // storage upload completes.
+      file_url: "",
+      file_name: input.fileName,
+      file_size: input.file.size,
+      file_type: input.file.type,
+      is_published: input.isPublished ?? false,
+      created_by: input.createdBy,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const result = await offlineSyncService.mutation<StudentRequirementFile>({
+      table: "student_requirement_files",
+      kind: "create",
+      recordId: id,
+      payload,
+      fileStorage: {
+        bucket: "student-requirements",
+        path,
+        blob: input.file,
+      },
+      makeLocal: () =>
+        ({
+          id,
+          title: input.title,
+          description: input.description,
+          fileUrl: "",
+          fileName: input.fileName,
+          fileSize: input.file.size,
+          fileType: input.file.type,
+          isPublished: input.isPublished ?? false,
+          createdBy: input.createdBy,
+          createdAt: now,
+          updatedAt: now,
+        }) as StudentRequirementFile,
+      executeOnline: async () => {
+        const { error: uploadError } = await getSupabase()
+          .storage.from("student-requirements")
+          .upload(path, input.file, {
+            upsert: false,
+            contentType: input.file.type,
+          });
+        if (uploadError) throw new Error(uploadError.message);
+        const { data: urlData } = getSupabase()
+          .storage.from("student-requirements")
+          .getPublicUrl(path);
+        const { data: created, error } = await getSupabase()
+          .from("student_requirement_files")
+          .insert({ ...payload, id, file_url: urlData.publicUrl })
+          .select()
+          .single();
+        if (error) throw error;
+        return mapStudentRequirementFile(created);
+      },
+    });
+
+    if (!result) throw new Error("Failed to create requirement file");
+    return result;
+  },
+
+  async update(id: string, input: {
+    title?: string; description?: string; isPublished?: boolean;
+  }): Promise<StudentRequirementFile> {
+    const updateData: Record<string, unknown> = {};
+    const localPatch: Partial<StudentRequirementFile> = {};
+    if (input.title !== undefined) {
+      updateData.title = input.title;
+      localPatch.title = input.title;
+    }
+    if (input.description !== undefined) {
+      updateData.description = input.description;
+      localPatch.description = input.description;
+    }
+    if (input.isPublished !== undefined) {
+      updateData.is_published = input.isPublished;
+      localPatch.isPublished = input.isPublished;
+    }
+    const updatedAt = new Date().toISOString();
+    updateData.updated_at = updatedAt;
+
+    const result = await offlineSyncService.mutation<StudentRequirementFile>({
+      table: "student_requirement_files",
+      kind: "update",
+      recordId: id,
+      payload: updateData,
+      makeLocal: (current) =>
+        ({
+          ...(current as StudentRequirementFile),
+          ...localPatch,
+          id,
+          updatedAt,
+        }) as StudentRequirementFile,
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("student_requirement_files")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
+        if (error) throw error;
+        return mapStudentRequirementFile(data);
+      },
+    });
+
+    if (!result) throw new Error("Failed to update requirement file");
+    return result;
+  },
+
+  async replaceFile(
+    id: string, file: Blob, fileName: string,
+  ): Promise<StudentRequirementFile> {
+    const extension = fileName.split(".").pop()?.toLowerCase() || "pdf";
+    const path = `requirements/${crypto.randomUUID()}.${extension}`;
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      // file_url stamped in during replay / executeOnline, like create().
+      file_url: "",
+      file_name: fileName,
+      file_size: file.size,
+      file_type: file.type,
+      updated_at: updatedAt,
+    };
+
+    const result = await offlineSyncService.mutation<StudentRequirementFile>({
+      table: "student_requirement_files",
+      kind: "update",
+      recordId: id,
+      payload,
+      fileStorage: {
+        bucket: "student-requirements",
+        path,
+        blob: file,
+      },
+      makeLocal: (current) =>
+        ({
+          ...(current as StudentRequirementFile),
+          id,
+          fileUrl: "",
+          fileName,
+          fileSize: file.size,
+          fileType: file.type,
+          updatedAt,
+        }) as StudentRequirementFile,
+      executeOnline: async () => {
+        const { data: current, error: fetchError } = await getSupabase()
+          .from("student_requirement_files")
+          .select("*")
+          .eq("id", id)
+          .single();
+        if (fetchError) throw fetchError;
+
+        const { error: uploadError } = await getSupabase()
+          .storage.from("student-requirements")
+          .upload(path, file, { upsert: false, contentType: file.type });
+        if (uploadError) throw new Error(uploadError.message);
+        const { data: urlData } = getSupabase()
+          .storage.from("student-requirements")
+          .getPublicUrl(path);
+
+        const oldUrl = (current.file_url as string) ?? "";
+        if (oldUrl.includes("/requirements/")) {
+          try {
+            const oldPath = oldUrl.split("/requirements/")[1];
+            if (oldPath) await getSupabase().storage.from("student-requirements").remove([`requirements/${oldPath}`]);
+          } catch (e) { console.warn("Could not remove old requirement file:", e); }
+        }
+
+        const { data: updated, error } = await getSupabase()
+          .from("student_requirement_files")
+          .update({ file_url: urlData.publicUrl, file_name: fileName, file_size: file.size, file_type: file.type, updated_at: updatedAt })
+          .eq("id", id)
+          .select()
+          .single();
+        if (error) throw error;
+        return mapStudentRequirementFile(updated);
+      },
+    });
+
+    if (!result) throw new Error("Failed to replace requirement file");
+    return result;
+  },
+
+  async delete(id: string): Promise<void> {
+    await offlineSyncService.mutation<void>({
+      table: "student_requirement_files",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      executeOnline: async () => {
+        const { data: current } = await getSupabase()
+          .from("student_requirement_files")
+          .select("file_url")
+          .eq("id", id)
+          .single();
+        const { error } = await getSupabase()
+          .from("student_requirement_files")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
+        const fileUrl = (current?.file_url as string) ?? "";
+        if (fileUrl.includes("/requirements/")) {
+          try {
+            const fileName = fileUrl.split("/requirements/")[1];
+            if (fileName) await getSupabase().storage.from("student-requirements").remove([`requirements/${fileName}`]);
+          } catch (e) { console.warn("Could not remove requirement file from storage:", e); }
+        }
+      },
+    });
+  },
+};
+
+

@@ -183,26 +183,6 @@ CREATE TABLE IF NOT EXISTS public.feedback (
                CHECK (status IN ('pending', 'in-progress', 'resolved'))
 );
 
-CREATE TABLE IF NOT EXISTS public.financial_summaries (
-  id                           TEXT PRIMARY KEY,  -- single row, id = 'main'
-  total_budget                 INTEGER NOT NULL DEFAULT 0,
-  total_funds_collected        INTEGER NOT NULL DEFAULT 0,
-  total_funds_spent            INTEGER NOT NULL DEFAULT 0,
-  remaining_budget             INTEGER NOT NULL DEFAULT 0,
-  total_expected_contributions INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS public.event_allocations (
-  id                TEXT PRIMARY KEY,  -- one row per event, id = event id
-  event_id          TEXT NOT NULL,
-  event_name        TEXT NOT NULL DEFAULT '',
-  allocation_amount INTEGER NOT NULL DEFAULT 0,
-  total_collected   INTEGER NOT NULL DEFAULT 0,
-  total_spent       INTEGER NOT NULL DEFAULT 0,
-  remaining_balance INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_event_allocations_event_id ON public.event_allocations (event_id);
-
 -- ---------------------------------------------------------------------
 -- 3. Row Level Security (strict, role-based)
 -- ---------------------------------------------------------------------
@@ -280,8 +260,6 @@ ALTER TABLE contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
-ALTER TABLE financial_summaries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE event_allocations ENABLE ROW LEVEL SECURITY;
 
 -- Public read access (the whole point of a transparency board)
 DROP POLICY IF EXISTS "students_read_public" ON public.students;
@@ -298,10 +276,6 @@ DROP POLICY IF EXISTS "payments_read_public" ON public.payments;
 CREATE POLICY "payments_read_public" ON payments FOR SELECT TO public USING (true);
 DROP POLICY IF EXISTS "transactions_read_public" ON public.transactions;
 CREATE POLICY "transactions_read_public" ON transactions FOR SELECT TO public USING (true);
-DROP POLICY IF EXISTS "financial_summaries_read_public" ON public.financial_summaries;
-CREATE POLICY "financial_summaries_read_public" ON financial_summaries FOR SELECT TO public USING (true);
-DROP POLICY IF EXISTS "event_allocations_read_public" ON public.event_allocations;
-CREATE POLICY "event_allocations_read_public" ON event_allocations FOR SELECT TO public USING (true);
 
 -- admin: write everything
 DROP POLICY IF EXISTS "students_write_admin" ON public.students;
@@ -333,14 +307,6 @@ DROP POLICY IF EXISTS "transactions_write_staff" ON public.transactions;
 CREATE POLICY "transactions_write_staff" ON transactions FOR ALL TO authenticated
   USING (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'))
   WITH CHECK (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'));
-DROP POLICY IF EXISTS "financial_summaries_write_staff" ON public.financial_summaries;
-CREATE POLICY "financial_summaries_write_staff" ON financial_summaries FOR ALL TO authenticated
-  USING (public.has_role('admin') OR public.has_role('treasurer'))
-  WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
-DROP POLICY IF EXISTS "event_allocations_write_staff" ON public.event_allocations;
-CREATE POLICY "event_allocations_write_staff" ON event_allocations FOR ALL TO authenticated
-  USING (public.has_role('admin') OR public.has_role('treasurer'))
-  WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
 
 -- feedback: anyone may submit; staff may read; admin updates/deletes
 DROP POLICY IF EXISTS "feedback_submit_public" ON public.feedback;

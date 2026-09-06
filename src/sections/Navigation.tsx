@@ -33,8 +33,21 @@ function buildAdminNavItems(role: UserRole | null): {
       ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),
 
+    ...(role === "admin"
+      ? [
+          {
+            label: "Student Requirement Files",
+            view: "requirement-files-management" as ViewState,
+          },
+        ]
+      : []),
+
     ...(role === "secretary"
       ? [{ label: "Attendance", view: "attendance-management" as ViewState }]
+      : []),
+
+    ...(role === "admin" || role === "secretary"
+      ? [{ label: "Reports", view: "report-management" as ViewState }]
       : []),
 
     ...(role === "admin" || role === "treasurer" || role === "auditor"
@@ -99,6 +112,8 @@ export default function Navigation({
     "attendance-management",
     "transaction-management",
     "feedback-management",
+    "report-management",
+    "requirement-files-management",
   ];
   const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
 

@@ -142,6 +142,24 @@ export default function AdminDashboardSection({ onNavigate, onLogout, role, user
           color: 'blue',
         }]
       : []),
+    ...(role === 'admin'
+      ? [{
+          title: 'Student Requirement Files',
+          description: 'Upload and manage student requirement documents',
+          icon: FileText,
+          view: 'requirement-files-management' as ViewState,
+          color: 'green',
+        }]
+      : []),
+    ...(role === 'admin' || role === 'secretary'
+      ? [{
+          title: 'Reports',
+          description: 'View and download attendance reports',
+          icon: FileText,
+          view: 'report-management' as ViewState,
+          color: 'yellow',
+        }]
+      : []),
     ...(role === 'admin' || role === 'treasurer'
       ? [{
           title: 'Event Management',

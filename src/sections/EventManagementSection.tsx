@@ -27,16 +27,6 @@ import {
 } from "lucide-react";
 import jsQR from "jsqr";
 import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   eventsService,
   studentsService,
   paymentsService,
@@ -79,111 +69,16 @@ import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
+import TimeInput12 from "@/features/events/TimeInput12";
+import AttendanceAnalysisChart from "@/features/events/AttendanceAnalysisChart";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
+
 interface EventManagementSectionProps {
   onBack: () => void;
   initialTab?: string;
   role: UserRole;
   staffName: string;
   userId?: string;
-}
-
-/**
- * A 12-hour time input (hour + minutes + AM/PM) that stores the value as
- * 24h "HH:MM" (e.g. "06:00" for 6:00 AM, "17:00" for 5:00 PM) so the
- * database column stays sortable and consistent with the rest of the app.
- */
-function TimeInput12({
-  value = "",
-  onChange,
-  disabled,
-  ariaLabel,
-}: {
-  value?: string;
-  onChange: (value24: string) => void;
-  disabled?: boolean;
-  ariaLabel?: string;
-}) {
-  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
-  const hour24 = match ? Number(match[1]) : NaN;
-  const hour12 = Number.isNaN(hour24)
-    ? 1
-    : hour24 % 12 === 0
-      ? 12
-      : hour24 % 12;
-  const minute = match ? match[2] : "00";
-  const period = Number.isNaN(hour24) ? "AM" : hour24 >= 12 ? "PM" : "AM";
-
-  const to24 = (h: number, m: string, p: "AM" | "PM") => {
-    const hour = Math.min(12, Math.max(1, Math.round(h)));
-    let h24: number;
-    if (hour === 12) {
-      h24 = p === "AM" ? 0 : 12; // 12 AM = 00:00, 12 PM = 12:00
-    } else {
-      h24 = p === "PM" ? hour + 12 : hour;
-    }
-    return `${String(h24).padStart(2, "0")}:${m}`;
-  };
-
-  const setHour = (raw: string) => {
-    const h = parseInt(raw, 10);
-    const clamped = Math.min(
-      12,
-      Math.max(1, Number.isFinite(h) ? Math.round(h) : 12),
-    );
-    onChange(to24(clamped, minute, period));
-  };
-
-  const setMinute = (raw: string) => {
-    const m = parseInt(raw, 10);
-    const mm = String(
-      Math.min(59, Math.max(0, Number.isFinite(m) ? Math.round(m) : 0)),
-    ).padStart(2, "0");
-    onChange(to24(hour12, mm, period));
-  };
-
-  const setPeriod = (p: "AM" | "PM") => {
-    onChange(to24(hour12, minute, p));
-  };
-
-  return (
-    <div className="flex items-center gap-1" aria-label={ariaLabel}>
-      <input
-        type="number"
-        min={1}
-        max={12}
-        inputMode="numeric"
-        placeholder="6"
-        value={Number.isFinite(hour24) ? hour12 : ""}
-        onChange={(e) => setHour(e.target.value)}
-        disabled={disabled}
-        className="glass-input w-11 px-1 py-1.5 text-sm text-center"
-        title="Hour (1-12)"
-      />
-      <span className="text-text-secondary text-xs">:</span>
-      <input
-        type="number"
-        min={0}
-        max={59}
-        inputMode="numeric"
-        placeholder="00"
-        value={Number.isFinite(hour24) ? minute : ""}
-        onChange={(e) => setMinute(e.target.value)}
-        disabled={disabled}
-        className="glass-input w-11 px-1 py-1.5 text-sm text-center"
-        title="Minutes (00-59)"
-      />
-      <select
-        value={period}
-        onChange={(e) => setPeriod(e.target.value as "AM" | "PM")}
-        disabled={disabled}
-        className="glass-input px-1 py-1.5 text-sm w-14"
-        title="AM or PM"
-      >
-        <option value="AM">AM</option>
-        <option value="PM">PM</option>
-      </select>
-    </div>
-  );
 }
 
 export default function EventManagementSection({
@@ -1447,26 +1342,29 @@ export default function EventManagementSection({
                           </td>
 
                           <td>
-                            {canManageEvents ? (
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleOpenEditEvent(event)}
-                                  className="text-sm flex items-center gap-1"
-                                  title="Edit event"
-                                >
-                                  <Pencil className="w-4 h-4" /> Edit
-                                </button>
-                                <button
-                                  onClick={() => handleOpenDeleteConfirm(event)}
-                                  className="flex items-center gap-1 text-sm hover:text-red"
-                                  title="Delete event"
-                                >
-                                  <Trash2 className="w-4 h-4 text-red" /> Delete
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="text-text-secondary/50">-</span>
-                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {canManageEvents && (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenEditEvent(event)}
+                                    className="text-sm flex items-center gap-1"
+                                    title="Edit event"
+                                  >
+                                    <Pencil className="w-4 h-4" /> Edit
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleOpenDeleteConfirm(event)
+                                    }
+                                    className="flex items-center gap-1 text-sm hover:text-red"
+                                    title="Delete event"
+                                  >
+                                    <Trash2 className="w-4 h-4 text-red" />{" "}
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2452,125 +2350,7 @@ export default function EventManagementSection({
                     </div>
                   </div>
 
-                  {attendanceAnalysisData.length === 0 ? (
-                    <SectionEmptyState
-                      message="Create an event to view attendance analysis"
-                      icon={Calendar}
-                      compact
-                    />
-                  ) : (
-                    <div className="glass-card-strong p-4 lg:p-5">
-                      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium">
-                        <span className="inline-flex items-center gap-2 text-dark">
-                          <span className="h-2.5 w-2.5 rounded-full bg-royal-blue" />
-                          Total Population
-                        </span>
-                        <span className="inline-flex items-center gap-2 text-dark">
-                          <span className="h-2.5 w-2.5 rounded-full bg-status-success" />
-                          Actual Population Attended
-                        </span>
-                        <span className="text-text-secondary">
-                          Attendance Gap = Total Population − Actual Population
-                          Attended
-                        </span>
-                      </div>
-
-                      <div
-                        className="h-80 w-full"
-                        role="img"
-                        aria-label="Line chart comparing total population and actual population attended for each event"
-                      >
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart
-                            data={attendanceAnalysisData}
-                            margin={{ top: 12, right: 24, left: 0, bottom: 8 }}
-                          >
-                            <CartesianGrid
-                              strokeDasharray="3 3"
-                              stroke="#B8C1D9"
-                            />
-                            <XAxis
-                              dataKey="eventName"
-                              tick={{ fill: "#4A5580", fontSize: 12 }}
-                              interval={0}
-                              angle={-20}
-                              textAnchor="end"
-                              height={60}
-                            />
-                            <YAxis
-                              allowDecimals={false}
-                              tick={{ fill: "#4A5580", fontSize: 12 }}
-                            />
-                            <Tooltip
-                              labelFormatter={(_, payload) =>
-                                payload[0]?.payload.eventLabel ?? "Event"
-                              }
-                              formatter={(value: number, name: string) => [
-                                value,
-                                name,
-                              ]}
-                              contentStyle={{
-                                borderRadius: "0.75rem",
-                                borderColor: "#B8C1D9",
-                              }}
-                            />
-                            <Legend />
-                            <Line
-                              type="monotone"
-                              dataKey="totalPopulation"
-                              name="Total Population"
-                              stroke="#1B2E8C"
-                              strokeWidth={3}
-                              dot={{ r: 4 }}
-                              activeDot={{ r: 6 }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="actualPopulationAttended"
-                              name="Actual Population Attended"
-                              stroke="#2E9E5B"
-                              strokeWidth={3}
-                              dot={{ r: 4 }}
-                              activeDot={{ r: 6 }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      <div className="mt-5 overflow-x-auto">
-                        <table className="glass-table min-w-[680px]">
-                          <thead>
-                            <tr>
-                              <th>Event</th>
-                              <th className="text-right">Total Population</th>
-                              <th className="text-right">
-                                Actual Population Attended
-                              </th>
-                              <th className="text-right">Attendance Gap</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {attendanceAnalysisData.map((event) => (
-                              <tr key={event.eventId}>
-                                <td className="font-medium text-dark">
-                                  {event.eventLabel}
-                                </td>
-                                <td className="text-right text-royal-blue font-medium">
-                                  {event.totalPopulation}
-                                </td>
-                                <td className="text-right text-status-success font-medium">
-                                  {event.actualPopulationAttended}
-                                </td>
-                                <td className="text-right text-red font-medium">
-                                  {event.attendanceGap}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+                  <AttendanceAnalysisChart data={attendanceAnalysisData} />
                 </div>
               </div>
             </TabsContent>
@@ -2892,134 +2672,43 @@ export default function EventManagementSection({
           </div>
         </DialogContent>
       </Dialog>
-      {showAttendanceClearConfirm && attendanceToClear && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-          onClick={() => {
-            setShowAttendanceClearConfirm(false);
-            setAttendanceToClear(null);
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-white/60 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-red/10 flex items-center justify-center shrink-0">
-                  <Trash2 className="w-5 h-5 text-red" />
-                </div>
-
-                <div className="flex-1">
-                  <h3 className="font-display font-semibold text-lg text-dark">
-                    Clear Attendance?
-                  </h3>
-
-                  <p className="mt-2 text-sm text-text-secondary leading-relaxed">
-                    Are you sure you want to clear{" "}
-                    <span className="font-semibold text-dark">
-                      {attendanceToClear.studentName}
-                    </span>
-                    's{" "}
-                    <span className="font-semibold text-dark capitalize">
-                      {attendanceSession}
-                    </span>{" "}
-                    attendance?
-                  </p>
-
-                  <p className="mt-2 text-xs text-text-secondary leading-relaxed">
-                    This will permanently remove the attendance record. The
-                    student will become unrecorded and can be marked again
-                    afterward.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50/70 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAttendanceClearConfirm(false);
-                  setAttendanceToClear(null);
-                }}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-gray-100 transition-colors"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={confirmClearAttendance}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red text-white text-sm font-medium hover:bg-red/90 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Clear Attendance
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Delete Event Confirmation Dialog */}
-      <Dialog
-        open={showDeleteConfirm}
-        onOpenChange={(open) => {
-          if (!open) {
-            setShowDeleteConfirm(false);
-            setEventToDelete(null);
-          }
+      <ConfirmDialog
+        open={showAttendanceClearConfirm && attendanceToClear != null}
+        onClose={() => {
+          setShowAttendanceClearConfirm(false);
+          setAttendanceToClear(null);
         }}
+        onConfirm={confirmClearAttendance}
+        title="Clear Attendance?"
+        confirmLabel="Clear Attendance"
+        warningText="This will permanently remove the attendance record. The student will become unrecorded and can be marked again afterward."
       >
-        <DialogContent className="glass-card-strong max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              Delete Event
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 mt-4">
-            <p className="text-sm text-text-secondary">
-              Are you sure you want to delete{" "}
-              <span className="font-medium text-dark">
-                {eventToDelete?.name}
-              </span>
-              ? This action cannot be undone.
-            </p>
-            <p className="text-xs text-text-secondary/80">
-              Deleting this event will also remove related payments,
-              contributions, and attendance records.
-            </p>
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setEventToDelete(null);
-                }}
-                className="flex-1 glass-button px-4 py-2.5"
-                disabled={saving}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteEvent}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-red !border-none"
-                disabled={saving}
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4" />
-                    Delete Event
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+        <p className="text-sm text-text-secondary leading-relaxed">
+          Are you sure you want to clear{" "}
+          <span className="font-semibold text-dark">
+            {attendanceToClear?.studentName ?? ""}
+          </span>
+          's{" "}
+          <span className="font-semibold text-dark capitalize">
+            {attendanceSession}
+          </span>{" "}
+          attendance?
+        </p>
+      </ConfirmDialog>
+      {/* Delete Event Confirmation Dialog */}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setEventToDelete(null);
+        }}
+        onConfirm={handleDeleteEvent}
+        title="Delete Event"
+        description={`Are you sure you want to delete ${eventToDelete?.name ?? "this event"}? This action cannot be undone.`}
+        warningText="Deleting this event will also remove related payments, contributions, and attendance records."
+        confirmLabel="Delete Event"
+        loading={saving}
+      />
     </section>
   );
 }

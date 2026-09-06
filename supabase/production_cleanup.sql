@@ -158,15 +158,6 @@ BEGIN
     ~ '(test|dummy|sample|mock|placeholder|fake|fixture|demo|seed)'
      OR student_id IN (SELECT id FROM cleanup_students);
 
-  CREATE TEMP TABLE cleanup_financial_summaries ON COMMIT DROP AS
-  SELECT id
-  FROM public.financial_summaries
-  WHERE id <> 'main'
-    AND lower(concat_ws(' ', id, total_budget, total_funds_collected,
-                        total_funds_spent, remaining_budget,
-                        total_expected_contributions))
-      ~ '(test|dummy|sample|mock|placeholder|fake|fixture|demo|seed)';
-
   -- Delete dependents first. No table definitions, policies, functions,
   -- triggers, grants, auth records, or role records are changed.
   DELETE FROM public.attendance WHERE id IN (SELECT id FROM cleanup_attendance);
@@ -174,11 +165,6 @@ BEGIN
   DELETE FROM public.payments WHERE id IN (SELECT id FROM cleanup_payments);
   DELETE FROM public.transactions WHERE id IN (SELECT id FROM cleanup_transactions);
   DELETE FROM public.feedback WHERE id IN (SELECT id FROM cleanup_feedback);
-  DELETE FROM public.financial_summaries
-  WHERE id IN (SELECT id FROM cleanup_financial_summaries);
-  DELETE FROM public.event_allocations
-  WHERE event_id IN (SELECT id FROM cleanup_events)
-     OR id IN (SELECT id FROM cleanup_events);
   DELETE FROM public.events WHERE id IN (SELECT id FROM cleanup_events);
   DELETE FROM public.students WHERE id IN (SELECT id FROM cleanup_students);
 

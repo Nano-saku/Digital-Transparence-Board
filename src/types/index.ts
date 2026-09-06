@@ -1,3 +1,18 @@
+// Student Requirement File Types
+export interface StudentRequirementFile {
+  id: string;
+  title: string;
+  description?: string;
+  fileUrl: string;
+  fileName: string;
+  fileSize?: number;
+  fileType?: string;
+  isPublished: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Student Types
 export interface Student {
   id: string;
@@ -177,4 +192,6 @@ export type ViewState =
   | "contribution-management"
   | "attendance-management"
   | "transaction-management"
-  | "feedback-management";
+  | "feedback-management"
+  | "report-management"
+  | "requirement-files-management";

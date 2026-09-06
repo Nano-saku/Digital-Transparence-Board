@@ -207,8 +207,6 @@ ALTER TABLE contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
-ALTER TABLE financial_summaries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE event_allocations ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "public_all" ON students;
 DROP POLICY IF EXISTS "public_all" ON events;
@@ -217,8 +215,6 @@ DROP POLICY IF EXISTS "public_all" ON contributions;
 DROP POLICY IF EXISTS "public_all" ON payments;
 DROP POLICY IF EXISTS "public_all" ON transactions;
 DROP POLICY IF EXISTS "public_all" ON feedback;
-DROP POLICY IF EXISTS "public_all" ON financial_summaries;
-DROP POLICY IF EXISTS "public_all" ON event_allocations;
 
 -- ---------------------------------------------------------------------
 -- students (admin can write)
@@ -277,26 +273,6 @@ DROP POLICY IF EXISTS "transactions_write_staff" ON transactions;
 CREATE POLICY "transactions_write_staff" ON transactions FOR ALL TO authenticated
   USING (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'))
   WITH CHECK (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'));
-
--- ---------------------------------------------------------------------
--- financial_summaries (admin + treasurer can write)
--- ---------------------------------------------------------------------
-DROP POLICY IF EXISTS "financial_summaries_read_public" ON financial_summaries;
-CREATE POLICY "financial_summaries_read_public" ON financial_summaries FOR SELECT TO public USING (true);
-DROP POLICY IF EXISTS "financial_summaries_write_staff" ON financial_summaries;
-CREATE POLICY "financial_summaries_write_staff" ON financial_summaries FOR ALL TO authenticated
-  USING (public.has_role('admin') OR public.has_role('treasurer'))
-  WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
-
--- ---------------------------------------------------------------------
--- event_allocations (admin + treasurer can write)
--- ---------------------------------------------------------------------
-DROP POLICY IF EXISTS "event_allocations_read_public" ON event_allocations;
-CREATE POLICY "event_allocations_read_public" ON event_allocations FOR SELECT TO public USING (true);
-DROP POLICY IF EXISTS "event_allocations_write_staff" ON event_allocations;
-CREATE POLICY "event_allocations_write_staff" ON event_allocations FOR ALL TO authenticated
-  USING (public.has_role('admin') OR public.has_role('treasurer'))
-  WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
 
 -- ---------------------------------------------------------------------
 -- feedback

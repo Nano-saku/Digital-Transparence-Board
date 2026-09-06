@@ -22,15 +22,3 @@ export function contributionStatus(
     return { label: "Partial Payment", className: "text-amber-600" };
   return { label: "Fully Paid", className: "text-green-600" };
 }
-
-/**
- * A student's contribution for an event is "fully paid" only when they have
- * paid at least their required amount (so there is no remaining balance).
- * Partially paid and unpaid records are never eligible for an official
- * receipt / Official Receipt (OR) number.
- */
-export function isFullyPaid(
-  record: Pick<ContributionRecord, "amountPaid" | "remainingBalance">
-): boolean {
-  return record.amountPaid > 0 && record.remainingBalance <= 0;
-}

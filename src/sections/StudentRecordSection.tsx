@@ -1,7 +1,13 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText, Download, Loader2, QrCode, ChevronDown, Clock } from 'lucide-react';
-import type { Student, AttendanceRecord, ContributionRecord, PaymentRecord } from '@/types';
-import { attendanceService, contributionsService, paymentsService } from '@/services/db';
+import { User, Calendar, CheckCircle, XCircle, Wallet, Receipt, FileText, Download, Loader2, QrCode, ChevronDown, Clock, ExternalLink, FolderOpen, Eye } from 'lucide-react';
+import type { Student, AttendanceRecord, ContributionRecord, PaymentRecord, StudentRequirementFile } from '@/types';
+import { attendanceService, contributionsService, paymentsService, studentRequirementFilesService } from '@/services/db';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { downloadContributionReceipt, officialReceiptNumber, type ReceiptFormat } from '@/lib/receipts';
 import ReceiptViewer from '@/components/ReceiptViewer';
 import StudentQrModal from '@/components/StudentQrModal';
@@ -25,6 +31,19 @@ interface StudentRecordSectionProps {
   onBack: () => void;
 }
 
+/** Formats a byte count into a human-readable file size (e.g. "1.4 MB"). */
+function formatFileSize(bytes?: number): string {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
 export default function StudentRecordSection({ student, onBack }: StudentRecordSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -41,18 +60,26 @@ export default function StudentRecordSection({ student, onBack }: StudentRecordS
   const [contributionRecords, setContributionRecords] = useState<ContributionRecord[]>([]);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
 
+  // Published Student Requirement Files (Student Viewer)
+  const [publishedFiles, setPublishedFiles] = useState<StudentRequirementFile[]>([]);
+  const [previewFile, setPreviewFile] = useState<StudentRequirementFile | null>(null);
+
   // Load data from database
   const loadStudentData = useCallback(async () => {
     try {
       setLoading(true);
-      const [attendanceData, contributionsData, paymentsData] = await Promise.all([
-        attendanceService.getByStudentId(student.id),
-        contributionsService.getByStudentId(student.id),
-        paymentsService.getByStudentId(student.id),
-      ]);
+      const [attendanceData, contributionsData, paymentsData, publishedData] =
+        await Promise.all([
+          attendanceService.getByStudentId(student.id),
+          contributionsService.getByStudentId(student.id),
+          paymentsService.getByStudentId(student.id),
+          studentRequirementFilesService.getPublished(),
+        ]);
       setAttendanceRecords(attendanceData);
       setContributionRecords(contributionsData);
       setPaymentRecords(paymentsData);
+      // Published requirement files shown to the student (Student Viewer).
+      setPublishedFiles(publishedData);
     } catch (error) {
       console.error('Error loading student data:', error);
       toast.error('Failed to load student records');
@@ -401,6 +428,80 @@ onClick={() => setQrStudent(student)}
               </div>
             </div>
 
+            {/* Student Requirement Files (published files visible to students) */}
+            <div id="requirement-files" className="glass-card p-5 lg:p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                  <FolderOpen className="w-5 h-5 text-red" />
+                </div>
+                <h3 className="font-display font-semibold text-lg text-dark">Student Requirement Files</h3>
+              </div>
+
+              {publishedFiles.length === 0 ? (
+                <SectionEmptyState
+                  message="No requirement files have been published yet"
+                  icon={FolderOpen}
+                  compact
+                />
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {publishedFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="rounded-xl border border-white/50 bg-white/40 p-4 flex flex-col"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center flex-shrink-0">
+                          <FileText className="w-5 h-5 text-red" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-dark text-sm leading-snug">
+                            {file.title}
+                          </p>
+                          {file.description && (
+                            <p className="mt-1 text-xs text-text-secondary line-clamp-2">
+                              {file.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex items-center gap-3 text-xs text-text-secondary">
+                        <span className="truncate">{file.fileName}</span>
+                        <span className="flex-shrink-0">{formatFileSize(file.fileSize)}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        Published {formatDate(file.updatedAt)}
+                      </p>
+
+                      <div className="mt-4 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewFile(file)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs glass-button"
+                          title={`Preview ${file.title}`}
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          Preview
+                        </button>
+                        <a
+                          href={file.fileUrl}
+                          download={file.fileName}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs glass-button"
+                          title={`Download ${file.fileName}`}
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             </>
         )}
       </div>
@@ -414,6 +515,74 @@ onClick={() => setQrStudent(student)}
 
       {/* Attendance QR Code Modal */}
       <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
+
+      {/* Requirement File Preview Modal */}
+      <Dialog
+        open={!!previewFile}
+        onOpenChange={(open) => {
+          if (!open) setPreviewFile(null);
+        }}
+      >
+        <DialogContent className="glass-card-strong max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              {previewFile?.title}
+            </DialogTitle>
+          </DialogHeader>
+
+          {previewFile && (
+            <div className="mt-4">
+              {previewFile.description && (
+                <p className="mb-4 text-sm text-text-secondary">{previewFile.description}</p>
+              )}
+
+              <div className="max-h-[55vh] overflow-auto rounded-lg bg-white/30">
+                {previewFile.fileType?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(previewFile.fileName) ? (
+                  <img
+                    src={previewFile.fileUrl}
+                    alt={previewFile.title}
+                    className="w-full rounded-lg"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/file-placeholder.svg';
+                    }}
+                  />
+                ) : (
+                  <iframe
+                    src={previewFile.fileUrl}
+                    title={previewFile.title}
+                    className="w-full h-[55vh] rounded-lg"
+                  />
+                )}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-text-secondary">
+                  {previewFile.fileName} · {formatFileSize(previewFile.fileSize)}
+                </span>
+                <div className="flex gap-3">
+                  <a
+                    href={previewFile.fileUrl}
+                    download={previewFile.fileName}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm glass-button"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download
+                  </a>
+                  <button
+                    onClick={() => window.open(previewFile.fileUrl, '_blank', 'noopener,noreferrer')}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm glass-button"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open in new tab
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
