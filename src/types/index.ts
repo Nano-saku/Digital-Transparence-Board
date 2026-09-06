@@ -8,6 +8,8 @@ export interface StudentRequirementFile {
   fileSize?: number;
   fileType?: string;
   isPublished: boolean;
+  /** When true, only students in the file's access list may see/download it. */
+  restricted: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

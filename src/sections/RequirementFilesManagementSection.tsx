@@ -11,20 +11,25 @@ import {
   EyeOff,
   RefreshCcw,
   FolderOpen,
+  Users,
+  Lock,
+  Clock,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import SearchFilterBar from "@/components/common/SearchFilterBar";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { studentRequirementFilesService } from "@/services/db";
-import type { StudentRequirementFile, UserRole } from "@/types";
+import { studentRequirementFilesService, studentsService } from "@/services/db";
+import type { Student, StudentRequirementFile, UserRole } from "@/types";
 import { formatDate } from "@/lib/format";
+import { useSearch } from "@/hooks/useSearch";
 import { toast } from "sonner";
 
 interface RequirementFilesManagementSectionProps {
@@ -68,12 +73,33 @@ export default function RequirementFilesManagementSection({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Replace-file modal state
-  const [replaceTarget, setReplaceTarget] = useState<StudentRequirementFile | null>(null);
+  const [replaceTarget, setReplaceTarget] =
+    useState<StudentRequirementFile | null>(null);
   const [replaceFile, setReplaceFile] = useState<File | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
 
   // Delete confirm state
-  const [deleteTarget, setDeleteTarget] = useState<StudentRequirementFile | null>(null);
+  const [deleteTarget, setDeleteTarget] =
+    useState<StudentRequirementFile | null>(null);
+
+  // Manage Access (student-specific downloads) modal state
+  const [accessTarget, setAccessTarget] =
+    useState<StudentRequirementFile | null>(null);
+  const [accessRestricted, setAccessRestricted] = useState(false);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [accessSaving, setAccessSaving] = useState(false);
+  const {
+    searchTerm: studentSearch,
+    setSearchTerm: setStudentSearch,
+    filtered: filteredStudents,
+  } = useSearch<Student>({
+    items: allStudents,
+    searchKeys: ["name", "studentId"],
+  });
 
   const loadFiles = async () => {
     try {
@@ -93,9 +119,9 @@ export default function RequirementFilesManagementSection({
   }, []);
 
   // Only the Admin may manage requirement files.
-  if (role !== "admin") {
+  if (role !== "admin" && role !== "secretary") {
     return (
-      <SectionLayout title="Student Requirement Files" onBack={onBack}>
+      <SectionLayout title="Council Files" onBack={onBack}>
         <SectionEmptyState
           message="You do not have permission to manage requirement files."
           icon={EyeOff}
@@ -150,12 +176,17 @@ export default function RequirementFilesManagementSection({
         setFiles((prev) => [created, ...prev]);
         toast.success("Requirement file uploaded successfully.");
       } else if (modal?.type === "edit" && modal.file) {
-        const updated = await studentRequirementFilesService.update(modal.file.id, {
-          title: title.trim(),
-          description: description.trim() || undefined,
-          isPublished: publish,
-        });
-        setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+        const updated = await studentRequirementFilesService.update(
+          modal.file.id,
+          {
+            title: title.trim(),
+            description: description.trim() || undefined,
+            isPublished: publish,
+          },
+        );
+        setFiles((prev) =>
+          prev.map((f) => (f.id === updated.id ? updated : f)),
+        );
         toast.success("Requirement file updated.");
       }
       setModal(null);
@@ -226,6 +257,67 @@ export default function RequirementFilesManagementSection({
     }
   };
 
+  const openAccess = async (file: StudentRequirementFile) => {
+    setAccessTarget(file);
+    setAccessRestricted(file.restricted);
+    setStudentSearch("");
+    setStudentsLoading(true);
+    try {
+      const [students, accessIds] = await Promise.all([
+        allStudents.length > 0
+          ? Promise.resolve(allStudents)
+          : studentsService.getAll(),
+        studentRequirementFilesService.getAccessList(file.id),
+      ]);
+      setAllStudents(students);
+      setSelectedStudentIds(new Set(accessIds));
+    } catch (error) {
+      console.error("Error loading student access list:", error);
+      toast.error("Failed to load students. Please try again.");
+      setAccessTarget(null);
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
+
+  const toggleStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+  };
+
+  const handleSaveAccess = async () => {
+    if (!accessTarget) return;
+    setAccessSaving(true);
+    try {
+      if (accessRestricted !== accessTarget.restricted) {
+        const updated = await studentRequirementFilesService.update(
+          accessTarget.id,
+          {
+            restricted: accessRestricted,
+          },
+        );
+        setFiles((prev) =>
+          prev.map((f) => (f.id === updated.id ? updated : f)),
+        );
+      }
+      await studentRequirementFilesService.setAccessList(
+        accessTarget.id,
+        Array.from(selectedStudentIds),
+      );
+      toast.success("Student access updated.");
+      setAccessTarget(null);
+    } catch (error) {
+      console.error("Error saving student access:", error);
+      toast.error("Failed to update student access. Please try again.");
+    } finally {
+      setAccessSaving(false);
+    }
+  };
+
   return (
     <SectionLayout
       title="Student Requirement Files"
@@ -233,7 +325,10 @@ export default function RequirementFilesManagementSection({
       onBack={onBack}
       gradientClass="gradient-bg-orange"
       headerActions={
-        <button onClick={openCreate} className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm">
+        <button
+          onClick={openCreate}
+          className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm"
+        >
           <Plus className="w-4 h-4" />
           Upload File
         </button>
@@ -257,6 +352,7 @@ export default function RequirementFilesManagementSection({
                   <th>Description</th>
                   <th>File</th>
                   <th>Status</th>
+                  <th>Access</th>
                   <th>Updated</th>
                   <th>Actions</th>
                 </tr>
@@ -296,21 +392,47 @@ export default function RequirementFilesManagementSection({
                         )}
                       </span>
                     </td>
+                    <td>
+                      {file.restricted ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+                          <Lock className="w-3.5 h-3.5" /> Selected students
+                        </span>
+                      ) : (
+                        <span className="text-xs text-text-secondary">
+                          Everyone
+                        </span>
+                      )}
+                    </td>
                     <td className="text-text-secondary text-sm whitespace-nowrap">
                       {formatDate(file.updatedAt)}
                     </td>
                     <td>
                       <div className="flex items-center gap-2">
-
-                        <a
-                          href={file.fileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        {file.fileUrl ? (
+                          <a
+                            href={file.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
+                            title="Open file"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </a>
+                        ) : (
+                          <span
+                            className="p-2 rounded-lg text-text-secondary/50 cursor-not-allowed"
+                            title="Still syncing to the server — try again once it finishes uploading"
+                          >
+                            <Clock className="w-4 h-4" />
+                          </span>
+                        )}
+                        <button
+                          onClick={() => openAccess(file)}
                           className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
-                          title="Open file"
+                          title="Manage which students can download this file"
                         >
-                          <Eye className="w-4 h-4" />
-                        </a>
+                          <Users className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => openEdit(file)}
                           className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
@@ -322,7 +444,8 @@ export default function RequirementFilesManagementSection({
                           onClick={() => {
                             setReplaceTarget(file);
                             setReplaceFile(null);
-                            if (replaceInputRef.current) replaceInputRef.current.value = "";
+                            if (replaceInputRef.current)
+                              replaceInputRef.current.value = "";
                           }}
                           className="p-2 rounded-lg text-amber-600 hover:bg-white/60"
                           title="Replace the file contents"
@@ -332,7 +455,11 @@ export default function RequirementFilesManagementSection({
                         <button
                           onClick={() => handleTogglePublish(file)}
                           className="p-2 rounded-lg text-text-secondary hover:bg-white/60"
-                          title={file.isPublished ? "Unpublish (hide from students)" : "Publish (show to students)"}
+                          title={
+                            file.isPublished
+                              ? "Unpublish (hide from students)"
+                              : "Publish (show to students)"
+                          }
                         >
                           {file.isPublished ? (
                             <EyeOff className="w-4 h-4" />
@@ -358,16 +485,23 @@ export default function RequirementFilesManagementSection({
       )}
 
       {/* Upload / Edit Modal */}
-      <Dialog open={!!modal} onOpenChange={(o) => !o && !saving && setModal(null)}>
+      <Dialog
+        open={!!modal}
+        onOpenChange={(o) => !o && !saving && setModal(null)}
+      >
         <DialogContent className="glass-card-strong max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
-              {modal?.type === "create" ? "Upload Requirement File" : "Edit Requirement File"}
+              {modal?.type === "create"
+                ? "Upload Requirement File"
+                : "Edit Requirement File"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <div>
-              <label className="block text-sm font-medium text-dark mb-1.5">Title *</label>
+              <label className="block text-sm font-medium text-dark mb-1.5">
+                Title *
+              </label>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -376,7 +510,9 @@ export default function RequirementFilesManagementSection({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-dark mb-1.5">Description</label>
+              <label className="block text-sm font-medium text-dark mb-1.5">
+                Description
+              </label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -386,10 +522,11 @@ export default function RequirementFilesManagementSection({
               />
             </div>
 
-
             {modal?.type === "create" && (
               <div>
-                <label className="block text-sm font-medium text-dark mb-1.5">File *</label>
+                <label className="block text-sm font-medium text-dark mb-1.5">
+                  File *
+                </label>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -399,7 +536,8 @@ export default function RequirementFilesManagementSection({
                 />
                 {selectedFile && (
                   <p className="text-xs text-green-700 mt-1.5">
-                    Selected: {selectedFile.name} ({formatFileSize(selectedFile.size)})
+                    Selected: {selectedFile.name} (
+                    {formatFileSize(selectedFile.size)})
                   </p>
                 )}
               </div>
@@ -448,7 +586,10 @@ export default function RequirementFilesManagementSection({
       </Dialog>
 
       {/* Replace File Modal */}
-      <Dialog open={!!replaceTarget} onOpenChange={(o) => !o && !saving && setReplaceTarget(null)}>
+      <Dialog
+        open={!!replaceTarget}
+        onOpenChange={(o) => !o && !saving && setReplaceTarget(null)}
+      >
         <DialogContent className="glass-card-strong max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
@@ -457,8 +598,11 @@ export default function RequirementFilesManagementSection({
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <p className="text-sm text-text-secondary">
-              Replace the file for <span className="font-medium text-dark">{replaceTarget?.title}</span>.
-              The current file will be removed and the new one becomes active.
+              Replace the file for{" "}
+              <span className="font-medium text-dark">
+                {replaceTarget?.title}
+              </span>
+              . The current file will be removed and the new one becomes active.
             </p>
             <input
               ref={replaceInputRef}
@@ -468,7 +612,9 @@ export default function RequirementFilesManagementSection({
               className="block w-full text-sm text-text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-royal-blue file:text-white file:text-sm file:cursor-pointer"
             />
             {replaceFile && (
-              <p className="text-xs text-green-700">Selected: {replaceFile.name}</p>
+              <p className="text-xs text-green-700">
+                Selected: {replaceFile.name}
+              </p>
             )}
             <div className="flex gap-3 pt-2">
               <button
@@ -498,6 +644,108 @@ export default function RequirementFilesManagementSection({
         </DialogContent>
       </Dialog>
 
+      {/* Manage Access (student-specific downloads) Modal */}
+      <Dialog
+        open={!!accessTarget}
+        onOpenChange={(o) => !o && !accessSaving && setAccessTarget(null)}
+      >
+        <DialogContent className="glass-card-strong max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Manage Access
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <p className="text-sm text-text-secondary">
+              Choose who can download{" "}
+              <span className="font-medium text-dark">
+                {accessTarget?.title}
+              </span>
+              .
+            </p>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accessRestricted}
+                onChange={(e) => setAccessRestricted(e.target.checked)}
+                className="w-4 h-4 accent-royal-blue"
+              />
+              <span className="text-sm text-dark">
+                Restrict to selected students only (unchecked = everyone once
+                published)
+              </span>
+            </label>
+
+            <SearchFilterBar
+              value={studentSearch}
+              onChange={setStudentSearch}
+              placeholder="Search students by name or ID..."
+            />
+
+            {studentsLoading ? (
+              <SectionLoader />
+            ) : (
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-white/50 divide-y divide-white/40">
+                {filteredStudents.length === 0 ? (
+                  <p className="p-4 text-sm text-text-secondary text-center">
+                    No students found.
+                  </p>
+                ) : (
+                  filteredStudents.map((student) => (
+                    <label
+                      key={student.id}
+                      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-white/40"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedStudentIds.has(student.id)}
+                        onChange={() => toggleStudent(student.id)}
+                        className="w-4 h-4 accent-royal-blue"
+                      />
+                      <span className="text-sm text-dark flex-1">
+                        {student.name}
+                      </span>
+                      <span className="text-xs text-text-secondary">
+                        {student.studentId}
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+
+            <p className="text-xs text-text-secondary">
+              {selectedStudentIds.size} student
+              {selectedStudentIds.size === 1 ? "" : "s"} selected
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => !accessSaving && setAccessTarget(null)}
+                className="flex-1 glass-button px-4 py-2.5 text-sm"
+                disabled={accessSaving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAccess}
+                disabled={accessSaving || studentsLoading}
+                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 text-sm disabled:opacity-70"
+              >
+                {accessSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Saving...
+                  </>
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Confirm */}
       <ConfirmDialog
         open={!!deleteTarget}
@@ -512,4 +760,3 @@ export default function RequirementFilesManagementSection({
     </SectionLayout>
   );
 }
-
