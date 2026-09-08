@@ -22,10 +22,10 @@ import {
   studentsService,
   eventsService,
   feedbackService,
-  boardMembersService,
   subscribeToTables,
 } from "@/services/db";
 import { toast } from "sonner";
+
 interface AdminDashboardSectionProps {
   onNavigate: (view: ViewState) => void;
   onLogout: () => void;
@@ -55,41 +55,23 @@ export default function AdminDashboardSection({
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const [
-        summaryData,
-        studentsData,
-        eventsData,
-        pendingFeedbackData,
-        boardMembersData,
-      ] = await Promise.all([
-        financialReportingService.getReport().then((report) => report.summary),
-        studentsService.getAll(),
-        eventsService.getAll(),
-        feedbackService.getByStatus("pending"),
-        boardMembersService.listBoardMembers(),
-      ]);
+      const [summaryData, studentsData, eventsData, pendingFeedbackData] =
+        await Promise.all([
+          financialReportingService
+            .getReport()
+            .then((report) => report.summary),
+          studentsService.getAll(),
+          eventsService.getAll(),
+          feedbackService.getByStatus("pending"),
+        ]);
       setFinancialSummary(summaryData);
       setStudentCount(studentsData.length);
       setPendingFeedbackCount(pendingFeedbackData.length);
 
       // Upcoming = events whose date is today or later, soonest first.
-      // Board members only see the events assigned to them.
       const todays = today();
-      const assignedCatalogIds = new Set(
-        boardMembersData
-          .filter((member) => member.accountUserId === userId)
-          .map((member) => member.id),
-      );
       const upcoming = eventsData
         .filter((e) => e.date && e.date >= todays)
-        .filter(
-          (e) =>
-            role !== "board-member" ||
-            (e.assignedMembers?.some((m) =>
-              assignedCatalogIds.has(m.memberId),
-            ) ??
-              false),
-        )
         .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
       setUpcomingEvents(upcoming);
     } catch (error) {
@@ -100,14 +82,12 @@ export default function AdminDashboardSection({
     }
   }, [role, userId]);
 
-  // Load data from database and refresh the member-to-account mapping when the
-  // authenticated user or role changes.
+  // Load data from database
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Re-query every source table on change so dashboard figures never depend on
-  // stale local values or hardcoded counters.
+  // Re-query every source table on change
   useEffect(() => {
     return subscribeToTables(
       [
@@ -235,8 +215,8 @@ export default function AdminDashboardSection({
     ...(role === "board-member"
       ? [
           {
-            title: "Assigned Events",
-            description: "View the events you are assigned to",
+            title: "Events",
+            description: "View upcoming events",
             icon: Calendar,
             view: "event-management" as ViewState,
             color: "green",
@@ -516,7 +496,7 @@ export default function AdminDashboardSection({
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
                   <p>
                     {role === "board-member"
-                      ? "No events have been assigned to you yet"
+                      ? "No events assigned to you yet"
                       : "No upcoming events scheduled"}
                   </p>
                 </div>
