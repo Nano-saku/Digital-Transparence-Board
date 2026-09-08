@@ -5,7 +5,6 @@ import {
   CheckCircle,
   XCircle,
   Wallet,
-  Receipt,
   FileText,
   Download,
   Loader2,
@@ -36,6 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  createContributionReceiptPreview,
   downloadContributionReceipt,
   officialReceiptNumber,
   type ReceiptFormat,
@@ -93,6 +93,7 @@ export default function StudentRecordSection({
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
   const [qrStudent, setQrStudent] = useState<Student | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Data states
@@ -156,6 +157,44 @@ export default function StudentRecordSection({
   const receiptsForEvent = (eventId: string): PaymentRecord[] =>
     receiptsByEvent.get(eventId) ?? [];
 
+  const getContributionReceiptDetails = async (record: ContributionRecord) => ({
+    tag: "CONTRIBUTION RECORD" as const,
+    receiptNumber: await officialReceiptNumber(),
+    issuedTo: student.name,
+    eventName: record.eventName,
+    amount: record.amountPaid,
+    type: "income" as const,
+    date: today(),
+    recordedBy: "Council Officer",
+    requiredAmount: record.requiredAmount,
+    remainingBalance: record.remainingBalance,
+    statusLabel: contributionStatus(record).label,
+  });
+
+  const handlePreviewContributionReceipt = async (
+    record: ContributionRecord,
+    paymentReceipts: PaymentRecord[],
+  ) => {
+    const storedReceipt = paymentReceipts.find((payment) => payment.receiptUrl);
+    if (storedReceipt?.receiptUrl) {
+      setSelectedReceipt(storedReceipt.receiptUrl);
+      return;
+    }
+
+    try {
+      setPreviewingId(record.id);
+      const receiptUrl = await createContributionReceiptPreview(
+        await getContributionReceiptDetails(record),
+      );
+      setSelectedReceipt(receiptUrl);
+    } catch (error) {
+      console.error("Error previewing contribution receipt:", error);
+      toast.error("Failed to preview receipt. Please try again.");
+    } finally {
+      setPreviewingId((current) => (current === record.id ? null : current));
+    }
+  };
+
   // Builds the contribution-record receipt (student, event, required, paid,
   // balance, status) and downloads it directly — no storage round-trip.
   // Supports SVG, PNG, and JPG formats.
@@ -173,19 +212,7 @@ export default function StudentRecordSection({
         );
       }
       const message = await downloadContributionReceipt(
-        {
-          tag: "CONTRIBUTION RECORD",
-          receiptNumber: await officialReceiptNumber(),
-          issuedTo: student.name,
-          eventName: record.eventName,
-          amount: record.amountPaid,
-          type: "income",
-          date: today(),
-          recordedBy: "Council Officer",
-          requiredAmount: record.requiredAmount,
-          remainingBalance: record.remainingBalance,
-          statusLabel: contributionStatus(record).label,
-        },
+        await getContributionReceiptDetails(record),
         format,
       );
       toast.success(message);
@@ -448,65 +475,70 @@ export default function StudentRecordSection({
                                 {/* A receipt is available for partial and fully paid records,
                                     but not for records with no actual payment. */}
                                 {record.amountPaid > 0 && (
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger
-                                      asChild
-                                      disabled={downloadingId === record.id}
-                                      title={`Download contribution receipt – ${record.eventName}`}
-                                    >
-                                      <button
-                                        disabled={downloadingId === record.id}
-                                        className="px-2.5 py-1.5 text-xs disabled:opacity-70"
-                                      >
-                                        {downloadingId === record.id ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <Download className="w-3.5 h-3.5" />
-                                        )}
-                                        Download
-                                        <ChevronDown className="w-3 h-3" />
-                                      </button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent
-                                      align="end"
-                                      className="glass-card-strong"
-                                    >
-                                      {(
-                                        ["svg", "png", "jpg"] as ReceiptFormat[]
-                                      ).map((format) => (
-                                        <DropdownMenuItem
-                                          key={format}
-                                          onClick={() =>
-                                            handleDownloadContributionReceipt(
-                                              record,
-                                              format,
-                                            )
-                                          }
-                                          className="flex items-center gap-2 cursor-pointer text-xs"
-                                        >
-                                          {format.toUpperCase()}
-                                        </DropdownMenuItem>
-                                      ))}
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                )}
-                                {record.amountPaid > 0 &&
-                                  paymentReceipts.map((payment) => (
+                                  <>
                                     <button
-                                      key={payment.id}
                                       type="button"
                                       onClick={() =>
-                                        setSelectedReceipt(
-                                          payment.receiptUrl || null,
+                                        handlePreviewContributionReceipt(
+                                          record,
+                                          paymentReceipts,
                                         )
                                       }
-                                      className="p-2 rounded-lg text-text-secondary"
-                                      title={`Preview payment receipt – ${payment.eventName} (${formatDate(payment.date)})`}
-                                      aria-label="Preview payment receipt"
+                                      disabled={previewingId === record.id}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs disabled:opacity-70"
+                                      title={`Preview contribution receipt – ${record.eventName}`}
                                     >
-                                      <Receipt className="w-4 h-4" />
+                                      {previewingId === record.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <Eye className="w-3.5 h-3.5" />
+                                      )}
+                                      Preview
                                     </button>
-                                  ))}
+
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger
+                                        asChild
+                                        disabled={downloadingId === record.id}
+                                        title={`Download contribution receipt – ${record.eventName}`}
+                                      >
+                                        <button
+                                          disabled={downloadingId === record.id}
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs disabled:opacity-70"
+                                        >
+                                          {downloadingId === record.id ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <Download className="w-3.5 h-3.5" />
+                                          )}
+                                          Download
+                                          <ChevronDown className="w-3 h-3" />
+                                        </button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent
+                                        align="end"
+                                        className="glass-card-strong"
+                                      >
+                                        {(
+                                          ["svg", "png", "jpg"] as ReceiptFormat[]
+                                        ).map((format) => (
+                                          <DropdownMenuItem
+                                            key={format}
+                                            onClick={() =>
+                                              handleDownloadContributionReceipt(
+                                                record,
+                                                format,
+                                              )
+                                            }
+                                            className="flex items-center gap-2 cursor-pointer text-xs"
+                                          >
+                                            {format.toUpperCase()}
+                                          </DropdownMenuItem>
+                                        ))}
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>

@@ -317,8 +317,10 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
-export const isSvgUrl = (url: string): boolean =>
-  url.split("?")[0].toLowerCase().endsWith(".svg");
+export const isSvgUrl = (url: string): boolean => {
+  const normalizedUrl = url.split("?")[0].toLowerCase();
+  return normalizedUrl.endsWith(".svg") || normalizedUrl.startsWith("data:image/svg+xml");
+};
 
 /**
  * Adds the official logos to older SVG receipts that were generated before
@@ -471,4 +473,22 @@ export async function downloadContributionReceipt(
     downloadBlob(blob, baseName);
   }
   return `Contribution receipt downloaded (${format.toUpperCase()})`;
+}
+
+/**
+ * Creates an in-memory SVG URL for previewing a contribution-record receipt.
+ * This uses the same receipt markup as the download action, without uploading
+ * a temporary file to storage.
+ */
+export async function createContributionReceiptPreview(
+  details: ReceiptDetails,
+): Promise<string> {
+  if (details.amount <= 0) {
+    throw new Error(
+      "Receipt is only available when the paid amount is greater than zero."
+    );
+  }
+  const logos = await getReceiptLogos();
+  const svg = buildReceiptSvg(details, logos);
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
