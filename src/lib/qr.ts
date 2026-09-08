@@ -138,7 +138,7 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   ]);
 
   const privacyLinesSvg = PASS_PRIVACY_LINES.map((line, i) =>
-    `<text x="224" y="${591 + i * 13}" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#ffffff">${xml(line)}</text>`
+    `<text x="155" y="${591 + i * 13}" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#ffffff">${xml(line)}</text>`
   ).join("\n  ");
   const nameFontSize = fieldFontSize(student.name, 27);
   const programFontSize = fieldFontSize(student.program, 27);
@@ -170,7 +170,7 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   <image href="${lscLogo}" xlink:href="${lscLogo}" x="395" y="28" width="52" height="52" preserveAspectRatio="xMidYMid meet" />
   <text x="465" y="52" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2.5" fill="#667085">LOCAL STUDENT COUNCIL</text>
   <text x="465" y="80" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="1" fill="#17213f">STUDENT QR ATTENDANCE PASS</text>
-  <line x1="390" y1="96" x2="1160" y2="96" stroke="#cbd5f0" stroke-width="2" />
+  <line x1="390" y1="96" x2="950" y2="96" stroke="#cbd5f0" stroke-width="2" />
 
   <text x="390" y="124" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">STUDENT ID</text>
   <text x="390" y="155" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.studentId)}</text>
