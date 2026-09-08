@@ -38,7 +38,6 @@ export default function AdminDashboardSection({
   onNavigate,
   role,
   userEmail,
-  userId = "",
 }: AdminDashboardSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const headlineRef = useRef<HTMLDivElement>(null);
@@ -80,7 +79,7 @@ export default function AdminDashboardSection({
     } finally {
       setLoading(false);
     }
-  }, [role, userId]);
+  }, []);
 
   // Load data from database
   useEffect(() => {
