@@ -48,6 +48,7 @@ import type {
 } from "@/types";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
 import { parseStudentQrText } from "@/lib/qr";
+import { contributionStatus } from "@/lib/contributions";
 import {
   Dialog,
   DialogContent,
@@ -230,6 +231,15 @@ export default function EventManagementSection({
   const requiredPaymentAmount =
     selectedPaymentContribution?.requiredAmount ??
     selectedPaymentEvent?.allocationAmount;
+  const selectedPaymentStatus =
+    selectedPaymentContribution
+      ? contributionStatus(selectedPaymentContribution)
+      : requiredPaymentAmount !== undefined
+        ? contributionStatus({
+            amountPaid: 0,
+            remainingBalance: requiredPaymentAmount,
+          })
+        : null;
 
   // Close the picker when clicking anywhere outside of it.
   useEffect(() => {
@@ -544,6 +554,23 @@ export default function EventManagementSection({
           0,
           contribution.remainingBalance - paymentForm.amount,
         ),
+      });
+
+      const updatedContribution: ContributionRecord = {
+        ...contribution,
+        amountPaid: contribution.amountPaid + paymentForm.amount,
+        remainingBalance: Math.max(
+          0,
+          contribution.remainingBalance - paymentForm.amount,
+        ),
+      };
+      setContributions((current) => {
+        const exists = current.some((item) => item.id === updatedContribution.id);
+        return exists
+          ? current.map((item) =>
+              item.id === updatedContribution.id ? updatedContribution : item,
+            )
+          : [updatedContribution, ...current];
       });
 
       toast.success("Payment recorded successfully!");
@@ -1507,12 +1534,24 @@ export default function EventManagementSection({
                         ))}
                       </select>
                       {requiredPaymentAmount !== undefined && (
-                        <p className="mt-2 text-sm text-text-secondary">
-                          Required payment amount:{" "}
-                          <span className="font-semibold text-dark">
-                            {formatPeso(requiredPaymentAmount)}
-                          </span>
-                        </p>
+                        <div className="mt-2 rounded-lg border border-white/50 bg-white/30 px-3 py-2 text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-text-secondary">
+                            <span>
+                              Required: {formatPeso(requiredPaymentAmount)}
+                            </span>
+                            <span>
+                              Paid: {formatPeso(selectedPaymentContribution?.amountPaid ?? 0)}
+                            </span>
+                            <span>
+                              Remaining: {formatPeso(selectedPaymentContribution?.remainingBalance ?? requiredPaymentAmount)}
+                            </span>
+                          </div>
+                          {selectedPaymentStatus && (
+                            <p className={`mt-1 font-semibold ${selectedPaymentStatus.className}`}>
+                              Status: {selectedPaymentStatus.label}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -1571,31 +1610,48 @@ export default function EventManagementSection({
                   </div>
 
                   <div className="space-y-3 max-h-[500px] overflow-y-auto">
-                    {payments.slice(0, 10).map((payment) => (
-                      <div key={payment.id} className="glass-card p-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-medium text-dark">
-                              {payment.studentName}
-                            </p>
-                            <p className="text-sm text-text-secondary">
-                              {payment.eventName}
-                            </p>
-                            <p className="text-xs text-text-secondary/70">
-                              {formatDate(payment.date)}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-semibold text-green-600">
-                              {formatPeso(payment.amount)}
-                            </p>
-                            <p className="text-xs text-text-secondary">
-                              {payment.recordedBy}
-                            </p>
+                    {payments.slice(0, 10).map((payment) => {
+                      const paymentContribution = contributions.find(
+                        (contribution) =>
+                          contribution.id === payment.contributionId ||
+                          (contribution.studentId === payment.studentId &&
+                            contribution.eventId === payment.eventId),
+                      );
+                      const paymentStatus = paymentContribution
+                        ? contributionStatus(paymentContribution)
+                        : null;
+
+                      return (
+                        <div key={payment.id} className="glass-card p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-dark">
+                                {payment.studentName}
+                              </p>
+                              <p className="text-sm text-text-secondary">
+                                {payment.eventName}
+                              </p>
+                              <p className="text-xs text-text-secondary/70">
+                                {formatDate(payment.date)}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-semibold text-green-600">
+                                {formatPeso(payment.amount)}
+                              </p>
+                              <p className="text-xs text-text-secondary">
+                                {payment.recordedBy}
+                              </p>
+                              {paymentStatus && (
+                                <p className={`text-xs font-semibold ${paymentStatus.className}`}>
+                                  {paymentStatus.label}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {payments.length === 0 && (
                       <SectionEmptyState
