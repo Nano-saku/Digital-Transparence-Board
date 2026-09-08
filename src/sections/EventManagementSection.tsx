@@ -40,6 +40,7 @@ import type {
   EventSchedule,
   EventSession,
   Student,
+  ContributionRecord,
   PaymentRecord,
   AttendanceRecord,
   UserRole,
@@ -100,6 +101,7 @@ export default function EventManagementSection({
 
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [showAttendanceClearConfirm, setShowAttendanceClearConfirm] =
@@ -217,6 +219,18 @@ export default function EventManagementSection({
       .slice(0, 8);
   }, [paymentStudentSearch, students]);
 
+  const selectedPaymentEvent = events.find(
+    (event) => event.id === paymentForm.eventId,
+  );
+  const selectedPaymentContribution = contributions.find(
+    (contribution) =>
+      contribution.studentId === paymentForm.studentId &&
+      contribution.eventId === paymentForm.eventId,
+  );
+  const requiredPaymentAmount =
+    selectedPaymentContribution?.requiredAmount ??
+    selectedPaymentEvent?.allocationAmount;
+
   // Close the picker when clicking anywhere outside of it.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -282,7 +296,13 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData, paymentsData, attendanceData] =
+      const [
+        eventsData,
+        studentsData,
+        paymentsData,
+        attendanceData,
+        contributionsData,
+      ] =
         await Promise.all([
           eventsService.getAll(),
           studentsService.getAll(),
@@ -293,6 +313,7 @@ export default function EventManagementSection({
 
       setEvents(eventsData);
       setStudents(studentsData);
+      setContributions(contributionsData);
       setPayments(paymentsData);
       setAttendanceRecords(attendanceData);
 
@@ -1485,6 +1506,14 @@ export default function EventManagementSection({
                           </option>
                         ))}
                       </select>
+                      {requiredPaymentAmount !== undefined && (
+                        <p className="mt-2 text-sm text-text-secondary">
+                          Required payment amount:{" "}
+                          <span className="font-semibold text-dark">
+                            {formatPeso(requiredPaymentAmount)}
+                          </span>
+                        </p>
+                      )}
                     </div>
 
                     <div>
