@@ -80,6 +80,13 @@ const PASS_PRIVACY_LINES = [
   "correction, or erasure requests, contact the LSC Data Protection Officer or the institution's Privacy Office.",
 ];
 
+/** Keeps variable student values inside their ruled fields in the exported pass. */
+function fieldFontSize(value: string, maximum: number, minimum = 20): number {
+  const characterCount = [...value].length;
+  if (characterCount <= 18) return maximum;
+  return Math.max(minimum, maximum - Math.ceil((characterCount - 18) / 4) * 2);
+}
+
 let lscLogoDataUri: string | null = null;
 
 const xml = (value: string | number): string =>
@@ -133,6 +140,8 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   const privacyLinesSvg = PASS_PRIVACY_LINES.map((line, i) =>
     `<text x="224" y="${591 + i * 13}" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#ffffff">${xml(line)}</text>`
   ).join("\n  ");
+  const nameFontSize = fieldFontSize(student.name, 27);
+  const programFontSize = fieldFontSize(student.program, 27);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -145,49 +154,49 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   <rect x="0" y="${PASS_HEIGHT - 8}" width="${PASS_WIDTH}" height="8" rx="5" fill="#c99a31" />
 
   <!-- ===== LEFT QR SECTION ===== -->
-  <rect x="20" y="28" width="330" height="500" rx="16" fill="#10256f" />
-  <rect x="40" y="48" width="290" height="290" rx="10" fill="#ffffff" />
-  <image href="${qrDataUri}" xlink:href="${qrDataUri}" x="55" y="61" width="260" height="264" preserveAspectRatio="xMidYMid meet" />
-  <circle cx="185" cy="193" r="31" fill="#ffffff" stroke="#ffffff" stroke-width="5" />
-  <clipPath id="qr-pass-seal"><circle cx="185" cy="193" r="27" /></clipPath>
-  <image href="${lscLogo}" xlink:href="${lscLogo}" x="158" y="166" width="54" height="54" preserveAspectRatio="xMidYMid meet" clip-path="url(#qr-pass-seal)" />
-  <text x="185" y="389" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" letter-spacing="3" fill="#ffffff" text-anchor="middle">SCAN FOR</text>
-  <text x="185" y="419" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" letter-spacing="3" fill="#ffffff" text-anchor="middle">ATTENDANCE</text>
-  <line x1="52" y1="442" x2="318" y2="442" stroke="#ffffff" stroke-opacity="0.45" stroke-width="2" />
-  <text x="185" y="471" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#ffffff" text-anchor="middle">ISSUED BY THE LSC</text>
-  <text x="185" y="493" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#ffffff" text-anchor="middle">DIGITAL ATTENDANCE PASS</text>
+  <rect x="18" y="18" width="350" height="490" rx="16" fill="#10256f" />
+  <rect x="38" y="38" width="310" height="294" rx="10" fill="#ffffff" />
+  <image href="${qrDataUri}" xlink:href="${qrDataUri}" x="53" y="51" width="280" height="268" preserveAspectRatio="xMidYMid meet" />
+  <circle cx="193" cy="185" r="31" fill="#ffffff" stroke="#ffffff" stroke-width="5" />
+  <clipPath id="qr-pass-seal"><circle cx="193" cy="185" r="27" /></clipPath>
+  <image href="${lscLogo}" xlink:href="${lscLogo}" x="166" y="158" width="54" height="54" preserveAspectRatio="xMidYMid meet" clip-path="url(#qr-pass-seal)" />
+  <text x="193" y="383" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" letter-spacing="3" fill="#ffffff" text-anchor="middle">SCAN FOR</text>
+  <text x="193" y="413" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" letter-spacing="3" fill="#ffffff" text-anchor="middle">ATTENDANCE</text>
+  <line x1="50" y1="437" x2="336" y2="437" stroke="#ffffff" stroke-opacity="0.45" stroke-width="2" />
+  <text x="193" y="467" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#ffffff" text-anchor="middle">ISSUED BY THE LSC</text>
+  <text x="193" y="490" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#ffffff" text-anchor="middle">DIGITAL ATTENDANCE PASS</text>
 
   <!-- ===== RIGHT INFORMATION SECTION ===== -->
-  <image href="${lscLogo}" xlink:href="${lscLogo}" x="380" y="35" width="52" height="52" preserveAspectRatio="xMidYMid meet" />
-  <text x="450" y="57" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2.5" fill="#667085">LOCAL STUDENT COUNCIL</text>
-  <text x="450" y="84" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="1" fill="#17213f">STUDENT QR ATTENDANCE PASS</text>
-  <line x1="375" y1="103" x2="1160" y2="103" stroke="#cbd5f0" stroke-width="2" />
+  <image href="${lscLogo}" xlink:href="${lscLogo}" x="395" y="28" width="52" height="52" preserveAspectRatio="xMidYMid meet" />
+  <text x="465" y="52" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2.5" fill="#667085">LOCAL STUDENT COUNCIL</text>
+  <text x="465" y="80" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="1" fill="#17213f">STUDENT QR ATTENDANCE PASS</text>
+  <line x1="390" y1="96" x2="1160" y2="96" stroke="#cbd5f0" stroke-width="2" />
 
-  <text x="375" y="130" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">STUDENT ID</text>
-  <text x="375" y="161" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.studentId)}</text>
-  <line x1="375" y1="174" x2="930" y2="174" stroke="#cbd5f0" stroke-width="2" />
-  <text x="375" y="201" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">NAME</text>
-  <text x="375" y="233" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.name)}</text>
-  <line x1="375" y1="246" x2="930" y2="246" stroke="#cbd5f0" stroke-width="2" />
-  <text x="375" y="273" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">PROGRAM</text>
-  <text x="375" y="305" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.program)}</text>
-  <line x1="375" y1="318" x2="930" y2="318" stroke="#cbd5f0" stroke-width="2" />
-  <text x="375" y="346" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">YEAR</text>
-  <text x="375" y="378" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.yearLevel)}</text>
-  <line x1="375" y1="391" x2="620" y2="391" stroke="#cbd5f0" stroke-width="2" />
-  <text x="680" y="346" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">SECTION</text>
-  <text x="680" y="378" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.section)}</text>
-  <line x1="680" y1="391" x2="930" y2="391" stroke="#cbd5f0" stroke-width="2" />
+  <text x="390" y="124" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">STUDENT ID</text>
+  <text x="390" y="155" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.studentId)}</text>
+  <line x1="390" y1="168" x2="950" y2="168" stroke="#cbd5f0" stroke-width="2" />
+  <text x="390" y="195" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">NAME</text>
+  <text x="390" y="227" font-family="Arial, Helvetica, sans-serif" font-size="${nameFontSize}" font-weight="700" fill="#173b82">${xml(student.name)}</text>
+  <line x1="390" y1="240" x2="950" y2="240" stroke="#cbd5f0" stroke-width="2" />
+  <text x="390" y="267" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">PROGRAM</text>
+  <text x="390" y="299" font-family="Arial, Helvetica, sans-serif" font-size="${programFontSize}" font-weight="700" fill="#173b82">${xml(student.program)}</text>
+  <line x1="390" y1="312" x2="950" y2="312" stroke="#cbd5f0" stroke-width="2" />
+  <text x="390" y="340" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">YEAR</text>
+  <text x="390" y="372" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.yearLevel)}</text>
+  <line x1="390" y1="385" x2="635" y2="385" stroke="#cbd5f0" stroke-width="2" />
+  <text x="690" y="340" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">SECTION</text>
+  <text x="690" y="372" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173b82">${xml(student.section)}</text>
+  <line x1="690" y1="385" x2="950" y2="385" stroke="#cbd5f0" stroke-width="2" />
 
   <!-- Empty 2×2 physical photo frame; the student photo is added after printing. -->
-  <rect x="960" y="81" width="200" height="200" rx="8" fill="#f2f4f7" stroke="#173b82" stroke-width="3" />
-  <text x="1060" y="309" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1" fill="#173b82" text-anchor="middle">STUDENT PHOTO</text>
+  <rect x="980" y="96" width="200" height="200" rx="8" fill="#f2f4f7" stroke="#173b82" stroke-width="3" />
+  <text x="1080" y="323" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1" fill="#173b82" text-anchor="middle">STUDENT PHOTO</text>
 
   <!-- ===== OFFICIAL USE ===== -->
-  <rect x="375" y="414" width="785" height="114" rx="12" fill="#edf3fb" />
-  <text x="398" y="445" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#173b82">OFFICIAL USE</text>
-  <text x="398" y="472" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">This digital QR Attendance Pass is issued by the Local Student Council (LSC)</text>
-  <text x="398" y="495" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">for attendance verification and monitoring during official events.</text>
+  <rect x="390" y="408" width="790" height="120" rx="12" fill="#edf3fb" />
+  <text x="413" y="441" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#173b82">OFFICIAL USE</text>
+  <text x="413" y="468" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">This digital QR Attendance Pass is issued by the Local Student Council (LSC)</text>
+  <text x="413" y="493" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">for attendance verification and monitoring during official events.</text>
 
   <!-- ===== SEPARATE FULL-WIDTH DATA PRIVACY NOTICE ===== -->
   <rect x="20" y="540" width="1160" height="94" rx="14" fill="#102f7d" />
