@@ -13,7 +13,7 @@ interface StudentQrModalProps {
 /**
  * Preview + download dialog for a student's official attendance pass. The QR
  * encodes Student ID, Name, Program, Year, and Section; the preview renders the
- * exact generated pass SVG (including the justified privacy notice at the
+ * exact generated pass SVG (including the separate privacy notice at the
  * bottom) so the on-screen viewing always matches the downloaded PNG/SVG.
  */
 export default function StudentQrModal({ student, onClose }: StudentQrModalProps) {
@@ -75,8 +75,8 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
 
         {student && (
           <div className="mt-3 space-y-4 pb-4 sm:mt-4 sm:space-y-5">
-            {/* Exact generated pass preview — 850:440 aspect ratio */}
-            <article className="relative w-full overflow-hidden rounded-xl border border-[var(--dssc-border)] bg-white shadow-card" style={{ aspectRatio: '850 / 440' }}>
+            {/* Exact generated pass preview — 12 cm × 6.5 cm aspect ratio */}
+            <article className="relative w-full overflow-hidden rounded-xl border border-[var(--dssc-border)] bg-white shadow-card" style={{ aspectRatio: '12 / 6.5' }}>
               {passSrc ? (
                 <img
                   src={passSrc}
