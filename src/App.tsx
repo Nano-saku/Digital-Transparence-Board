@@ -321,7 +321,6 @@ function App() {
         );
 
       case "event-management":
-      case "payment-management":
         return canAccess(currentView) ? (
           <EventManagementSection
             role={role!}
@@ -348,8 +347,11 @@ function App() {
         );
 
       case "contribution-management":
-        return canAccess("contribution-management") ? (
+      case "payment-management":
+        return canAccess(currentView) ? (
           <ContributionManagementSection
+            role={role!}
+            staffName={auth?.displayName ?? ""}
             onBack={() => navigateTo("admin-dashboard")}
           />
         ) : (
@@ -408,6 +410,7 @@ function App() {
         currentView={currentView}
         onNavigate={navigateTo}
         role={auth ? role : null}
+        onLogout={handleLogout}
       />
       {/* Main Content */}
       // after

@@ -2,14 +2,10 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Calendar,
   Plus,
-  CreditCard,
   Users,
-  User,
   CheckCircle,
   XCircle,
   Save,
-  DollarSign,
-  FileText,
   Loader2,
   UserCheck,
   Search,
@@ -29,9 +25,7 @@ import jsQR from "jsqr";
 import {
   eventsService,
   studentsService,
-  paymentsService,
   attendanceService,
-  contributionsService,
   boardMembersService,
   subscribeToTables,
 } from "@/services/db";
@@ -40,15 +34,11 @@ import type {
   EventSchedule,
   EventSession,
   Student,
-  ContributionRecord,
-  PaymentRecord,
   AttendanceRecord,
   UserRole,
   BoardMember,
 } from "@/types";
-import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
 import { parseStudentQrText } from "@/lib/qr";
-import { contributionStatus } from "@/lib/contributions";
 import {
   Dialog,
   DialogContent,
@@ -87,7 +77,6 @@ export default function EventManagementSection({
   onBack,
   initialTab = "event-management",
   role,
-  staffName,
 }: EventManagementSectionProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -102,8 +91,6 @@ export default function EventManagementSection({
 
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [showAttendanceClearConfirm, setShowAttendanceClearConfirm] =
     useState(false);
@@ -119,8 +106,6 @@ export default function EventManagementSection({
   const [saving, setSaving] = useState(false);
 
   // Role-based permissions
-  const canRecordPayments =
-    role === "admin" || role === "treasurer" || role === "auditor";
   const canManageEvents = role === "admin" || role === "board-member";
   const canRecordAttendance = role === "admin" || role === "secretary";
 
@@ -196,71 +181,6 @@ export default function EventManagementSection({
     }));
   };
 
-  // Payment form
-  const [paymentForm, setPaymentForm] = useState({
-    studentId: "",
-    eventId: "",
-    amount: 0,
-  });
-
-  // Searchable student picker for the "Record Payment" form (name or ID).
-  const [paymentStudentSearch, setPaymentStudentSearch] = useState("");
-  const [paymentStudentOpen, setPaymentStudentOpen] = useState(false);
-  const paymentSearchRef = useRef<HTMLDivElement>(null);
-
-  const paymentStudentMatches = useMemo(() => {
-    const query = paymentStudentSearch.trim().toLowerCase();
-    if (!query) return [];
-    return students
-      .filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.studentId.toLowerCase().includes(query),
-      )
-      .slice(0, 8);
-  }, [paymentStudentSearch, students]);
-
-  const selectedPaymentEvent = events.find(
-    (event) => event.id === paymentForm.eventId,
-  );
-  const selectedPaymentContribution = contributions.find(
-    (contribution) =>
-      contribution.studentId === paymentForm.studentId &&
-      contribution.eventId === paymentForm.eventId,
-  );
-  const requiredPaymentAmount =
-    selectedPaymentContribution?.requiredAmount ??
-    selectedPaymentEvent?.allocationAmount;
-  const selectedPaymentStatus =
-    selectedPaymentContribution
-      ? contributionStatus(selectedPaymentContribution)
-      : requiredPaymentAmount !== undefined
-        ? contributionStatus({
-            amountPaid: 0,
-            remainingBalance: requiredPaymentAmount,
-          })
-        : null;
-
-  // Close the picker when clicking anywhere outside of it.
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        paymentSearchRef.current &&
-        !paymentSearchRef.current.contains(event.target as Node)
-      ) {
-        setPaymentStudentOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handlePaymentStudentSelect = (student: Student) => {
-    setPaymentForm((prev) => ({ ...prev, studentId: student.id }));
-    setPaymentStudentSearch(`${student.name} (${student.studentId})`);
-    setPaymentStudentOpen(false);
-  };
-
   // Attendance
   const [selectedEventForAttendance, setSelectedEventForAttendance] =
     useState("");
@@ -312,25 +232,14 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [
-        eventsData,
-        studentsData,
-        paymentsData,
-        attendanceData,
-        contributionsData,
-      ] =
-        await Promise.all([
-          eventsService.getAll(),
-          studentsService.getAll(),
-          paymentsService.getAll(),
-          attendanceService.getAll(),
-          contributionsService.getAll(),
-        ]);
+      const [eventsData, studentsData, attendanceData] = await Promise.all([
+        eventsService.getAll(),
+        studentsService.getAll(),
+        attendanceService.getAll(),
+      ]);
 
       setEvents(eventsData);
       setStudents(studentsData);
-      setContributions(contributionsData);
-      setPayments(paymentsData);
       setAttendanceRecords(attendanceData);
 
       try {
@@ -356,14 +265,7 @@ export default function EventManagementSection({
 
   useEffect(() => {
     return subscribeToTables(
-      [
-        "events",
-        "students",
-        "contributions",
-        "payments",
-        "attendance",
-        "board_members",
-      ],
+      ["events", "students", "attendance", "board_members"],
       () => loadData(false),
       "event-management",
     );
@@ -478,118 +380,6 @@ export default function EventManagementSection({
     } catch (error) {
       console.error("Error deleting event:", error);
       toast.error("Failed to delete event");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleRecordPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setSaving(true);
-      const student = students.find((s) => s.id === paymentForm.studentId);
-      const event = events.find((e) => e.id === paymentForm.eventId);
-
-      if (!student || !event) {
-        toast.error("Please select both student and event");
-        return;
-      }
-
-      // Resolve the contribution record first (create it if this student has
-      // no row for the event yet — e.g. a student added without seeded
-      // contribution data), so the payment can be created already linked to
-      // it via contributionId. This has to happen before paymentsService.create
-      // below: a payment with no contributionId can never be cascade-deleted
-      // when its contribution is deleted.
-      let contribution = await contributionsService.getByStudentAndEvent(
-        student.id,
-        event.id,
-      );
-      if (!contribution) {
-        contribution = await contributionsService.create({
-          studentId: student.id,
-          eventId: event.id,
-          eventName: event.name,
-          requiredAmount: event.allocationAmount,
-          amountPaid: 0,
-          remainingBalance: event.allocationAmount,
-        });
-      }
-
-      // An official receipt is generated automatically (as SVG, uploaded to
-      // the "receipts" Storage bucket) and attached to the payment.
-      let receiptUrl: string | undefined;
-      if (role === "admin" || role === "treasurer" || role === "auditor") {
-        try {
-          const orNumber = await officialReceiptNumber();
-          receiptUrl = await autoCreateReceipt({
-            tag: "PAYMENT",
-            receiptNumber: orNumber,
-            issuedTo: student.name,
-            eventName: event.name,
-            description: `Payment for ${event.name}`,
-            amount: paymentForm.amount,
-            type: "income",
-            date: today(),
-            recordedBy: staffName || "Council Officer",
-          });
-          toast.success(
-            "An official receipt was generated and attached automatically.",
-          );
-        } catch (receiptError) {
-          console.warn("Auto receipt generation failed:", receiptError);
-        }
-      }
-
-      await paymentsService.create({
-        studentId: paymentForm.studentId,
-        studentName: student.name,
-        eventId: paymentForm.eventId,
-        eventName: event.name,
-        contributionId: contribution.id,
-        amount: paymentForm.amount,
-        date: today(),
-        recordedBy: staffName || "Council Officer",
-        receiptUrl,
-      });
-
-      // Update the contribution's running totals now that the payment exists.
-      await contributionsService.update(contribution.id, {
-        amountPaid: contribution.amountPaid + paymentForm.amount,
-        remainingBalance: Math.max(
-          0,
-          contribution.remainingBalance - paymentForm.amount,
-        ),
-      });
-
-      const updatedContribution: ContributionRecord = {
-        ...contribution,
-        amountPaid: contribution.amountPaid + paymentForm.amount,
-        remainingBalance: Math.max(
-          0,
-          contribution.remainingBalance - paymentForm.amount,
-        ),
-      };
-      setContributions((current) => {
-        const exists = current.some((item) => item.id === updatedContribution.id);
-        return exists
-          ? current.map((item) =>
-              item.id === updatedContribution.id ? updatedContribution : item,
-            )
-          : [updatedContribution, ...current];
-      });
-
-      toast.success("Payment recorded successfully!");
-      setPaymentForm({ studentId: "", eventId: "", amount: 0 });
-      setPaymentStudentSearch("");
-      setPaymentStudentOpen(false);
-
-      // Refresh payments
-      const updatedPayments = await paymentsService.getAll();
-      setPayments(updatedPayments);
-    } catch (error) {
-      console.error("Error recording payment:", error);
-      toast.error("Failed to record payment");
     } finally {
       setSaving(false);
     }
@@ -1249,10 +1039,7 @@ export default function EventManagementSection({
     1,
     Math.ceil(filteredStudents.length / ATTENDANCE_PAGE_SIZE),
   );
-  const currentAttendancePage = Math.min(
-    attendancePage,
-    attendanceTotalPages,
-  );
+  const currentAttendancePage = Math.min(attendancePage, attendanceTotalPages);
   const attendancePageStartIndex =
     (currentAttendancePage - 1) * ATTENDANCE_PAGE_SIZE;
   const paginatedStudents = filteredStudents.slice(
@@ -1326,10 +1113,10 @@ export default function EventManagementSection({
             <SectionBackButton onClick={onBack} />
             <div>
               <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Event & Payment Management
+                Event Management
               </h1>
               <p className="text-text-secondary text-sm">
-                Manage events, record payments, and track attendance
+                Manage events and track attendance
               </p>
             </div>
           </div>
@@ -1365,15 +1152,6 @@ export default function EventManagementSection({
                 <Calendar className="w-4 h-4 mr-2" />
                 Events
               </TabsTrigger>
-              {canRecordPayments && (
-                <TabsTrigger
-                  value="payment-management"
-                  className="flex-1 data-[state=active]:bg-red data-[state=active]:text-white"
-                >
-                  <CreditCard className="w-4 h-4 mr-2" />
-                  Payments
-                </TabsTrigger>
-              )}
               {canRecordAttendance && (
                 <TabsTrigger
                   value="attendance-management"
@@ -1494,242 +1272,6 @@ export default function EventManagementSection({
               </div>
             </TabsContent>
 
-            {/* Payments Tab */}
-            <TabsContent value="payment-management">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Payment Form */}
-                <div className="glass-card p-5 lg:p-6">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                      <CreditCard className="w-5 h-5 text-red" />
-                    </div>
-                    <h3 className="font-display font-semibold text-lg text-dark">
-                      Record Payment
-                    </h3>
-                  </div>
-
-                  <form onSubmit={handleRecordPayment} className="space-y-4">
-                    <div ref={paymentSearchRef} className="relative">
-                      <label className="block text-sm font-medium text-dark mb-1.5">
-                        Select Student
-                      </label>
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-                        <input
-                          type="text"
-                          value={paymentStudentSearch}
-                          onChange={(e) => {
-                            setPaymentStudentSearch(e.target.value);
-                            setPaymentForm((prev) => ({
-                              ...prev,
-                              studentId: "",
-                            }));
-                            setPaymentStudentOpen(true);
-                          }}
-                          onFocus={() => setPaymentStudentOpen(true)}
-                          className="glass-input w-full pl-10 pr-4 py-3 text-sm"
-                          placeholder="Search by full name or student ID..."
-                          autoComplete="off"
-                        />
-                      </div>
-
-                      {paymentStudentOpen && (
-                        <div className="absolute z-20 mt-1 w-full glass-card-strong rounded-xl overflow-hidden shadow-xl">
-                          {paymentStudentMatches.length > 0 ? (
-                            <ul className="max-h-56 overflow-y-auto py-1">
-                              {paymentStudentMatches.map((s) => (
-                                <li key={s.id}>
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => e.preventDefault()}
-                                    onClick={() =>
-                                      handlePaymentStudentSelect(s)
-                                    }
-                                    className="w-full text-left px-4 py-2"
-                                  >
-                                    <User className="w-4 h-4 text-red shrink-0" />
-                                    <span className="min-w-0">
-                                      <span className="block text-sm font-medium text-dark truncate">
-                                        {s.name}
-                                      </span>
-                                      <span className="block text-xs text-text-secondary">
-                                        {s.studentId} · {s.program} · Year{" "}
-                                        {s.yearLevel}
-                                      </span>
-                                    </span>
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <div className="px-4 py-3 text-sm text-text-secondary">
-                              {paymentStudentSearch.trim()
-                                ? "No students found. Check the name or ID."
-                                : "Type a name or a student ID to search."}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <p className="text-xs text-text-secondary mt-1">
-                        Search by full name or student ID
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-dark mb-1.5">
-                        Select Event
-                      </label>
-                      <select
-                        value={paymentForm.eventId}
-                        onChange={(e) =>
-                          setPaymentForm({
-                            ...paymentForm,
-                            eventId: e.target.value,
-                          })
-                        }
-                        className="glass-input w-full px-4 py-3 text-sm"
-                        required
-                      >
-                        <option value="">Choose an event</option>
-                        {events.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.name}
-                          </option>
-                        ))}
-                      </select>
-                      {requiredPaymentAmount !== undefined && (
-                        <div className="mt-2 rounded-lg border border-white/50 bg-white/30 px-3 py-2 text-sm">
-                          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-text-secondary">
-                            <span>
-                              Required: {formatPeso(requiredPaymentAmount)}
-                            </span>
-                            <span>
-                              Paid: {formatPeso(selectedPaymentContribution?.amountPaid ?? 0)}
-                            </span>
-                            <span>
-                              Remaining: {formatPeso(selectedPaymentContribution?.remainingBalance ?? requiredPaymentAmount)}
-                            </span>
-                          </div>
-                          {selectedPaymentStatus && (
-                            <p className={`mt-1 font-semibold ${selectedPaymentStatus.className}`}>
-                              Status: {selectedPaymentStatus.label}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-dark mb-1.5">
-                        Amount
-                      </label>
-                      <div className="relative">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-                        <input
-                          type="number"
-                          value={paymentForm.amount || ""}
-                          onChange={(e) =>
-                            setPaymentForm({
-                              ...paymentForm,
-                              amount: parseInt(e.target.value) || 0,
-                            })
-                          }
-                          className="glass-input w-full pl-10 pr-4 py-3 text-sm"
-                          placeholder="0.00"
-                          required
-                          min="1"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full btn-primary px-4 py-3 flex items-center justify-center gap-2"
-                      disabled={saving}
-                    >
-                      {saving ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-4 h-4" />
-                          Record Payment
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-
-                {/* Recent Payments */}
-                <div className="glass-card p-5 lg:p-6">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                      <FileText className="w-5 h-5 text-red" />
-                    </div>
-                    <h3 className="font-display font-semibold text-lg text-dark">
-                      Recent Payments
-                    </h3>
-                  </div>
-
-                  <div className="space-y-3 max-h-[500px] overflow-y-auto">
-                    {payments.slice(0, 10).map((payment) => {
-                      const paymentContribution = contributions.find(
-                        (contribution) =>
-                          contribution.id === payment.contributionId ||
-                          (contribution.studentId === payment.studentId &&
-                            contribution.eventId === payment.eventId),
-                      );
-                      const paymentStatus = paymentContribution
-                        ? contributionStatus(paymentContribution)
-                        : null;
-
-                      return (
-                        <div key={payment.id} className="glass-card p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="font-medium text-dark">
-                                {payment.studentName}
-                              </p>
-                              <p className="text-sm text-text-secondary">
-                                {payment.eventName}
-                              </p>
-                              <p className="text-xs text-text-secondary/70">
-                                {formatDate(payment.date)}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-semibold text-green-600">
-                                {formatPeso(payment.amount)}
-                              </p>
-                              <p className="text-xs text-text-secondary">
-                                {payment.recordedBy}
-                              </p>
-                              {paymentStatus && (
-                                <p className={`text-xs font-semibold ${paymentStatus.className}`}>
-                                  {paymentStatus.label}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {payments.length === 0 && (
-                      <SectionEmptyState
-                        message="No payments recorded yet"
-                        icon={CreditCard}
-                        compact
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-
             {/* Attendance Tab */}
             <TabsContent value="attendance-management">
               <div className="glass-card p-5 lg:p-6">
@@ -1792,7 +1334,8 @@ export default function EventManagementSection({
                           </select>
                           <p className="mt-1 flex items-center gap-1.5 text-sm text-text-secondary">
                             <Calendar className="h-4 w-4 text-slate-500" />
-                            Schedule: {(() => {
+                            Schedule:{" "}
+                            {(() => {
                               const schedule =
                                 selectedAttendanceEvent.schedules?.find(
                                   (s) => s.period === attendanceSession,
@@ -2511,7 +2054,9 @@ export default function EventManagementSection({
                       totalPages={attendanceTotalPages}
                       totalItems={filteredStudents.length}
                       startIndex={attendancePageStartIndex}
-                      endIndex={attendancePageStartIndex + paginatedStudents.length}
+                      endIndex={
+                        attendancePageStartIndex + paginatedStudents.length
+                      }
                       onPrev={() =>
                         setAttendancePage((page) => Math.max(1, page - 1))
                       }

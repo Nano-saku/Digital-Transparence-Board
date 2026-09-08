@@ -463,118 +463,62 @@ export default function TransparencyBoardSection({
               ref={summaryRef}
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
             >
-              <div className="summary-card glass-card p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <span className="text-xs font-medium text-text-secondary">
+              <div className="summary-card glass-card p-5 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                  <Wallet className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <p className="font-display font-bold text-2xl text-dark">
+                    {formatPeso(financialSummary?.totalBudget ?? 0)}
+                  </p>
+                  <p className="text-xs font-medium text-text-secondary">
                     Total Contribution Amount
-                  </span>
+                  </p>
                 </div>
-                <p className="font-display font-bold text-2xl text-dark">
-                  {formatPeso(financialSummary?.totalBudget ?? 0)}
-                </p>
               </div>
 
-              <div className="summary-card glass-card p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                    <TrendingUp className="w-5 h-5 text-green-600" />
-                  </div>
-                  <span className="text-xs font-medium text-text-secondary">
+              <div className="summary-card glass-card p-5 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-6 h-6 text-green-600" />
+                </div>
+                <div>
+                  <p className="font-display font-bold text-2xl text-green-600">
+                    {formatPeso(financialSummary?.totalFundsCollected ?? 0)}
+                  </p>
+                  <p className="text-xs font-medium text-text-secondary">
                     Funds Collected
-                  </span>
+                  </p>
                 </div>
-                <p className="font-display font-bold text-2xl text-green-600">
-                  {formatPeso(financialSummary?.totalFundsCollected ?? 0)}
-                </p>
               </div>
 
-              <div className="summary-card glass-card p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                    <TrendingDown className="w-5 h-5 text-red" />
-                  </div>
-                  <span className="text-xs font-medium text-text-secondary">
+              <div className="summary-card glass-card p-5 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-red/10 flex items-center justify-center shrink-0">
+                  <TrendingDown className="w-6 h-6 text-red" />
+                </div>
+                <div>
+                  <p className="font-display font-bold text-2xl text-red">
+                    {formatPeso(financialSummary?.totalFundsSpent ?? 0)}
+                  </p>
+                  <p className="text-xs font-medium text-text-secondary">
                     Funds Spent
-                  </span>
+                  </p>
                 </div>
-                <p className="font-display font-bold text-2xl text-red">
-                  {formatPeso(financialSummary?.totalFundsSpent ?? 0)}
-                </p>
               </div>
 
-              <div className="summary-card glass-card p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                    <PieChart className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <span className="text-xs font-medium text-text-secondary">
+              <div className="summary-card glass-card p-5 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center shrink-0">
+                  <PieChart className="w-6 h-6 text-purple-600" />
+                </div>
+                <div>
+                  <p className="font-display font-bold text-2xl text-purple-600">
+                    {formatPeso(financialSummary?.remainingBudget ?? 0)}
+                  </p>
+                  <p className="text-xs font-medium text-text-secondary">
                     Remaining
-                  </span>
+                  </p>
                 </div>
-                <p className="font-display font-bold text-2xl text-purple-600">
-                  {formatPeso(financialSummary?.remainingBudget ?? 0)}
-                </p>
               </div>
             </div>
-
-            {/* Event Allocations */}
-            <div ref={allocationRef} className="glass-card p-5 lg:p-6 mb-8">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <PieChart className="w-5 h-5 text-red" />
-                </div>
-                <h3 className="font-display font-semibold text-lg text-dark">
-                  Event Allocations
-                </h3>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Allocation</th>
-                      <th>Collected</th>
-                      <th>Spent</th>
-                      <th>Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {eventAllocations.map((allocation) => (
-                      <tr key={allocation.eventId}>
-                        <td className="font-medium text-dark">
-                          {allocation.eventName}
-                        </td>
-                        <td className="text-text-secondary">
-                          {formatPeso(allocation.allocationAmount)}
-                        </td>
-                        <td className="text-green-600">
-                          {formatPeso(allocation.totalCollected)}
-                        </td>
-                        <td className="text-red">
-                          {formatPeso(allocation.totalSpent)}
-                        </td>
-                        <td className="font-medium text-dark">
-                          {formatPeso(allocation.remainingBalance)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {eventAllocations.length === 0 && (
-                <SectionEmptyState
-                  message="No event allocations found"
-                  icon={PieChart}
-                  compact
-                />
-              )}
-            </div>
-
             {/* Transaction Ledger */}
             <div ref={ledgerRef} className="glass-card p-5 lg:p-6 mb-8">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -724,6 +668,60 @@ export default function TransparencyBoardSection({
                 <SectionEmptyState
                   message="No transactions found"
                   icon={FileText}
+                  compact
+                />
+              )}
+            </div>
+            {/* Event Allocations */}
+            <div ref={allocationRef} className="glass-card p-5 lg:p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                  <PieChart className="w-5 h-5 text-red" />
+                </div>
+                <h3 className="font-display font-semibold text-lg text-dark">
+                  Event Allocations
+                </h3>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="glass-table">
+                  <thead>
+                    <tr>
+                      <th>Event</th>
+                      <th>Allocation</th>
+                      <th>Collected</th>
+                      <th>Spent</th>
+                      <th>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eventAllocations.map((allocation) => (
+                      <tr key={allocation.eventId}>
+                        <td className="font-medium text-dark">
+                          {allocation.eventName}
+                        </td>
+                        <td className="text-text-secondary">
+                          {formatPeso(allocation.allocationAmount)}
+                        </td>
+                        <td className="text-green-600">
+                          {formatPeso(allocation.totalCollected)}
+                        </td>
+                        <td className="text-red">
+                          {formatPeso(allocation.totalSpent)}
+                        </td>
+                        <td className="font-medium text-dark">
+                          {formatPeso(allocation.remainingBalance)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {eventAllocations.length === 0 && (
+                <SectionEmptyState
+                  message="No event allocations found"
+                  icon={PieChart}
                   compact
                 />
               )}

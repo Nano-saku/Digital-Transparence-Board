@@ -1,10 +1,12 @@
 ﻿import { useState, useEffect } from "react";
-import { Menu, X, Shield } from "lucide-react";
+import { Menu, X, Shield, LogOut } from "lucide-react";
 import type { ViewState, UserRole } from "@/types";
+
 interface NavigationProps {
   currentView: ViewState;
   onNavigate: (view: ViewState) => void;
   role: UserRole | null;
+  onLogout: () => void;
 }
 
 type NavItem = {
@@ -51,10 +53,6 @@ function buildAdminNavItems(role: UserRole | null): {
       : []),
 
     ...(role === "admin" || role === "treasurer" || role === "auditor"
-      ? [{ label: "Payments", view: "payment-management" as ViewState }]
-      : []),
-
-    ...(role === "admin" || role === "treasurer" || role === "auditor"
       ? [
           {
             label: "Contributions",
@@ -97,14 +95,17 @@ export default function Navigation({
   currentView,
   onNavigate,
   role,
+  onLogout,
 }: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isManagementOpen, setIsManagementOpen] = useState(false);
 
   const isLoggedIn = !!role;
+
   const adminViews: ViewState[] = [
     "admin-dashboard",
+    "landing",
     "student-management",
     "event-management",
     "payment-management",
@@ -115,6 +116,7 @@ export default function Navigation({
     "report-management",
     "requirement-files-management",
   ];
+
   const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
 
   const adminNav = isLoggedIn
@@ -122,6 +124,7 @@ export default function Navigation({
     : { main: [], management: [] };
 
   const navItems = isLoggedIn ? adminNav.main : PUBLIC_NAV_ITEMS;
+
   const managementItems = isLoggedIn ? adminNav.management : [];
 
   const isManagementView = managementItems.some(
@@ -133,9 +136,13 @@ export default function Navigation({
       setIsScrolled(window.scrollY > 50);
     };
 
-    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("scroll", handleScroll, {
+      passive: true,
+    });
+
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
   if (!isPublicPage && !isLoggedIn) {
     return null;
   }
@@ -145,6 +152,14 @@ export default function Navigation({
     setIsMobileMenuOpen(false);
   };
 
+  const handleLogout = () => {
+    onLogout();
+
+    // Close any open navigation menus
+    setIsMobileMenuOpen(false);
+    setIsManagementOpen(false);
+  };
+
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
@@ -152,13 +167,15 @@ export default function Navigation({
           ? "bg-deep-navy/95 backdrop-blur-lg shadow-lg"
           : "bg-deep-navy"
       }`}
-      style={{ borderBottom: "1px solid rgba(201,163,78,0.25)" }}
+      style={{
+        borderBottom: "1px solid rgba(201,163,78,0.25)",
+      }}
     >
       <div className="w-full px-6 lg:px-12">
         <div className="flex items-center justify-between h-16 lg:h-20">
           {/* Logo */}
           <button
-            onClick={() => go(isLoggedIn ? "admin-dashboard" : "landing")}
+            onClick={() => go("landing")}
             className="flex items-center gap-3 group p-0"
           >
             <img
@@ -166,10 +183,12 @@ export default function Navigation({
               alt="Local Student Council logo"
               className="w-9 h-9 rounded-lg object-cover ring-2 ring-lsc-gold/40"
             />
+
             <div className="flex flex-col leading-tight">
               <span className="font-display font-bold text-white text-base tracking-wide group-hover:text-lsc-gold transition-colors">
                 DSSC — LSC
               </span>
+
               <span className="text-silver-gray text-[0.65rem] tracking-widest uppercase">
                 Santa Cruz
               </span>
@@ -178,6 +197,7 @@ export default function Navigation({
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-8">
+            {/* Main Navigation Items */}
             {navItems.map((item) => (
               <button
                 key={item.label}
@@ -200,6 +220,7 @@ export default function Navigation({
                   }`}
                 >
                   <span>Management</span>
+
                   <span
                     className={`text-xs transition-transform duration-200 ${
                       isManagementOpen ? "rotate-180" : ""
@@ -241,6 +262,17 @@ export default function Navigation({
               </div>
             )}
 
+            {/* Logout */}
+            {isLoggedIn && (
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 text-sm text-silver-gray hover:text-red-400 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Logout</span>
+              </button>
+            )}
+
             {/* Admin Access Link */}
             {!isLoggedIn && (
               <button
@@ -277,6 +309,7 @@ export default function Navigation({
           }}
         >
           <div className="flex flex-col gap-1 p-3">
+            {/* Main Navigation Items */}
             {navItems.map((item) => (
               <button
                 key={item.label}
@@ -290,6 +323,8 @@ export default function Navigation({
                 {item.label}
               </button>
             ))}
+
+            {/* Mobile Management */}
             {isLoggedIn && managementItems.length > 0 && (
               <div className="mt-1">
                 <button
@@ -301,6 +336,7 @@ export default function Navigation({
                   }`}
                 >
                   <span>Management</span>
+
                   <span
                     className={`transition-transform duration-200 ${
                       isManagementOpen ? "rotate-180" : ""
@@ -333,6 +369,7 @@ export default function Navigation({
               </div>
             )}
 
+            {/* Mobile Admin Access */}
             {!isLoggedIn && (
               <button
                 onClick={() => go("admin-login")}
@@ -341,6 +378,21 @@ export default function Navigation({
                 <Shield className="w-4 h-4" />
                 <span>Admin Access</span>
               </button>
+            )}
+
+            {/* Mobile Logout */}
+            {isLoggedIn && (
+              <>
+                <div className="my-2 border-t border-white/10" />
+
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-3 rounded-lg font-medium text-sm text-silver-gray hover:text-red-400 hover:bg-white/5 transition-colors flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Logout</span>
+                </button>
+              </>
             )}
           </div>
         </div>
