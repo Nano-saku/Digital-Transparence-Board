@@ -74,6 +74,7 @@ import SectionBackButton from "@/components/SectionBackButton";
 import TimeInput12 from "@/features/events/TimeInput12";
 import AttendanceAnalysisChart from "@/features/events/AttendanceAnalysisChart";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import Pagination from "@/components/common/Pagination";
 
 interface EventManagementSectionProps {
   onBack: () => void;
@@ -267,7 +268,10 @@ export default function EventManagementSection({
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [attendanceSession, setAttendanceSession] =
     useState<EventSession>("morning");
+  const [attendancePage, setAttendancePage] = useState(1);
   const [manualSearchQuery, setManualSearchQuery] = useState("");
+
+  const ATTENDANCE_PAGE_SIZE = 20;
 
   // Auto-filter state set by QR scan — when a student is scanned, the table
   // auto-filters to their Course & Section and highlights them at the top.
@@ -1200,6 +1204,41 @@ export default function EventManagementSection({
     scannedSection,
     lastScannedStudentId,
   ]);
+
+  // Keep the attendance table on the first page whenever one of its filters
+  // changes. Attendance records remain in the full attendanceMap/state; only
+  // the rows rendered by this table are paginated.
+  useEffect(() => {
+    setAttendancePage(1);
+  }, [
+    selectedEventForAttendance,
+    attendanceSession,
+    attendanceSearchTerm,
+    scannedCourse,
+    scannedSection,
+    lastScannedStudentId,
+  ]);
+
+  const attendanceTotalPages = Math.max(
+    1,
+    Math.ceil(filteredStudents.length / ATTENDANCE_PAGE_SIZE),
+  );
+  const currentAttendancePage = Math.min(
+    attendancePage,
+    attendanceTotalPages,
+  );
+  const attendancePageStartIndex =
+    (currentAttendancePage - 1) * ATTENDANCE_PAGE_SIZE;
+  const paginatedStudents = filteredStudents.slice(
+    attendancePageStartIndex,
+    attendancePageStartIndex + ATTENDANCE_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    if (attendancePage > attendanceTotalPages) {
+      setAttendancePage(attendanceTotalPages);
+    }
+  }, [attendancePage, attendanceTotalPages]);
 
   // The last scanned student object for the "Last Scanned" banner
   const lastScannedStudent = lastScannedStudentId
@@ -2252,7 +2291,7 @@ export default function EventManagementSection({
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredStudents.map((student) => {
+                          {paginatedStudents.map((student) => {
                             const record = attendanceMap.get(student.id);
                             const isPresent = record?.status === "present";
                             const isLastScanned =
@@ -2407,6 +2446,22 @@ export default function EventManagementSection({
                         </tbody>
                       </table>
                     </div>
+                    <Pagination
+                      page={currentAttendancePage}
+                      totalPages={attendanceTotalPages}
+                      totalItems={filteredStudents.length}
+                      startIndex={attendancePageStartIndex}
+                      endIndex={attendancePageStartIndex + paginatedStudents.length}
+                      onPrev={() =>
+                        setAttendancePage((page) => Math.max(1, page - 1))
+                      }
+                      onNext={() =>
+                        setAttendancePage((page) =>
+                          Math.min(attendanceTotalPages, page + 1),
+                        )
+                      }
+                      onJump={setAttendancePage}
+                    />
                   </>
                 )}
 
