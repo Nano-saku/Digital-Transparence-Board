@@ -528,7 +528,7 @@ export default function RequirementFilesManagementSection({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.txt"
+                  accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*"
                   onChange={handleFilePick}
                   className="block w-full text-sm text-text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-royal-blue file:text-white file:text-sm file:cursor-pointer"
                 />
@@ -605,7 +605,7 @@ export default function RequirementFilesManagementSection({
             <input
               ref={replaceInputRef}
               type="file"
-              accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.txt"
+              accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*"
               onChange={handleReplacePick}
               className="block w-full text-sm text-text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-royal-blue file:text-white file:text-sm file:cursor-pointer"
             />

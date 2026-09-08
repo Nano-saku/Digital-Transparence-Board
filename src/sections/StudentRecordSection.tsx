@@ -11,7 +11,6 @@ import {
   QrCode,
   ChevronDown,
   Clock,
-  ExternalLink,
   FolderOpen,
   Eye,
 } from "lucide-react";
@@ -42,6 +41,7 @@ import {
 } from "@/lib/receipts";
 import ReceiptViewer from "@/components/ReceiptViewer";
 import StudentQrModal from "@/components/StudentQrModal";
+import FilePreview from "@/components/FilePreview";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -711,24 +711,7 @@ export default function StudentRecordSection({
               )}
 
               <div className="max-h-[55vh] overflow-auto rounded-lg bg-white/30">
-                {previewFile.fileType?.startsWith("image/") ||
-                /\.(png|jpe?g|gif|webp|svg)$/i.test(previewFile.fileName) ? (
-                  <img
-                    src={previewFile.fileUrl}
-                    alt={previewFile.title}
-                    className="w-full rounded-lg"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src =
-                        "/file-placeholder.svg";
-                    }}
-                  />
-                ) : (
-                  <iframe
-                    src={previewFile.fileUrl}
-                    title={previewFile.title}
-                    className="w-full h-[55vh] rounded-lg"
-                  />
-                )}
+                <FilePreview file={previewFile} />
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -747,19 +730,6 @@ export default function StudentRecordSection({
                     <Download className="w-4 h-4" />
                     Download
                   </a>
-                  <button
-                    onClick={() =>
-                      window.open(
-                        previewFile.fileUrl,
-                        "_blank",
-                        "noopener,noreferrer",
-                      )
-                    }
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm glass-button"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    Open in new tab
-                  </button>
                 </div>
               </div>
             </div>
