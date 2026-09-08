@@ -33,10 +33,10 @@ function buildAdminNavItems(role: UserRole | null): {
       ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),
 
-    ...(role === "admin"
+    ...(role
       ? [
           {
-            label: "Student Requirement Files",
+            label: "Council Sharing Files",
             view: "requirement-files-management" as ViewState,
           },
         ]

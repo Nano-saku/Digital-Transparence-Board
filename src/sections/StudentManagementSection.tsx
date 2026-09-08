@@ -8,6 +8,7 @@ import {
   Save,
   Loader2,
   QrCode,
+  MoreVertical,
 } from "lucide-react";
 import { getOrdinalSuffix } from "@/lib/format";
 import SectionLoader from "@/components/SectionLoader";
@@ -24,6 +25,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import StudentQrModal from "@/components/StudentQrModal";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { pickField } from "@/lib/spreadsheet";
 import { ATTENDANCE_COURSES } from "@/lib/kmeans";
@@ -71,16 +79,21 @@ export default function StudentManagementSection({
     }
   };
 
-  const { searchTerm, setSearchTerm, filters, setFilter, filtered: filteredStudents } =
-    useSearch<Student>({
-      items: students,
-      searchKeys: ["name", "studentId"],
-      filters: {
-        program: (s) => s.program,
-        year: (s) => s.yearLevel.toString(),
-        section: (s) => s.section?.trim().replace(/^\d+/, "") ?? "",
-      },
-    });
+  const {
+    searchTerm,
+    setSearchTerm,
+    filters,
+    setFilter,
+    filtered: filteredStudents,
+  } = useSearch<Student>({
+    items: students,
+    searchKeys: ["name", "studentId"],
+    filters: {
+      program: (s) => s.program,
+      year: (s) => s.yearLevel.toString(),
+      section: (s) => s.section?.trim().replace(/^\d+/, "") ?? "",
+    },
+  });
 
   const programs = useMemo(
     () =>
@@ -307,11 +320,10 @@ export default function StudentManagementSection({
 
   // Shared CSV / Excel file-read shell + importing state (row mapping handled by
   // importStudentRows above).
-  const { importing, handleFileSelected, importInputRef } = useSpreadsheetImport(
-    {
+  const { importing, handleFileSelected, importInputRef } =
+    useSpreadsheetImport({
       onRows: importStudentRows,
-    },
-  );
+    });
 
   return (
     <SectionLayout
@@ -355,152 +367,199 @@ export default function StudentManagementSection({
         onChange={handleFileSelected}
       />
 
-        {/* Filters */}
-        <div className="glass-card p-4 mb-4 flex flex-wrap gap-3">
-          <SearchFilterBar
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search students..."
-            className="flex-1 min-w-[200px]"
-          />
-          <select
-            value={filters.program}
-            onChange={(e) => setFilter("program", e.target.value)}
-            className="glass-input px-4 py-2 text-sm"
-            disabled={loading}
-          >
-            <option value="">All Programs</option>
-            {programs.map((program) => (
-              <option key={program} value={program}>
-                {program}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.year}
-            onChange={(e) => setFilter("year", e.target.value)}
-            className="glass-input px-4 py-2 text-sm"
-            disabled={loading}
-          >
-            <option value="">All Years</option>
-            {yearLevels.map((year) => (
-              <option key={year} value={year}>
-                {year}
-                {getOrdinalSuffix(year)} Year
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.section}
-            onChange={(e) => setFilter("section", e.target.value)}
-            className="glass-input px-4 py-2 text-sm"
-            disabled={loading}
-          >
-            <option value="">All Sections</option>
+      {/* Filters */}
+      <div className="glass-card p-4 mb-4 flex flex-wrap gap-3">
+        <SearchFilterBar
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="Search students..."
+          className="flex-1 min-w-[200px]"
+        />
+        <select
+          value={filters.program}
+          onChange={(e) => setFilter("program", e.target.value)}
+          className="glass-input px-4 py-2 text-sm"
+          disabled={loading}
+        >
+          <option value="">All Programs</option>
+          {programs.map((program) => (
+            <option key={program} value={program}>
+              {program}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.year}
+          onChange={(e) => setFilter("year", e.target.value)}
+          className="glass-input px-4 py-2 text-sm"
+          disabled={loading}
+        >
+          <option value="">All Years</option>
+          {yearLevels.map((year) => (
+            <option key={year} value={year}>
+              {year}
+              {getOrdinalSuffix(year)} Year
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.section}
+          onChange={(e) => setFilter("section", e.target.value)}
+          className="glass-input px-4 py-2 text-sm"
+          disabled={loading}
+        >
+          <option value="">All Sections</option>
 
-            {sections.map((section) => (
-              <option key={section} value={section}>
-                Section {section}
-              </option>
-            ))}
-          </select>
-        </div>
+          {sections.map((section) => (
+            <option key={section} value={section}>
+              Section {section}
+            </option>
+          ))}
+        </select>
+      </div>
 
-        {/* Loading State */}
-        {loading && <SectionLoader message="Loading students..." />}
+      {/* Loading State */}
+      {loading && <SectionLoader message="Loading students..." />}
 
-        {/* Students Table */}
-        {!loading && (
-          <div className="glass-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="glass-table">
-                <thead>
-                  <tr>
-                    <th>Student ID</th>
-                    <th>Name</th>
-                    <th>Program</th>
-                    <th>Year</th>
-                    <th>Section</th>
-                    <th className="text-center">QR</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredStudents.map((student) => (
-                    <tr key={student.id} className="group">
-                      <td className="font-medium text-dark">
-                        {student.studentId}
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full bg-red/10 flex items-center justify-center">
+      {/* Students Table */}
+      {!loading && (
+        <div className="glass-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="glass-table w-full">
+              <colgroup>
+                <col className="w-[35%]" />
+                <col className="w-auto" />
+                <col className="w-[300px]" />
+              </colgroup>
+
+              <thead>
+                <tr>
+                  <th className="!text-center px-3 py-2.5">Student</th>
+
+                  <th className="!text-center px-3 py-2.5">
+                    Program - Year - Section
+                  </th>
+
+                  <th className="!text-right whitespace-nowrap px-3 py-2.5">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredStudents.map((student) => (
+                  <tr key={student.id} className="group">
+                    <td className="!text-center px-5 py-2.5">
+                      <div className="inline-block w-[400px] max-w-full text-left">
+                        <div className="flex items-center gap-10">
+                          {/* Avatar */}
+                          <div className="w-9 h-9 shrink-0 rounded-full bg-red/10 flex items-center justify-center">
                             <User className="w-4 h-4 text-red" />
                           </div>
+
+                          {/* Name + Student ID */}
+                          <div className="min-w-0 flex-1 leading-tight">
+                            <div className="font-medium text-dark text-[19px] truncate">
+                              {student.name}
+                            </div>
+
+                            <div className="text-xs text-gray-400 text-[15px] mt-1">
+                              {student.studentId}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Program / Year / Section */}
+                    <td className="!text-center px-5 py-2.5">
+                      <div className="inline-block w-[250px] max-w-full text-left">
+                        <div className="text-text-secondary text-[17px] whitespace-nowrap ">
                           <span className="font-medium text-dark">
-                            {student.name}
+                            {student.program}
                           </span>
-                        </div>
-                      </td>
-                      <td className="text-text-secondary">{student.program}</td>
-                      <td className="text-text-secondary">
-                        {student.yearLevel}
-                        {getOrdinalSuffix(student.yearLevel)} Year
-                      </td>
-                      <td className="text-text-secondary">{student.section}</td>
-                      <td className="text-center">
-                        <button
-                          onClick={() => setQrStudent(student)}
-                          className="p-2 rounded-lg"
-                          title={`Download attendance QR for ${student.name}`}
-                        >
-                          <QrCode className="w-4 h-4 text-dark" />
-                        </button>
-                      </td>
-                      <td className="text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openEditModal(student)}
-                            className="p-2 rounded-lg"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4 text-blue-600" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteStudent(student)}
-                            className="p-2 rounded-lg hover:bg-red-500/10"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4 text-red" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
 
-            {filteredStudents.length === 0 && (
-              <SectionEmptyState
-                message="No students found"
-                icon={User}
-                compact
-              />
-            )}
+                          <span className="mx-1.5 text-gray-300"> • </span>
+
+                          <span>
+                            {student.yearLevel}
+                            {getOrdinalSuffix(student.yearLevel)} Year
+                          </span>
+
+                          <span className="mx-1.5 text-gray-300"> • </span>
+
+                          <span>Section {student.section}</span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="!text-right px-3 py-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            className="inline-flex items-center justify-center w-7 h-7 rounded-lg hover:bg-black/5 transition-colors"
+                            aria-label={`Actions for ${student.name}`}
+                            title="Student actions"
+                          >
+                            <MoreVertical className="w-4 h-4 text-dark" />
+                          </button>
+                        </DropdownMenuTrigger>
+
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem
+                            onSelect={() => setQrStudent(student)}
+                          >
+                            <QrCode className="w-4 h-4" />
+                            Show QR
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onSelect={() => openEditModal(student)}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                            Edit
+                          </DropdownMenuItem>
+
+                          <DropdownMenuSeparator />
+
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => handleDeleteStudent(student)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
 
-        {/* Stats */}
-        <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
-          <span>
-            Total Students:{" "}
-            <strong className="text-dark">{students.length}</strong>
-          </span>
-          <span>
-            Filtered:{" "}
-            <strong className="text-dark">{filteredStudents.length}</strong>
-          </span>
+          {filteredStudents.length === 0 && (
+            <SectionEmptyState
+              message="No students found"
+              icon={User}
+              compact
+            />
+          )}
         </div>
+      )}
+
+      {/* Stats */}
+      <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
+        <span>
+          Total Students:{" "}
+          <strong className="text-dark">{students.length}</strong>
+        </span>
+        <span>
+          Filtered:{" "}
+          <strong className="text-dark">{filteredStudents.length}</strong>
+        </span>
+      </div>
 
       {/* Add/Edit Modal */}
       <Dialog

@@ -1563,6 +1563,7 @@ const mapStudentRequirementFile = (
   fileSize: (item.file_size as number | null) ?? undefined,
   fileType: (item.file_type as string | null) || undefined,
   isPublished: (item.is_published as boolean) ?? false,
+  restricted: (item.restricted as boolean) ?? false,
   createdBy: (item.created_by as string) ?? "",
   createdAt: (item.created_at as string) ?? "",
   updatedAt: (item.updated_at as string) ?? "",
@@ -1583,19 +1584,77 @@ export const studentRequirementFilesService = {
     );
   },
 
-  async getPublished(): Promise<StudentRequirementFile[]> {
+  /**
+   * Files a specific student is allowed to see: published files open to
+   * everyone, plus published-but-restricted files where this student is on
+   * the access list. Resolved server-side via get_student_requirement_files
+   * so a restricted file's contents never have to reach a client that
+   * shouldn't see it.
+   */
+  async getVisibleForStudent(
+    studentId: string,
+  ): Promise<StudentRequirementFile[]> {
     return cachedRead<StudentRequirementFile>(
       "student_requirement_files",
       async () => {
-        const { data, error } = await getSupabase()
-          .from("student_requirement_files")
-          .select("*")
-          .eq("is_published", true)
-          .order("created_at", { ascending: false });
+        const { data, error } = await getSupabase().rpc(
+          "get_student_requirement_files",
+          { p_student_id: studentId },
+        );
         if (error) throw error;
         return (data ?? []).map(mapStudentRequirementFile);
       },
     );
+  },
+
+  /** IDs of students currently on a restricted file's access list. */
+  async getAccessList(fileId: string): Promise<string[]> {
+    const { data, error } = await getSupabase()
+      .from("student_requirement_file_access")
+      .select("student_id")
+      .eq("file_id", fileId);
+    if (error) throw error;
+    return (data ?? []).map((row) => row.student_id as string);
+  },
+
+  /**
+   * Replaces a restricted file's access list with exactly `studentIds`,
+   * diffing against the current list so only the actual additions/removals
+   * hit the database. Network-only (like paymentsService.delete()) -- this
+   * is a compound multi-row op the single-record offline mutation queue
+   * can't represent, and assignment is always done from the Admin console
+   * while online.
+   */
+  async setAccessList(fileId: string, studentIds: string[]): Promise<void> {
+    const current = await this.getAccessList(fileId);
+    const currentSet = new Set(current);
+    const nextSet = new Set(studentIds);
+
+    const toAdd = studentIds.filter((id) => !currentSet.has(id));
+    const toRemove = current.filter((id) => !nextSet.has(id));
+
+    if (toRemove.length > 0) {
+      const { error } = await getSupabase()
+        .from("student_requirement_file_access")
+        .delete()
+        .eq("file_id", fileId)
+        .in("student_id", toRemove);
+      if (error) throw error;
+    }
+
+    if (toAdd.length > 0) {
+      const now = new Date().toISOString();
+      const { error } = await getSupabase()
+        .from("student_requirement_file_access")
+        .insert(
+          toAdd.map((studentId) => ({
+            file_id: fileId,
+            student_id: studentId,
+            created_at: now,
+          })),
+        );
+      if (error) throw error;
+    }
   },
 
   async create(input: {
@@ -1648,6 +1707,7 @@ export const studentRequirementFilesService = {
           fileSize: input.file.size,
           fileType: input.file.type,
           isPublished: input.isPublished ?? false,
+          restricted: false,
           createdBy: input.createdBy,
           createdAt: now,
           updatedAt: now,
@@ -1677,9 +1737,15 @@ export const studentRequirementFilesService = {
     return result;
   },
 
-  async update(id: string, input: {
-    title?: string; description?: string; isPublished?: boolean;
-  }): Promise<StudentRequirementFile> {
+  async update(
+    id: string,
+    input: {
+      title?: string;
+      description?: string;
+      isPublished?: boolean;
+      restricted?: boolean;
+    },
+  ): Promise<StudentRequirementFile> {
     const updateData: Record<string, unknown> = {};
     const localPatch: Partial<StudentRequirementFile> = {};
     if (input.title !== undefined) {
@@ -1693,6 +1759,10 @@ export const studentRequirementFilesService = {
     if (input.isPublished !== undefined) {
       updateData.is_published = input.isPublished;
       localPatch.isPublished = input.isPublished;
+    }
+    if (input.restricted !== undefined) {
+      updateData.restricted = input.restricted;
+      localPatch.restricted = input.restricted;
     }
     const updatedAt = new Date().toISOString();
     updateData.updated_at = updatedAt;
@@ -1726,7 +1796,9 @@ export const studentRequirementFilesService = {
   },
 
   async replaceFile(
-    id: string, file: Blob, fileName: string,
+    id: string,
+    file: Blob,
+    fileName: string,
   ): Promise<StudentRequirementFile> {
     const extension = fileName.split(".").pop()?.toLowerCase() || "pdf";
     const path = `requirements/${crypto.randomUUID()}.${extension}`;
@@ -1780,13 +1852,24 @@ export const studentRequirementFilesService = {
         if (oldUrl.includes("/requirements/")) {
           try {
             const oldPath = oldUrl.split("/requirements/")[1];
-            if (oldPath) await getSupabase().storage.from("student-requirements").remove([`requirements/${oldPath}`]);
-          } catch (e) { console.warn("Could not remove old requirement file:", e); }
+            if (oldPath)
+              await getSupabase()
+                .storage.from("student-requirements")
+                .remove([`requirements/${oldPath}`]);
+          } catch (e) {
+            console.warn("Could not remove old requirement file:", e);
+          }
         }
 
         const { data: updated, error } = await getSupabase()
           .from("student_requirement_files")
-          .update({ file_url: urlData.publicUrl, file_name: fileName, file_size: file.size, file_type: file.type, updated_at: updatedAt })
+          .update({
+            file_url: urlData.publicUrl,
+            file_name: fileName,
+            file_size: file.size,
+            file_type: file.type,
+            updated_at: updatedAt,
+          })
           .eq("id", id)
           .select()
           .single();
@@ -1820,12 +1903,15 @@ export const studentRequirementFilesService = {
         if (fileUrl.includes("/requirements/")) {
           try {
             const fileName = fileUrl.split("/requirements/")[1];
-            if (fileName) await getSupabase().storage.from("student-requirements").remove([`requirements/${fileName}`]);
-          } catch (e) { console.warn("Could not remove requirement file from storage:", e); }
+            if (fileName)
+              await getSupabase()
+                .storage.from("student-requirements")
+                .remove([`requirements/${fileName}`]);
+          } catch (e) {
+            console.warn("Could not remove requirement file from storage:", e);
+          }
         }
       },
     });
   },
 };
-
-
