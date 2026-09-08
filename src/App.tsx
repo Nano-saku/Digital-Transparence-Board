@@ -413,7 +413,6 @@ function App() {
         onLogout={handleLogout}
       />
       {/* Main Content */}
-      // after
       <main className="relative">
         <Suspense fallback={<SectionFallback />}>{renderView()}</Suspense>
       </main>
