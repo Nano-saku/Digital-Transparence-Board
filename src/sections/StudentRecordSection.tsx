@@ -520,7 +520,11 @@ export default function StudentRecordSection({
                                         className="glass-card-strong"
                                       >
                                         {(
-                                          ["svg", "png", "jpg"] as ReceiptFormat[]
+                                          [
+                                            "svg",
+                                            "png",
+                                            "jpg",
+                                          ] as ReceiptFormat[]
                                         ).map((format) => (
                                           <DropdownMenuItem
                                             key={format}

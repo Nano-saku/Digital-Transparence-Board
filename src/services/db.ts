@@ -25,11 +25,6 @@ const createRecordId = (): string => crypto.randomUUID();
 type OfflineTable = Parameters<typeof offlineSyncService.read>[0];
 
 // Shared "online-first, cache-fallback" read pattern used by every getAll().
-// - If we already know we're offline, skip the network round-trip and go
-//   straight to the cache.
-// - Otherwise try the network; on success, refresh the cache for next time.
-// - On any failure (including a network error the sync service hasn't
-//   noticed yet), fall back to whatever is cached before giving up.
 async function cachedRead<T>(
   table: OfflineTable,
   fetcher: () => Promise<T[]>,
@@ -50,41 +45,33 @@ async function cachedRead<T>(
 }
 
 const mapEvent = (item: Record<string, unknown>): Event => {
-  const memberIds = Array.isArray(item.assigned_member_ids)
-    ? (item.assigned_member_ids as string[])
-    : [];
-
-  const memberNames = Array.isArray(item.assigned_member_names)
-    ? (item.assigned_member_names as string[])
-    : [];
-
-  const schedules = Array.isArray(item.schedules)
-    ? (item.schedules as EventSchedule[])
-    : [];
+  // Handle schedules that might be stored as JSON string or array
+  let schedules: EventSchedule[] = [];
+  if (Array.isArray(item.schedules)) {
+    schedules = item.schedules as EventSchedule[];
+  } else if (typeof item.schedules === "string") {
+    try {
+      const parsed = JSON.parse(item.schedules);
+      schedules = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      schedules = [];
+    }
+  }
 
   return {
     id: item.id as string,
     name: item.name as string,
     allocationAmount: item.allocation_amount as number,
     date: (item.date as string | null) ?? undefined,
-
     schedules,
-
     timeIn: (item.time_in as string | null) || undefined,
     timeOut: (item.time_out as string | null) || undefined,
-
     morningTimeIn: (item.morning_time_in as string | null) || undefined,
-
     morningTimeOut: (item.morning_time_out as string | null) || undefined,
-
     afternoonTimeIn: (item.afternoon_time_in as string | null) || undefined,
-
     afternoonTimeOut: (item.afternoon_time_out as string | null) || undefined,
-
-    assignedMembers: memberIds.map((memberId, index) => ({
-      memberId,
-      memberName: memberNames[index] ?? "Unknown member",
-    })),
+    eveningTimeIn: (item.evening_time_in as string | null) || undefined,
+    eveningTimeOut: (item.evening_time_out as string | null) || undefined,
   };
 };
 
@@ -350,10 +337,8 @@ export const eventsService = {
       morning_time_out: event.morningTimeOut ?? "",
       afternoon_time_in: event.afternoonTimeIn ?? "",
       afternoon_time_out: event.afternoonTimeOut ?? "",
-      assigned_member_ids:
-        event.assignedMembers?.map((member) => member.memberId) ?? [],
-      assigned_member_names:
-        event.assignedMembers?.map((member) => member.memberName) ?? [],
+      evening_time_in: event.eveningTimeIn ?? "",
+      evening_time_out: event.eveningTimeOut ?? "",
     };
 
     const result = await offlineSyncService.mutation<Event>({
@@ -397,14 +382,10 @@ export const eventsService = {
       updateData.afternoon_time_in = event.afternoonTimeIn;
     if (event.afternoonTimeOut !== undefined)
       updateData.afternoon_time_out = event.afternoonTimeOut;
-    if (event.assignedMembers !== undefined) {
-      updateData.assigned_member_ids = event.assignedMembers.map(
-        (member) => member.memberId,
-      );
-      updateData.assigned_member_names = event.assignedMembers.map(
-        (member) => member.memberName,
-      );
-    }
+    if (event.eveningTimeIn !== undefined)
+      updateData.evening_time_in = event.eveningTimeIn;
+    if (event.eveningTimeOut !== undefined)
+      updateData.evening_time_out = event.eveningTimeOut;
 
     const result = await offlineSyncService.mutation<Event>({
       table: "events",
@@ -447,6 +428,8 @@ export const eventsService = {
     });
   },
 };
+
+// ... rest of the file remains the same ...
 
 // ============================================
 // ATTENDANCE SERVICE

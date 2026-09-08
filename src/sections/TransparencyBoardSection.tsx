@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { formatDate, today, formatPeso } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
@@ -87,6 +88,9 @@ export default function TransparencyBoardSection({
   // Transaction ledger CRUD state (admin mode only)
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [editingTransaction, setEditingTransaction] =
+    useState<Transaction | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] =
     useState<Transaction | null>(null);
   const [transactionForm, setTransactionForm] = useState({
     date: today(),
@@ -400,20 +404,28 @@ export default function TransparencyBoardSection({
     }
   };
 
-  const handleDeleteTransaction = async (transaction: Transaction) => {
-    if (
-      !window.confirm(
-        `Delete transaction "${transaction.description}"? This cannot be undone.`,
-      )
-    )
-      return;
+  const handleOpenDeleteTransaction = (transaction: Transaction) => {
+    setTransactionToDelete(transaction);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleDeleteTransaction = async () => {
+    if (!transactionToDelete) return;
+
     try {
-      await transactionsService.delete(transaction.id);
+      setSaving(true);
+
+      await transactionsService.delete(transactionToDelete.id);
       await loadData();
+
       toast.success("Transaction deleted");
+      setShowDeleteConfirm(false);
+      setTransactionToDelete(null);
     } catch (error) {
       console.error("Error deleting transaction:", error);
       toast.error("Failed to delete transaction");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -565,103 +577,104 @@ export default function TransparencyBoardSection({
                   )}
                 </div>
               </div>
-
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Description</th>
-                      <th>Event</th>
-                      <th>Type</th>
-                      <th>Amount</th>
-                      <th>Officer</th>
-                      <th>Receipt</th>
-                      {canManageLedger && <th>Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTransactions.map((transaction) => (
-                      <tr key={transaction.id}>
-                        <td className="text-text-secondary">
-                          {formatDate(transaction.date)}
-                        </td>
-                        <td className="font-medium text-dark">
-                          {transaction.description}
-                        </td>
-                        <td className="text-text-secondary">
-                          {transaction.eventName || "-"}
-                        </td>
-                        <td>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-medium ${
+              <div className="rounded-xl overflow-hidden border border-gray-200">
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Event</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Officer</th>
+                        <th>Receipt</th>
+                        {canManageLedger && <th>Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTransactions.map((transaction) => (
+                        <tr key={transaction.id}>
+                          <td className="text-text-secondary">
+                            {formatDate(transaction.date)}
+                          </td>
+                          <td className="font-medium text-dark">
+                            {transaction.description}
+                          </td>
+                          <td className="text-text-secondary">
+                            {transaction.eventName || "-"}
+                          </td>
+                          <td>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                transaction.type === "income"
+                                  ? "bg-green-100 text-green-600"
+                                  : "bg-red/10 text-red-500"
+                              }`}
+                            >
+                              {transaction.type === "income"
+                                ? "Income"
+                                : "Expense"}
+                            </span>
+                          </td>
+                          <td
+                            className={`font-medium ${
                               transaction.type === "income"
-                                ? "bg-green-100 text-green-600"
-                                : "bg-red/10 text-red-500"
+                                ? "text-green-600"
+                                : "text-red-500"
                             }`}
                           >
-                            {transaction.type === "income"
-                              ? "Income"
-                              : "Expense"}
-                          </span>
-                        </td>
-                        <td
-                          className={`font-medium ${
-                            transaction.type === "income"
-                              ? "text-green-600"
-                              : "text-red-500"
-                          }`}
-                        >
-                          {transaction.type === "income" ? "+" : "-"}
-                          {formatPeso(transaction.amount)}
-                        </td>
-                        <td className="text-text-secondary">
-                          {transaction.responsibleOfficer}
-                        </td>
-                        <td>
-                          {transaction.receiptUrl ? (
-                            <button
-                              onClick={() =>
-                                setSelectedReceipt(
-                                  transaction.receiptUrl || null,
-                                )
-                              }
-                              className="p-2 rounded-lg"
-                            >
-                              <Receipt className="w-4 h-4 text-red" />
-                            </button>
-                          ) : (
-                            <span className="text-text-secondary/50">-</span>
-                          )}
-                        </td>
-                        {canManageLedger && (
+                            {transaction.type === "income" ? "+" : "-"}
+                            {formatPeso(transaction.amount)}
+                          </td>
+                          <td className="text-text-secondary">
+                            {transaction.responsibleOfficer}
+                          </td>
                           <td>
-                            <div className="flex items-center gap-1">
+                            {transaction.receiptUrl ? (
                               <button
                                 onClick={() =>
-                                  handleOpenEditTransaction(transaction)
+                                  setSelectedReceipt(
+                                    transaction.receiptUrl || null,
+                                  )
                                 }
                                 className="p-2 rounded-lg"
-                                title="Edit transaction"
                               >
-                                <Pencil className="w-4 h-4 text-dark" />
+                                <Receipt className="w-4 h-4 text-red" />
                               </button>
-                              <button
-                                onClick={() =>
-                                  handleDeleteTransaction(transaction)
-                                }
-                                className="p-2 rounded-lg hover:bg-red/10"
-                                title="Delete transaction"
-                              >
-                                <Trash2 className="w-4 h-4 text-red" />
-                              </button>
-                            </div>
+                            ) : (
+                              <span className="text-text-secondary/50">-</span>
+                            )}
                           </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          {canManageLedger && (
+                            <td>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() =>
+                                    handleOpenEditTransaction(transaction)
+                                  }
+                                  className="p-2 rounded-lg"
+                                  title="Edit transaction"
+                                >
+                                  <Pencil className="w-4 h-4 text-dark" />
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleOpenDeleteTransaction(transaction)
+                                  }
+                                  className="p-2 rounded-lg hover:bg-red/10"
+                                  title="Delete transaction"
+                                >
+                                  <Trash2 className="w-4 h-4 text-red" />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               {filteredTransactions.length === 0 && (
@@ -682,42 +695,42 @@ export default function TransparencyBoardSection({
                   Event Allocations
                 </h3>
               </div>
-
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Allocation</th>
-                      <th>Collected</th>
-                      <th>Spent</th>
-                      <th>Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {eventAllocations.map((allocation) => (
-                      <tr key={allocation.eventId}>
-                        <td className="font-medium text-dark">
-                          {allocation.eventName}
-                        </td>
-                        <td className="text-text-secondary">
-                          {formatPeso(allocation.allocationAmount)}
-                        </td>
-                        <td className="text-green-600">
-                          {formatPeso(allocation.totalCollected)}
-                        </td>
-                        <td className="text-red">
-                          {formatPeso(allocation.totalSpent)}
-                        </td>
-                        <td className="font-medium text-dark">
-                          {formatPeso(allocation.remainingBalance)}
-                        </td>
+              <div className="rounded-xl overflow-hidden border border-gray-200">
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Allocation</th>
+                        <th>Collected</th>
+                        <th>Spent</th>
+                        <th>Balance</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {eventAllocations.map((allocation) => (
+                        <tr key={allocation.eventId}>
+                          <td className="font-medium text-dark">
+                            {allocation.eventName}
+                          </td>
+                          <td className="text-text-secondary">
+                            {formatPeso(allocation.allocationAmount)}
+                          </td>
+                          <td className="text-green-600">
+                            {formatPeso(allocation.totalCollected)}
+                          </td>
+                          <td className="text-red">
+                            {formatPeso(allocation.totalSpent)}
+                          </td>
+                          <td className="font-medium text-dark">
+                            {formatPeso(allocation.remainingBalance)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-
               {eventAllocations.length === 0 && (
                 <SectionEmptyState
                   message="No event allocations found"
@@ -911,6 +924,26 @@ export default function TransparencyBoardSection({
           </div>
         </DialogContent>
       </Dialog>
+      {/* Delete Transaction Confirmation */}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onClose={() => {
+          if (!saving) {
+            setShowDeleteConfirm(false);
+            setTransactionToDelete(null);
+          }
+        }}
+        onConfirm={handleDeleteTransaction}
+        title="Delete Transaction"
+        description={
+          transactionToDelete
+            ? `Are you sure you want to delete "${transactionToDelete.description}"?`
+            : "Are you sure you want to delete this transaction?"
+        }
+        warningText="This action cannot be undone."
+        confirmLabel="Delete Transaction"
+        loading={saving}
+      />
     </section>
   );
 }

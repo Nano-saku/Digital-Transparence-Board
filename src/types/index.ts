@@ -36,6 +36,7 @@ export interface EventSchedule {
   timeIn?: string;
   timeOut?: string;
 }
+
 // Event Types
 export interface Event {
   id: string;
@@ -50,14 +51,11 @@ export interface Event {
   morningTimeOut?: string;
   afternoonTimeIn?: string;
   afternoonTimeOut?: string;
+  eveningTimeIn?: string;
+  eveningTimeOut?: string;
 
   timeIn?: string;
   timeOut?: string;
-
-  assignedMembers?: {
-    memberId: string;
-    memberName: string;
-  }[];
 }
 
 // Attendance Types
@@ -69,9 +67,9 @@ export interface AttendanceRecord {
   date: string;
   status: "present" | "late" | "absent";
   /**
-   * Session for the attendance record: 'morning' or 'afternoon'.
-   * Each event has separate attendance tracking for Morning Time In/Out
-   * and Afternoon Time In/Out.
+   * Session for the attendance record: 'morning', 'afternoon', or 'evening'.
+   * Each event has separate attendance tracking for Morning, Afternoon,
+   * and Evening Time In/Out.
    */
   session: EventSession;
   /**
