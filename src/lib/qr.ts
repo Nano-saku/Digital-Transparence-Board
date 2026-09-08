@@ -138,7 +138,7 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   ]);
 
   const privacyLinesSvg = PASS_PRIVACY_LINES.map((line, i) =>
-    `<text x="155" y="${591 + i * 13}" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#ffffff">${xml(line)}</text>`
+    `<text x="155" y="${577 + i * 15}" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#ffffff">${xml(line)}</text>`
   ).join("\n  ");
   const nameFontSize = fieldFontSize(student.name, 27);
   const programFontSize = fieldFontSize(student.program, 27);
@@ -167,9 +167,9 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   <text x="193" y="490" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#ffffff" text-anchor="middle">DIGITAL ATTENDANCE PASS</text>
 
   <!-- ===== RIGHT INFORMATION SECTION ===== -->
-  <image href="${lscLogo}" xlink:href="${lscLogo}" x="395" y="28" width="52" height="52" preserveAspectRatio="xMidYMid meet" />
-  <text x="465" y="52" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2.5" fill="#667085">LOCAL STUDENT COUNCIL</text>
-  <text x="465" y="80" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="1" fill="#17213f">STUDENT QR ATTENDANCE PASS</text>
+  <image href="${lscLogo}" xlink:href="${lscLogo}" x="392" y="20" width="68" height="68" preserveAspectRatio="xMidYMid meet" />
+  <text x="480" y="52" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="2.5" fill="#667085">LOCAL STUDENT COUNCIL</text>
+  <text x="480" y="80" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="1" fill="#17213f">STUDENT QR ATTENDANCE PASS</text>
   <line x1="390" y1="96" x2="950" y2="96" stroke="#cbd5f0" stroke-width="2" />
 
   <text x="390" y="124" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#667085">STUDENT ID</text>
@@ -193,18 +193,18 @@ export async function studentAttendancePassSvg(student: Student): Promise<string
   <text x="1080" y="323" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="1" fill="#173b82" text-anchor="middle">STUDENT PHOTO</text>
 
   <!-- ===== OFFICIAL USE ===== -->
-  <rect x="390" y="408" width="790" height="120" rx="12" fill="#edf3fb" />
-  <text x="413" y="441" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#173b82">OFFICIAL USE</text>
-  <text x="413" y="468" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">This digital QR Attendance Pass is issued by the Local Student Council (LSC)</text>
-  <text x="413" y="493" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">for attendance verification and monitoring during official events.</text>
+  <rect x="390" y="408" width="790" height="100" rx="12" fill="#edf3fb" />
+  <text x="413" y="437" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#173b82">OFFICIAL USE</text>
+  <text x="413" y="463" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">This digital QR Attendance Pass is issued by the Local Student Council (LSC)</text>
+  <text x="413" y="487" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#475467">for attendance verification and monitoring during official events.</text>
 
   <!-- ===== SEPARATE FULL-WIDTH DATA PRIVACY NOTICE ===== -->
-  <rect x="20" y="540" width="1160" height="94" rx="14" fill="#102f7d" />
-  <path d="M 54 564 L 78 554 L 102 564 L 99 594 C 96 605, 87 611, 78 615 C 69 611, 60 605, 57 594 Z" fill="none" stroke="#ffffff" stroke-width="3" />
-  <rect x="70" y="577" width="16" height="14" rx="2" fill="#ffffff" />
-  <path d="M 73 577 V 573 A 5 5 0 0 1 83 573 V 577" fill="none" stroke="#ffffff" stroke-width="3" />
-  <line x1="125" y1="552" x2="125" y2="622" stroke="#ffffff" stroke-opacity="0.75" stroke-width="2" />
-  <text x="155" y="565" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2" fill="#ffffff">DATA PRIVACY NOTICE</text>
+  <rect x="20" y="528" width="1160" height="106" rx="14" fill="#102f7d" />
+  <path d="M 54 552 L 78 542 L 102 552 L 99 582 C 96 593, 87 599, 78 603 C 69 599, 60 593, 57 582 Z" fill="none" stroke="#ffffff" stroke-width="3" />
+  <rect x="70" y="565" width="16" height="14" rx="2" fill="#ffffff" />
+  <path d="M 73 565 V 561 A 5 5 0 0 1 83 561 V 565" fill="none" stroke="#ffffff" stroke-width="3" />
+  <line x1="125" y1="538" x2="125" y2="624" stroke="#ffffff" stroke-opacity="0.75" stroke-width="2" />
+  <text x="155" y="553" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="#ffffff">DATA PRIVACY NOTICE</text>
   ${privacyLinesSvg}
 </svg>`;
 }
