@@ -453,13 +453,12 @@ export async function downloadContributionReceipt(
   details: ReceiptDetails,
   format: ReceiptFormat = "svg"
 ): Promise<string> {
-  // Backend-style enforcement: an Official Receipt may only be issued once the
-  // payment is fully paid. When the caller supplies the contribution status,
-  // verify it here so a partial/unpaid record can never produce a receipt even
-  // if the UI button is bypassed.
-  if (details.statusLabel && details.statusLabel !== "Fully Paid") {
+  // Enforce that a receipt can only be issued when an actual payment has been
+  // made. This keeps unpaid records from producing receipts even if the UI
+  // button is bypassed, while allowing both partial and fully paid records.
+  if (details.amount <= 0) {
     throw new Error(
-      "Official Receipt is only available once the payment is fully paid."
+      "Receipt is only available when the paid amount is greater than zero."
     );
   }
   const logos = await getReceiptLogos();

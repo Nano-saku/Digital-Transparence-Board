@@ -165,11 +165,11 @@ export default function StudentRecordSection({
   ) => {
     try {
       setDownloadingId(record.id);
-      // Client-side guard (mirrors the backend guard in downloadContributionReceipt):
-      // an Official Receipt may only be issued once the payment is fully paid.
-      if (contributionStatus(record).label !== "Fully Paid") {
+      // Client-side guard (mirrors the guard in downloadContributionReceipt):
+      // a receipt is available whenever an actual payment has been made.
+      if (record.amountPaid <= 0) {
         throw new Error(
-          "Official Receipt is only available once the payment is fully paid.",
+          "Receipt is only available when the paid amount is greater than zero.",
         );
       }
       const message = await downloadContributionReceipt(
@@ -445,10 +445,9 @@ export default function StudentRecordSection({
                             </td>
                             <td>
                               <div className="flex flex-wrap items-center gap-1.5">
-                                {/* Downloadable receipt: available ONLY when the payment is
-                                    Fully Paid. Partial and Unpaid records never show a Download
-                                    Receipt option and cannot produce an Official Receipt. */}
-                                {status.label === "Fully Paid" && (
+                                {/* A receipt is available for partial and fully paid records,
+                                    but not for records with no actual payment. */}
+                                {record.amountPaid > 0 && (
                                   <DropdownMenu>
                                     <DropdownMenuTrigger
                                       asChild
@@ -491,7 +490,7 @@ export default function StudentRecordSection({
                                     </DropdownMenuContent>
                                   </DropdownMenu>
                                 )}
-                                {status.label === "Fully Paid" &&
+                                {record.amountPaid > 0 &&
                                   paymentReceipts.map((payment) => (
                                     <button
                                       key={payment.id}
