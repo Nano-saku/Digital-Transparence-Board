@@ -64,7 +64,6 @@ import {
   formatTime12,
   formatTimeRange,
   compareTime24,
-  todayLocal,
   formatPeso,
 } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
@@ -268,6 +267,9 @@ export default function EventManagementSection({
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [attendanceSession, setAttendanceSession] =
     useState<EventSession>("morning");
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<
+    "all" | "present" | "late" | "absent"
+  >("all");
   const [attendancePage, setAttendancePage] = useState(1);
   const [manualSearchQuery, setManualSearchQuery] = useState("");
 
@@ -895,6 +897,9 @@ export default function EventManagementSection({
     setScannedSection(student.section);
     setLastScannedStudentId(student.id);
     setLastScanTime(nowClock());
+    // Always return to page 1 so the newly scanned student is visible at the
+    // top of the paginated Student View immediately.
+    setAttendancePage(1);
     void handleManualAttendance(student, scanMode);
   };
 
@@ -1026,20 +1031,30 @@ export default function EventManagementSection({
   }, [scannerActive, selectedCameraId]);
 
   /**
-   * The 10:00 PM auto-absent sweep: every event scheduled for today gets its
-   * unrecorded students marked Absent for each session the event holds.
-   * Triggered when the Attendance tab opens, then once per minute.
+   * The 12:00 AM auto-absent sweep: every event scheduled for the completed
+   * local calendar day gets its unrecorded students marked Absent for each
+   * session the event holds. Triggered when the Attendance tab opens, then
+   * once per minute during the midnight hour.
    */
   const autoMarkAbsent = useCallback(async () => {
     if (!canRecordAttendance) return;
-    if (new Date().getHours() < 22) return; // only runs after 10:00 PM local time
+    const now = new Date();
+    if (now.getHours() !== 0) return; // only runs at 12:00 AM (midnight)
 
-    const todaysDate = todayLocal();
-    const todaysEvents = events.filter((e) => e.date === todaysDate);
-    if (todaysEvents.length === 0) return;
+    // Midnight starts a new local calendar day, so close out yesterday's
+    // events rather than marking the new day's events absent.
+    const completedDate = new Date(now);
+    completedDate.setDate(completedDate.getDate() - 1);
+    const completedDateISO = [
+      completedDate.getFullYear(),
+      String(completedDate.getMonth() + 1).padStart(2, "0"),
+      String(completedDate.getDate()).padStart(2, "0"),
+    ].join("-");
+    const completedEvents = events.filter((e) => e.date === completedDateISO);
+    if (completedEvents.length === 0) return;
 
     try {
-      for (const event of todaysEvents) {
+      for (const event of completedEvents) {
         for (const session of ["morning", "afternoon", "evening"] as const) {
           const schedule = event.schedules?.find((s) => s.period === session);
 
@@ -1073,7 +1088,7 @@ export default function EventManagementSection({
                 studentId: student.id,
                 eventId: event.id,
                 eventName: event.name,
-                date: event.date ?? todaysDate,
+                date: event.date ?? completedDateISO,
                 session,
                 status: "absent",
               }),
@@ -1098,7 +1113,7 @@ export default function EventManagementSection({
   }, [canRecordAttendance, events, students]);
 
   // Checks right when the Attendance tab opens, then re-checks every minute
-  // so members are marked Absent as soon as 10:00 PM passes.
+  // so completed events are marked Absent during the midnight hour.
   useEffect(() => {
     if (activeTab !== "attendance-management") return;
     autoMarkAbsent();
@@ -1185,6 +1200,14 @@ export default function EventManagementSection({
       );
     }
 
+    // Filter by the selected event/session's attendance status.
+    if (attendanceStatusFilter !== "all") {
+      result = result.filter((s) => {
+        const status = attendanceMap.get(s.id)?.status;
+        return status === attendanceStatusFilter;
+      });
+    }
+
     // Move the most recently scanned student to the top
     if (lastScannedStudentId) {
       const scanned = result.find((s) => s.id === lastScannedStudentId);
@@ -1200,6 +1223,8 @@ export default function EventManagementSection({
   }, [
     students,
     attendanceSearchTerm,
+    attendanceStatusFilter,
+    attendanceMap,
     scannedCourse,
     scannedSection,
     lastScannedStudentId,
@@ -1214,6 +1239,7 @@ export default function EventManagementSection({
     selectedEventForAttendance,
     attendanceSession,
     attendanceSearchTerm,
+    attendanceStatusFilter,
     scannedCourse,
     scannedSection,
     lastScannedStudentId,
@@ -1776,7 +1802,7 @@ export default function EventManagementSection({
                       <span className="text-xs text-text-secondary">
                         Present = recorded on/before scheduled Time In | Late =
                         recorded after scheduled Time In | Absent = never
-                        recorded (auto-marked at 10:00 PM)
+                        recorded (auto-marked at 12:00 AM)
                       </span>
                     </div>
                   </div>
@@ -2208,6 +2234,35 @@ export default function EventManagementSection({
                           <XCircle className="w-3 h-3" />
                         </button>
                       )}
+                    </div>
+
+                    {/* Attendance status filter for the student table */}
+                    <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <label
+                        htmlFor="attendance-status-filter"
+                        className="text-sm font-medium text-dark whitespace-nowrap"
+                      >
+                        Show students:
+                      </label>
+                      <select
+                        id="attendance-status-filter"
+                        value={attendanceStatusFilter}
+                        onChange={(e) =>
+                          setAttendanceStatusFilter(
+                            e.target.value as
+                              | "all"
+                              | "present"
+                              | "late"
+                              | "absent",
+                          )
+                        }
+                        className="glass-input w-full sm:w-auto min-w-[180px] px-3 py-2.5 text-sm"
+                      >
+                        <option value="all">All Students</option>
+                        <option value="present">Present</option>
+                        <option value="late">Late</option>
+                        <option value="absent">Absent</option>
+                      </select>
                     </div>
 
                     {/* Last Scanned Student Banner */}
