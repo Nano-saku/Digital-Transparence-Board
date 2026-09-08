@@ -111,6 +111,12 @@ export default function ReportManagementSection({
     if (selectedCourse) {
       filtered = filtered.filter((s) => s.program === selectedCourse);
     }
+    if (!selectedYear){
+      setSelectedCourse("");
+    }
+    if (!selectedCourse){
+      setSelectedSection("");
+    }
     return [...new Set(filtered.map((s) => s.section))].sort();
   }, [students, selectedYear, selectedCourse]);
 
