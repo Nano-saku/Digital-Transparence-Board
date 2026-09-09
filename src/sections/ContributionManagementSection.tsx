@@ -104,6 +104,7 @@ export default function ContributionManagementSection({
 
   // Table pagination — 20 rows per page.
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalContributions, setTotalContributions] = useState(0);
 
   // Record Payment modal (merged in from the former Payments screen).
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -119,16 +120,16 @@ export default function ContributionManagementSection({
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [contributionsData, allStudents, allEvents, paymentsData] =
+      const [contributionsPage, allStudents, allEvents, paymentsData] =
         await Promise.all([
-          contributionsService.getAll(),
+          contributionsService.getPage(currentPage - 1, PAGE_SIZE),
           studentsService.getAll(),
           eventsService.getAll(),
           paymentsService.getAll(),
         ]);
 
       const studentById = new Map(allStudents.map((s) => [s.id, s]));
-      const rows: ContributionRow[] = contributionsData.map((record) => {
+      const rows: ContributionRow[] = contributionsPage.data.map((record) => {
         const student = studentById.get(record.studentId);
         return {
           ...record,
@@ -138,7 +139,8 @@ export default function ContributionManagementSection({
       });
 
       setRecords(rows);
-      setContributions(contributionsData);
+      setContributions(contributionsPage.data);
+      setTotalContributions(contributionsPage.total);
       setStudents(allStudents);
       setEvents(allEvents);
       setPayments(paymentsData);
@@ -148,7 +150,7 @@ export default function ContributionManagementSection({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentPage]);
 
   useEffect(() => {
     loadData();
@@ -210,20 +212,13 @@ export default function ContributionManagementSection({
     setCurrentPage(1);
   }, [searchTerm, filters.eventId, filters.status]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalContributions / PAGE_SIZE));
   // Clamp back onto a valid page if a delete or realtime update shrinks the
   // result set out from under the page the user is currently viewing.
   useEffect(() => {
     setCurrentPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
-  const paginatedRecords = useMemo(
-    () =>
-      filteredRecords.slice(
-        (currentPage - 1) * PAGE_SIZE,
-        currentPage * PAGE_SIZE,
-      ),
-    [filteredRecords, currentPage],
-  );
+  const paginatedRecords = filteredRecords;
 
   // ---------------------------------------------------------------------------
   // Record Payment (merged in from the former Payments screen — recording a
