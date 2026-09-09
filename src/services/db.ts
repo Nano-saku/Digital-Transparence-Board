@@ -668,26 +668,41 @@ export const attendanceService = {
 // ============================================
 export const contributionsService = {
   async getAll(): Promise<ContributionRecord[]> {
-    return cachedRead<ContributionRecord>("contributions", async () => {
-      const { data, error } = await getSupabase()
+  return cachedRead<ContributionRecord>("contributions", async () => {
+    const supabase = getSupabase();
+    const pageSize = 1000;
+    let from = 0;
+    const allData: Record<string, any>[] = [];
+
+    while (true) {
+      const { data, error } = await supabase
         .from("contributions")
         .select("*")
-        .order("id", { ascending: false });
+        .order("id", { ascending: false })
+        .range(from, from + pageSize - 1);
 
       if (error) throw error;
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          requiredAmount: item.required_amount,
-          amountPaid: item.amount_paid,
-          remainingBalance: item.remaining_balance,
-        })) || []
-      );
-    });
-  },
+
+      if (!data || data.length === 0) break;
+
+      allData.push(...data);
+
+      if (data.length < pageSize) break;
+
+      from += pageSize;
+    }
+
+    return allData.map((item) => ({
+      id: item.id,
+      studentId: item.student_id,
+      eventId: item.event_id,
+      eventName: item.event_name,
+      requiredAmount: item.required_amount,
+      amountPaid: item.amount_paid,
+      remainingBalance: item.remaining_balance,
+    }));
+  });
+},
 
   async getByStudentId(studentId: string): Promise<ContributionRecord[]> {
     const contributions = await cachedRead<ContributionRecord>(
