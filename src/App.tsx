@@ -111,32 +111,25 @@ function App() {
 
   // Handle student search - now using database
   const handleSearch = async (name: string, studentId: string) => {
+    const normalizedName = name.trim().toLowerCase();
+    const normalizedStudentId = studentId.trim().toLowerCase();
+
+    if (!normalizedName || !normalizedStudentId) {
+      toast.error("Please enter both your Student Name and Student ID.");
+      return;
+    }
+
     try {
       setSearching(true);
-      let student: Student | null = null;
+      const student = await studentsService.getByStudentId(studentId.trim());
+      const isVerified =
+        student !== null && student.name.trim().toLowerCase() === normalizedName;
 
-      if (studentId) {
-        student = await studentsService.getByStudentId(studentId);
-      }
-
-      if (!student && name) {
-        student = await studentsService.getByName(name);
-      }
-
-      // Fall back to a fuzzy search across both fields so partial IDs and
-      // abbreviations still resolve (e.g. "2021-000", "Maria", "Dela").
-      if (!student && (name || studentId)) {
-        const matches = await studentsService.search(
-          `${name} ${studentId}`.trim(),
-        );
-        student = matches[0] ?? null;
-      }
-
-      if (student) {
+      if (isVerified) {
         setSelectedStudent(student);
         setCurrentView("student-record");
       } else {
-        toast.error("Student not found. Please try again.");
+        toast.error("Student Name and Student ID do not match.");
       }
     } catch (error) {
       console.error("Error searching student:", error);

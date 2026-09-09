@@ -531,7 +531,62 @@ export default function TransparencyBoardSection({
                 </div>
               </div>
             </div>
-            {/* Transaction Ledger */}
+            
+            {/* Event Allocations */}
+            <div ref={allocationRef} className="glass-card p-5 lg:p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
+                  <PieChart className="w-5 h-5 text-red" />
+                </div>
+                <h3 className="font-display font-semibold text-lg text-dark">
+                  Event Allocations
+                </h3>
+              </div>
+              <div className="rounded-xl overflow-hidden border border-gray-200">
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Allocation</th>
+                        <th>Collected</th>
+                        <th>Spent</th>
+                        <th>Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {eventAllocations.map((allocation) => (
+                        <tr key={allocation.eventId}>
+                          <td className="font-medium text-dark">
+                            {allocation.eventName}
+                          </td>
+                          <td className="text-text-secondary">
+                            {formatPeso(allocation.allocationAmount)}
+                          </td>
+                          <td className="text-green-600">
+                            {formatPeso(allocation.totalCollected)}
+                          </td>
+                          <td className="text-red">
+                            {formatPeso(allocation.totalSpent)}
+                          </td>
+                          <td className="font-medium text-dark">
+                            {formatPeso(allocation.remainingBalance)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {eventAllocations.length === 0 && (
+                <SectionEmptyState
+                  message="No event allocations found"
+                  icon={PieChart}
+                  compact
+                />
+              )}
+            </div>
+{/* Transaction Ledger */}
             <div ref={ledgerRef} className="glass-card p-5 lg:p-6 mb-8">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
@@ -685,61 +740,6 @@ export default function TransparencyBoardSection({
                 />
               )}
             </div>
-            {/* Event Allocations */}
-            <div ref={allocationRef} className="glass-card p-5 lg:p-6 mb-8">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <PieChart className="w-5 h-5 text-red" />
-                </div>
-                <h3 className="font-display font-semibold text-lg text-dark">
-                  Event Allocations
-                </h3>
-              </div>
-              <div className="rounded-xl overflow-hidden border border-gray-200">
-                <div className="overflow-x-auto">
-                  <table className="glass-table">
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>Allocation</th>
-                        <th>Collected</th>
-                        <th>Spent</th>
-                        <th>Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {eventAllocations.map((allocation) => (
-                        <tr key={allocation.eventId}>
-                          <td className="font-medium text-dark">
-                            {allocation.eventName}
-                          </td>
-                          <td className="text-text-secondary">
-                            {formatPeso(allocation.allocationAmount)}
-                          </td>
-                          <td className="text-green-600">
-                            {formatPeso(allocation.totalCollected)}
-                          </td>
-                          <td className="text-red">
-                            {formatPeso(allocation.totalSpent)}
-                          </td>
-                          <td className="font-medium text-dark">
-                            {formatPeso(allocation.remainingBalance)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              {eventAllocations.length === 0 && (
-                <SectionEmptyState
-                  message="No event allocations found"
-                  icon={PieChart}
-                  compact
-                />
-              )}
-            </div>
-
             {/* CTA Row */}
             {!adminMode && onNavigate && (
               <div ref={ctaRef} className="flex flex-wrap justify-center gap-4">

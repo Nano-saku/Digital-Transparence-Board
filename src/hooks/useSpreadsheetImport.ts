@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
-import { readSheet } from "read-excel-file/browser";
+import readXlsxFile from "read-excel-file/browser";
 import { parseCsv, excelRowsToRecords } from "@/lib/spreadsheet";
 
 /**
@@ -46,10 +46,33 @@ export function useSpreadsheetImport(options: {
 
     try {
       setImporting(true);
-      const rows = isCsv
-        ? parseCsv(await file.text())
-        : excelRowsToRecords(await readSheet(file));
-      await onRows(rows);
+      let rows: Record<string, string>[];
+
+if (isCsv) {
+  rows = parseCsv(await file.text());
+} else {
+  const sheets = await readXlsxFile(file);
+
+  const allRows: Record<string, string>[] = [];
+
+  for (const sheet of sheets) {
+    const sheetRows = sheet.data;
+
+    if (!sheetRows || sheetRows.length < 2) {
+      continue;
+    }
+
+    const records = excelRowsToRecords(sheetRows);
+
+    if (records.length > 0) {
+      allRows.push(...records);
+    }
+  }
+
+  rows = allRows;
+}
+
+await onRows(rows);
     } catch (error) {
       console.error(`Error importing ${isCsv ? "CSV" : "Excel"} file:`, error);
       toast.error(`Failed to import ${isCsv ? "CSV" : "Excel"} file`);

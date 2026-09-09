@@ -42,7 +42,12 @@ import { toast } from "sonner";
 import { formatDate, formatPeso, today } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
-import { pickField, parseAmount } from "@/lib/spreadsheet";
+import {
+  pickField,
+  parseAmount,
+  normalizeStudentId,
+  expandEventGroups,
+} from "@/lib/spreadsheet";
 import { useSearch } from "@/hooks/useSearch";
 import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface ContributionManagementSectionProps {
@@ -54,13 +59,21 @@ interface ContributionManagementSectionProps {
 /** A contribution record enriched with the student's display info. */
 interface ContributionRow extends ContributionRecord {
   studentName: string;
-  studentId: string;
+  studentDisplayId: string;
 }
 
 /** Form state for the Edit modal. */
 interface ContributionForm {
   studentId: string;
   eventId: string;
+  requiredAmount: number;
+  amountPaid: number;
+}
+
+/** One parsed & matched (student, event) import row waiting to be created. */
+interface ParsedContributionRow {
+  student: Student;
+  event: Event;
   requiredAmount: number;
   amountPaid: number;
 }
@@ -105,7 +118,11 @@ export default function ContributionManagementSection({
   // Table pagination — 20 rows per page.
   const [currentPage, setCurrentPage] = useState(1);
   const [totalContributions, setTotalContributions] = useState(0);
-
+  const [contributionTotals, setContributionTotals] = useState({
+    totalRequired: 0,
+    totalPaid: 0,
+    totalBalance: 0,
+  });
   // Record Payment modal (merged in from the former Payments screen).
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
@@ -117,30 +134,46 @@ export default function ContributionManagementSection({
   const [paymentStudentOpen, setPaymentStudentOpen] = useState(false);
   const paymentSearchRef = useRef<HTMLDivElement>(null);
 
+  // While a bulk CSV/Excel import is running, each created row would
+  // otherwise fire its own realtime "contributions changed" event and
+  // reload (and re-render) the whole table — see the subscribeToTables
+  // effect below and importContributionRows further down. This flag lets
+  // the realtime callback skip those reloads until the import is done, at
+  // which point importContributionRows reloads the table exactly once.
+  const isImportingRef = useRef(false);
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [contributionsPage, allStudents, allEvents, paymentsData] =
-        await Promise.all([
-          contributionsService.getPage(currentPage - 1, PAGE_SIZE),
-          studentsService.getAll(),
-          eventsService.getAll(),
-          paymentsService.getAll(),
-        ]);
+      const [
+        contributionsPage,
+        contributionTotalsData,
+        allStudents,
+        allEvents,
+        paymentsData,
+      ] = await Promise.all([
+        contributionsService.getPage(currentPage - 1, PAGE_SIZE),
+        contributionsService.getTotals(),
+        studentsService.getAll(),
+        eventsService.getAll(),
+        paymentsService.getAll(),
+      ]);
 
       const studentById = new Map(allStudents.map((s) => [s.id, s]));
       const rows: ContributionRow[] = contributionsPage.data.map((record) => {
         const student = studentById.get(record.studentId);
+
         return {
           ...record,
           studentName: student?.name ?? "Unknown Student",
-          studentId: student?.studentId ?? "—",
+          studentDisplayId: student?.studentId ?? "—",
         };
       });
 
       setRecords(rows);
       setContributions(contributionsPage.data);
       setTotalContributions(contributionsPage.total);
+      setContributionTotals(contributionTotalsData);
       setStudents(allStudents);
       setEvents(allEvents);
       setPayments(paymentsData);
@@ -161,7 +194,10 @@ export default function ContributionManagementSection({
   useEffect(() => {
     return subscribeToTables(
       ["contributions", "students", "events", "payments"],
-      loadData,
+      () => {
+        if (isImportingRef.current) return; // see isImportingRef above
+        loadData();
+      },
       "contribution-management",
     );
   }, [loadData]);
@@ -183,7 +219,7 @@ export default function ContributionManagementSection({
     filtered: filteredRecords,
   } = useSearch<ContributionRow>({
     items: records,
-    searchKeys: ["studentName", "studentId"],
+    searchKeys: ["studentName", "studentDisplayId"],
     filters: {
       eventId: (r) => r.eventId,
       status: (r) => contributionStatus(r).label,
@@ -191,18 +227,7 @@ export default function ContributionManagementSection({
   });
 
   // Summary stats
-  const totalRequired = useMemo(
-    () => records.reduce((sum, r) => sum + r.requiredAmount, 0),
-    [records],
-  );
-  const totalPaid = useMemo(
-    () => records.reduce((sum, r) => sum + r.amountPaid, 0),
-    [records],
-  );
-  const totalBalance = useMemo(
-    () => records.reduce((sum, r) => sum + r.remainingBalance, 0),
-    [records],
-  );
+  const { totalRequired, totalPaid } = contributionTotals;
 
   const computedBalance = Math.max(0, form.requiredAmount - form.amountPaid);
 
@@ -284,7 +309,23 @@ export default function ContributionManagementSection({
     setPaymentStudentOpen(false);
     setShowPaymentModal(true);
   };
+  const validatePaymentAmount = (
+    amount: number,
+    requiredAmount: number,
+    currentPaid = 0,
+  ): string | null => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return "Payment amount must be greater than zero.";
+    }
 
+    const remainingBalance = requiredAmount - currentPaid;
+
+    if (amount > remainingBalance) {
+      return `Payment exceeds the remaining balance of ₱${remainingBalance.toFixed(2)}.`;
+    }
+
+    return null;
+  };
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -314,7 +355,16 @@ export default function ContributionManagementSection({
           remainingBalance: event.allocationAmount,
         });
       }
+      const validationError = validatePaymentAmount(
+        paymentForm.amount,
+        contribution.requiredAmount,
+        contribution.amountPaid,
+      );
 
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
       // An official receipt is generated automatically (as SVG, uploaded to
       // the "receipts" Storage bucket) and attached to the payment.
       let receiptUrl: string | undefined;
@@ -433,15 +483,15 @@ export default function ContributionManagementSection({
         remainingBalance: computedBalance,
       };
 
-      const enrich = (record: ContributionRecord) => {
+      const enrich = (record: ContributionRecord): ContributionRow => {
         const studentInfo = students.find((s) => s.id === record.studentId);
+
         return {
           ...record,
           studentName: studentInfo?.name ?? "Unknown Student",
-          studentId: studentInfo?.studentId ?? "—",
+          studentDisplayId: studentInfo?.studentId ?? "—",
         };
       };
-
       if (editingRecord) {
         const updated = await contributionsService.update(
           editingRecord.id,
@@ -507,18 +557,31 @@ export default function ContributionManagementSection({
       return;
     }
 
+    const canIssueReceipts =
+      role === "admin" || role === "treasurer" || role === "auditor";
+
+    let successfulImports = 0;
+    let importFailures = 0;
+    let receiptsIssued = 0;
+    let receiptFailures = 0;
+
     // Lookup tables (case-insensitive) so rows can reference the student by
     // ID or by full name, and the event by name.
     const studentById = new Map(
-      students.map((s) => [s.studentId.toLowerCase(), s]),
+      students.map((s) => [normalizeStudentId(s.studentId).toLowerCase(), s]),
     );
+
     const studentByName = new Map(
       students.map((s) => [s.name.toLowerCase(), s]),
     );
+
     const eventByName = new Map(events.map((e) => [e.name.toLowerCase(), e]));
 
-    const parsed: Array<Omit<ContributionRecord, "id">> = [];
-    let unmatched = 0;
+    const parsed: ParsedContributionRow[] = [];
+
+    let unmatchedStudent = 0;
+    let unmatchedEvent = 0;
+    let invalidAmount = 0;
 
     for (const row of rows) {
       const fileStudentId = pickField(
@@ -531,102 +594,251 @@ export default function ContributionManagementSection({
         "lrn",
         "id",
       );
+
       const studentName = pickField(row, "name", "fullname", "studentname");
-      const eventName = pickField(
-        row,
-        "event",
-        "eventname",
-        "activity",
-        "contributionfor",
-      );
 
       const student =
-        studentById.get(fileStudentId.toLowerCase()) ??
+        studentById.get(normalizeStudentId(fileStudentId).toLowerCase()) ??
         studentByName.get(studentName.toLowerCase());
-      const event = eventByName.get(eventName.toLowerCase());
 
-      if (!student || !event) {
-        unmatched++;
+      if (!student) {
+        unmatchedStudent++;
         continue;
       }
 
-      const requiredAmount = parseAmount(
-        pickField(
-          row,
-          "required",
-          "requiredamount",
-          "requiredamountpeso",
-          "amount",
-          "fee",
-          "contribution",
-        ),
-      );
-      if (requiredAmount <= 0) {
-        unmatched++;
+      // A row can contain either:
+      //   Event / Required Amount / Amount Paid
+      //
+      // or multiple repeated groups:
+      //   Event / Required Amount / Amount Paid /
+      //   Event / Required Amount / Amount Paid / ...
+      const groups = expandEventGroups(row);
+
+      if (groups.length === 0) {
+        unmatchedEvent++;
         continue;
       }
 
-      const amountPaid = parseAmount(
-        pickField(
-          row,
-          "amountpaid",
-          "paid",
-          "paidamount",
-          "collected",
-          "payment",
-        ),
-      );
+      for (const group of groups) {
+        const event = eventByName.get(group.eventName.toLowerCase());
 
-      parsed.push({
-        studentId: student.id,
-        eventId: event.id,
-        eventName: event.name,
-        requiredAmount,
-        amountPaid,
-        remainingBalance: Math.max(0, requiredAmount - amountPaid),
-      });
+        if (!event) {
+          unmatchedEvent++;
+          continue;
+        }
+
+        const requiredAmount = parseAmount(group.requiredAmount);
+        const amountPaid = parseAmount(group.amountPaid);
+
+        // Required amount must be a valid positive amount.
+        if (requiredAmount <= 0) {
+          invalidAmount++;
+          continue;
+        }
+
+        // Paid amount cannot be negative or greater than the required amount.
+        if (amountPaid < 0 || amountPaid > requiredAmount) {
+          invalidAmount++;
+
+          console.warn(
+            `Skipped invalid amount: ${student.studentId} / ${event.name} ` +
+              `(required ₱${requiredAmount}, paid ₱${amountPaid})`,
+          );
+
+          continue;
+        }
+
+        // IMPORTANT:
+        // Do NOT skip a contribution just because the current user cannot
+        // issue receipts.
+        //
+        // The contribution and its historical Amount Paid should still be
+        // imported. Receipt/payment creation is handled separately below
+        // and remains restricted by canIssueReceipts.
+
+        parsed.push({
+          student,
+          event,
+          requiredAmount,
+          amountPaid,
+        });
+      }
     }
 
     if (parsed.length === 0) {
       toast.error(
-        "No valid rows found. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid",
+        "No valid rows found. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid (repeat that trio for each additional event).",
       );
       return;
     }
 
-    // Skip rows that already exist in the table or are duplicated in the file.
+    // Skip rows that already have a contribution record, or are duplicated
+    // within the file itself.
+    //
+    // `contributions` contains the raw records with real database student IDs,
+    // unlike `records`, which is used for display.
     const existingKeys = new Set(
-      records.map(
+      contributions.map(
         (r) => `${r.studentId.toLowerCase()}|${r.eventId.toLowerCase()}`,
       ),
     );
+
     const seen = new Set<string>();
+
     const deduped = parsed.filter((c) => {
-      const key = `${c.studentId.toLowerCase()}|${c.eventId.toLowerCase()}`;
-      if (existingKeys.has(key) || seen.has(key)) return false;
+      const key = `${c.student.id.toLowerCase()}|${c.event.id.toLowerCase()}`;
+
+      if (existingKeys.has(key) || seen.has(key)) {
+        return false;
+      }
+
       seen.add(key);
       return true;
     });
+
+    const duplicateCount = parsed.length - deduped.length;
 
     if (deduped.length === 0) {
       toast.info("All rows in the file already have contribution records");
       return;
     }
 
+    // Pause realtime-triggered reloads during the import.
+    isImportingRef.current = true;
+
+    toast.info(`Importing ${deduped.length} contribution(s)...`);
+
     try {
-      for (const payload of deduped) {
-        await contributionsService.create(payload);
-      }
-      await loadData();
-      const skipped = unmatched + (parsed.length - deduped.length);
-      toast.success(
-        skipped > 0
-          ? `${deduped.length} contribution(s) imported, ${skipped} skipped (duplicates or unmatched)`
-          : `${deduped.length} contribution(s) imported successfully`,
+      // Bounded concurrency so a large spreadsheet doesn't fire
+      // hundreds of Supabase requests at once.
+      const CONCURRENCY = 5;
+      let cursor = 0;
+      let receiptQueue = Promise.resolve();
+
+      const getNextReceiptNumber = async () => {
+        const previous = receiptQueue;
+
+        let resolveQueue!: () => void;
+
+        receiptQueue = new Promise<void>((resolve) => {
+          resolveQueue = resolve;
+        });
+
+        await previous;
+
+        try {
+          return await officialReceiptNumber();
+        } finally {
+          resolveQueue();
+        }
+      };
+      const worker = async () => {
+        while (cursor < deduped.length) {
+          const item = deduped[cursor++];
+
+          try {
+            const contribution = await contributionsService.create({
+              studentId: item.student.id,
+              eventId: item.event.id,
+              eventName: item.event.name,
+              requiredAmount: item.requiredAmount,
+              amountPaid: item.amountPaid,
+              remainingBalance: Math.max(
+                0,
+                item.requiredAmount - item.amountPaid,
+              ),
+            });
+            successfulImports++;
+            // Only users allowed to issue receipts should generate
+            // official receipts and payment records.
+            //
+            // The contribution itself has already stored Amount Paid,
+            // so users without receipt permission do not lose the
+            // historical payment amount.
+            if (item.amountPaid > 0 && canIssueReceipts) {
+              try {
+                const orNumber = await getNextReceiptNumber();
+
+                const receiptUrl = await autoCreateReceipt({
+                  tag: "PAYMENT",
+                  receiptNumber: orNumber,
+                  issuedTo: item.student.name,
+                  eventName: item.event.name,
+                  description: `Payment for ${item.event.name} (imported)`,
+                  amount: item.amountPaid,
+                  type: "income",
+                  date: today(),
+                  recordedBy: staffName || "Council Officer",
+                });
+
+                await paymentsService.create({
+                  studentId: item.student.id,
+                  studentName: item.student.name,
+                  eventId: item.event.id,
+                  eventName: item.event.name,
+                  contributionId: contribution.id,
+                  amount: item.amountPaid,
+                  date: today(),
+                  recordedBy: staffName || "Council Officer",
+                  receiptUrl,
+                });
+
+                receiptsIssued++;
+              } catch (receiptError) {
+                console.warn(
+                  "Auto receipt generation failed for an imported row:",
+                  receiptError,
+                );
+
+                receiptFailures++;
+              }
+            }
+          } catch (error) {
+            importFailures++;
+
+            console.error("Error importing a contribution row:", error);
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          {
+            length: Math.min(CONCURRENCY, deduped.length),
+          },
+          worker,
+        ),
       );
+
+      // Combine all reasons rows may have been skipped.
+      const totalSkipped =
+        unmatchedStudent + unmatchedEvent + invalidAmount + duplicateCount;
+
+      const parts = [`${successfulImports} contribution(s) imported`];
+      if (importFailures > 0) {
+        parts.push(`${importFailures} contribution(s) failed`);
+      }
+
+      if (receiptsIssued > 0) {
+        parts.push(`${receiptsIssued} receipt(s) generated`);
+      }
+
+      if (totalSkipped > 0) {
+        parts.push(`${totalSkipped} skipped`);
+      }
+
+      if (receiptFailures > 0) {
+        parts.push(`${receiptFailures} receipt(s) failed`);
+      }
+
+      toast.success(parts.join(", "));
     } catch (error) {
       console.error("Error importing contribution records:", error);
+
       toast.error("Failed to import contribution records");
+    } finally {
+      isImportingRef.current = false;
+      await loadData();
     }
   };
 
@@ -648,7 +860,7 @@ export default function ContributionManagementSection({
             onClick={() => importInputRef.current?.click()}
             className="glass-button px-4 py-2.5 text-sm w-fit"
             disabled={loading || importing}
-            title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid."
+            title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid — repeat that trio for each additional event (as in the official Student Body tracking sheet). A receipt is generated automatically for every imported row with a payment."
           >
             {importing ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -677,99 +889,112 @@ export default function ContributionManagementSection({
         onChange={handleFileSelected}
       />
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <SummaryCard
-          icon={User}
-          color="blue"
-          value={records.length.toLocaleString()}
-          label="Total Records"
-        />
-        <SummaryCard
-          icon={FileText}
-          color="purple"
-          value={formatPeso(totalRequired)}
-          label="Total Required"
-        />
-        <SummaryCard
-          icon={Coins}
-          color="green"
-          value={formatPeso(totalPaid)}
-          label="Total Collected"
-        />
-        <SummaryCard
-          icon={Calendar}
-          color="red"
-          value={formatPeso(totalBalance)}
-          label="Total Balance"
-        />
-      </div>
+      {/* Summary + Recent Payments */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 mb-4">
+        {/* Recent Payments - Large Left Panel */}
+        <div className="glass-card p-4 lg:p-5 min-w-0">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-lg bg-red/10 flex items-center justify-center">
+              <CreditCard className="w-4 h-4 text-red" />
+            </div>
 
-      {/* Recent Payments (merged in from the former Payments screen) */}
-      <div className="glass-card p-4 lg:p-5 mb-4">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-lg bg-red/10 flex items-center justify-center">
-            <CreditCard className="w-4 h-4 text-red" />
+            <div>
+              <h3 className="font-display font-semibold text-dark">
+                Recent Payments
+              </h3>
+              <p className="text-xs text-text-secondary">
+                Latest recorded student payments
+              </p>
+            </div>
           </div>
-          <h3 className="font-display font-semibold text-dark">
-            Recent Payments
-          </h3>
-        </div>
 
-        {payments.length === 0 ? (
-          <SectionEmptyState
-            message="No payments recorded yet"
-            icon={CreditCard}
-            compact
-          />
-        ) : (
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {payments.slice(0, 8).map((payment) => {
-              const paymentContribution = contributions.find(
-                (contribution) =>
-                  contribution.id === payment.contributionId ||
-                  (contribution.studentId === payment.studentId &&
-                    contribution.eventId === payment.eventId),
-              );
-              const paymentStatus = paymentContribution
-                ? contributionStatus(paymentContribution)
-                : null;
+          {payments.length === 0 ? (
+            <SectionEmptyState
+              message="No payments recorded yet"
+              icon={CreditCard}
+              compact
+            />
+          ) : (
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {payments.slice(0, 8).map((payment) => {
+                const paymentContribution = contributions.find(
+                  (contribution) =>
+                    contribution.id === payment.contributionId ||
+                    (contribution.studentId === payment.studentId &&
+                      contribution.eventId === payment.eventId),
+                );
 
-              return (
-                <div
-                  key={payment.id}
-                  className="glass-card p-3 min-w-[220px] shrink-0"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium text-dark truncate">
-                        {payment.studentName}
-                      </p>
-                      <p className="text-xs text-text-secondary truncate">
-                        {payment.eventName}
-                      </p>
-                      <p className="text-xs text-text-secondary/70">
-                        {formatDate(payment.date)}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-semibold text-green-600">
-                        {formatPeso(payment.amount)}
-                      </p>
-                      {paymentStatus && (
-                        <p
-                          className={`text-xs font-semibold ${paymentStatus.className}`}
-                        >
-                          {paymentStatus.label}
+                const paymentStatus = paymentContribution
+                  ? contributionStatus(paymentContribution)
+                  : null;
+
+                return (
+                  <div
+                    key={payment.id}
+                    className="glass-card p-3 min-w-[220px] shrink-0"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-dark truncate">
+                          {payment.studentName}
                         </p>
-                      )}
+
+                        <p className="text-xs text-text-secondary truncate">
+                          {payment.eventName}
+                        </p>
+
+                        <p className="text-xs text-text-secondary/70">
+                          {formatDate(payment.date)}
+                        </p>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <p className="font-semibold text-green-600">
+                          {formatPeso(payment.amount)}
+                        </p>
+
+                        {paymentStatus && (
+                          <p
+                            className={`text-xs font-semibold ${paymentStatus.className}`}
+                          >
+                            {paymentStatus.label}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Summary Cards - Right Side */}
+        <div className="grid grid-cols-3 lg:grid-cols-1 gap-3">
+          <SummaryCard
+            color="blue"
+            value={totalContributions.toLocaleString()}
+            label="Total Records"
+            subtitle="contribution records"
+            compact
+          />
+
+          <SummaryCard
+            color="purple"
+            value={formatPeso(totalRequired)}
+            label="Total Collectable"
+            subtitle="required contributions"
+            compact
+          />
+
+          <SummaryCard
+            color="green"
+            value={formatPeso(totalPaid)}
+            label="Total Collected"
+            subtitle="payments received"
+            compact
+          />
+        </div>
       </div>
 
       {/* Filters */}
@@ -845,7 +1070,7 @@ export default function ContributionManagementSection({
                               {record.studentName}
                             </span>
                             <span className="text-xs text-text-secondary">
-                              {record.studentId}
+                              {record.studentDisplayId}
                             </span>
                           </div>
                         </div>
@@ -1123,7 +1348,7 @@ export default function ContributionManagementSection({
                       <User className="w-3.5 h-3.5 text-text-secondary" />
                       <span className="text-sm text-dark">
                         {student.name}{" "}
-                        <span className="text-text-secondary">
+                        <span className="text-text-secondary flex items-left">
                           ({student.studentId})
                         </span>
                       </span>

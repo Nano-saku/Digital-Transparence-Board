@@ -429,8 +429,6 @@ export const eventsService = {
   },
 };
 
-// ... rest of the file remains the same ...
-
 // ============================================
 // ATTENDANCE SERVICE
 // ============================================
@@ -667,27 +665,68 @@ export const attendanceService = {
 // CONTRIBUTIONS SERVICE
 // ============================================
 export const contributionsService = {
+  /**
+   * Fetch all contributions in batches.
+   *
+   * This remains available for places that genuinely need the complete
+   * contribution dataset, such as legacy/offline workflows.
+   *
+   * Normal paginated screens should use getPage() instead.
+   */
+
   async getAll(): Promise<ContributionRecord[]> {
     return cachedRead<ContributionRecord>("contributions", async () => {
-      const { data, error } = await getSupabase()
-        .from("contributions")
-        .select("*")
-        .order("id", { ascending: false });
+      const supabase = getSupabase();
+      const pageSize = 1000;
+      let from = 0;
+      type ContributionRow = {
+        id: string;
+        student_id: string;
+        event_id: string;
+        event_name: string;
+        required_amount: number;
+        amount_paid: number;
+        remaining_balance: number;
+      };
+      const allData: ContributionRow[] = [];
 
-      if (error) throw error;
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          requiredAmount: item.required_amount,
-          amountPaid: item.amount_paid,
-          remainingBalance: item.remaining_balance,
-        })) || []
-      );
+      while (true) {
+        const { data, error } = await supabase
+          .from("contributions")
+          .select("*")
+          .order("id", { ascending: false })
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) break;
+
+        allData.push(...data);
+
+        if (data.length < pageSize) break;
+
+        from += pageSize;
+      }
+
+      return allData.map((item) => ({
+        id: item.id,
+        studentId: item.student_id,
+        eventId: item.event_id,
+        eventName: item.event_name,
+        requiredAmount: item.required_amount,
+        amountPaid: item.amount_paid,
+        remainingBalance: item.remaining_balance,
+      }));
     });
   },
+
+  /**
+   * Fetch one page of contributions directly from PostgreSQL.
+   *
+   * page is zero-based:
+   * page 0 = first page
+   * page 1 = second page
+   */
   async getPage(
     page: number,
     pageSize: number,
@@ -720,6 +759,37 @@ export const contributionsService = {
       total: count ?? 0,
     };
   },
+
+  /**
+   * Get contribution totals directly from PostgreSQL.
+   *
+   * This avoids downloading thousands of contribution rows just to
+   * calculate the summary cards.
+   */
+  async getTotals(): Promise<{
+    totalRequired: number;
+    totalPaid: number;
+    totalBalance: number;
+  }> {
+    const { data, error } = await getSupabase().rpc("get_contribution_totals");
+
+    if (error) throw error;
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      totalRequired: Number(row?.total_required ?? 0),
+      totalPaid: Number(row?.total_paid ?? 0),
+      totalBalance: Number(row?.total_balance ?? 0),
+    };
+  },
+
+  /**
+   * Get all contributions belonging to one student.
+   *
+   * This is intentionally server-side and does not download the entire
+   * contributions table.
+   */
   async getByStudentId(studentId: string): Promise<ContributionRecord[]> {
     const { data, error } = await getSupabase()
       .from("contributions")
@@ -742,6 +812,12 @@ export const contributionsService = {
     );
   },
 
+  /**
+   * Get exactly one contribution for a student/event pair.
+   *
+   * The database has a unique (student_id, event_id) index, so
+   * maybeSingle() is appropriate here.
+   */
   async getByStudentAndEvent(
     studentId: string,
     eventId: string,
@@ -767,10 +843,12 @@ export const contributionsService = {
       remainingBalance: data.remaining_balance,
     };
   },
+
   async create(
     record: Omit<ContributionRecord, "id">,
   ): Promise<ContributionRecord> {
     const id = createRecordId();
+
     const payload = {
       student_id: record.studentId,
       event_id: record.eventId,
@@ -794,6 +872,7 @@ export const contributionsService = {
           .single();
 
         if (error) throw error;
+
         return {
           id: data.id,
           studentId: data.student_id,
@@ -807,6 +886,7 @@ export const contributionsService = {
     });
 
     if (!result) throw new Error("Failed to create contribution");
+
     return result;
   },
 
@@ -815,15 +895,21 @@ export const contributionsService = {
     record: Partial<ContributionRecord>,
   ): Promise<ContributionRecord> {
     const updateData: Record<string, unknown> = {};
+
     if (record.studentId !== undefined)
       updateData.student_id = record.studentId;
+
     if (record.eventId !== undefined) updateData.event_id = record.eventId;
+
     if (record.eventName !== undefined)
       updateData.event_name = record.eventName;
+
     if (record.requiredAmount !== undefined)
       updateData.required_amount = record.requiredAmount;
+
     if (record.amountPaid !== undefined)
       updateData.amount_paid = record.amountPaid;
+
     if (record.remainingBalance !== undefined)
       updateData.remaining_balance = record.remainingBalance;
 
@@ -847,6 +933,7 @@ export const contributionsService = {
           .single();
 
         if (error) throw error;
+
         return {
           id: data.id,
           studentId: data.student_id,
@@ -860,6 +947,7 @@ export const contributionsService = {
     });
 
     if (!result) throw new Error("Failed to update contribution");
+
     return result;
   },
 
@@ -1412,13 +1500,6 @@ export const boardMembersService = {
 // ============================================
 // FINANCIAL REPORTING SERVICE (derived, no DB writes)
 // ============================================
-const addToTotal = (
-  totals: Map<string, number>,
-  key: string,
-  amount: number,
-): void => {
-  totals.set(key, (totals.get(key) ?? 0) + Math.max(0, amount));
-};
 
 /**
  * Reload UI data whenever a record in one of its Supabase source tables changes.
@@ -1449,88 +1530,24 @@ export const subscribeToTables = (
 
 export const financialReportingService = {
   async getReport(): Promise<FinancialReport> {
-    const [events, students, contributions, payments, transactions] =
-      await Promise.all([
-        eventsService.getAll(),
-        studentsService.getAll(),
-        contributionsService.getAll(),
-        paymentsService.getAll(),
-        transactionsService.getAll(),
-      ]);
-    const contribTotals = new Map<string, number>();
-    const payTotals = new Map<string, number>();
-    const collectionByEvent = new Map<string, number>();
-    for (const c of contributions) {
-      addToTotal(
-        contribTotals,
-        c.studentId + "\u0000" + c.eventId,
-        c.amountPaid,
-      );
+    const { data, error } = await getSupabase().rpc("get_financial_report");
+
+    if (error) throw error;
+
+    if (!data) {
+      return {
+        summary: {
+          totalBudget: 0,
+          totalFundsCollected: 0,
+          totalFundsSpent: 0,
+          remainingBudget: 0,
+          totalExpectedContributions: 0,
+        },
+        eventAllocations: [],
+      };
     }
-    for (const p of payments) {
-      addToTotal(payTotals, p.studentId + "\u0000" + p.eventId, p.amount);
-    }
-    const allKeys = new Set([...contribTotals.keys(), ...payTotals.keys()]);
-    for (const key of allKeys) {
-      const collected = Math.max(
-        contribTotals.get(key) ?? 0,
-        payTotals.get(key) ?? 0,
-      );
-      const eventId = key.split("\u0000")[1];
-      addToTotal(collectionByEvent, eventId, collected);
-    }
-    const incomeByEvent = new Map<string, number>();
-    const spentByEvent = new Map<string, number>();
-    let ledgerIncome = 0;
-    let totalFundsSpent = 0;
-    for (const tx of transactions) {
-      const amount = Math.max(0, tx.amount);
-      if (tx.type === "income") {
-        ledgerIncome += amount;
-        if (tx.eventId) addToTotal(incomeByEvent, tx.eventId, amount);
-      } else {
-        totalFundsSpent += amount;
-        if (tx.eventId) addToTotal(spentByEvent, tx.eventId, amount);
-      }
-    }
-    const studentCollections = [...collectionByEvent.values()].reduce(
-      (s, a) => s + a,
-      0,
-    );
-    const totalFundsCollected = studentCollections + ledgerIncome;
-    const totalExpectedContributions = events.reduce((total, event) => {
-      const allocation = Number(event.allocationAmount) || 0;
-      return total + allocation * students.length;
-    }, 0);
-    const totalBudget = events.reduce(
-      (s, e) => s + Math.max(0, e.allocationAmount),
-      0,
-    );
-    return {
-      summary: {
-        totalBudget,
-        totalFundsCollected,
-        totalFundsSpent,
-        remainingBudget: totalFundsCollected - totalFundsSpent,
-        totalExpectedContributions,
-      },
-      eventAllocations: events
-        .map((event) => {
-          const totalCollected =
-            (collectionByEvent.get(event.id) ?? 0) +
-            (incomeByEvent.get(event.id) ?? 0);
-          const totalSpent = spentByEvent.get(event.id) ?? 0;
-          return {
-            eventId: event.id,
-            eventName: event.name,
-            allocationAmount: Math.max(0, event.allocationAmount),
-            totalCollected,
-            totalSpent,
-            remainingBalance: totalCollected - totalSpent,
-          };
-        })
-        .sort((a, b) => a.eventName.localeCompare(b.eventName)),
-    };
+
+    return data as FinancialReport;
   },
 
   subscribe(onChange: () => void): () => void {
