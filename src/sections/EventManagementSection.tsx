@@ -7,10 +7,12 @@ import {
   UserCheck,
   Pencil,
   Trash2,
+  MoreVertical,
 } from "lucide-react";
 import {
   eventsService,
   studentsService,
+  contributionsService,
   boardMembersService,
   subscribeToTables,
 } from "@/services/db";
@@ -21,6 +23,7 @@ import type {
   Student,
   UserRole,
   BoardMember,
+  ContributionRecord,
 } from "@/types";
 import {
   Dialog,
@@ -56,6 +59,7 @@ export default function EventManagementSection({
 }: EventManagementSectionProps) {
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -63,12 +67,17 @@ export default function EventManagementSection({
   // Role-based permissions
   const canManageEvents = role === "admin" || role === "board-member";
 
-  // Event form (shared by the create and edit flows)
+  // Three-dot action menu
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+
+  // Event form
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+
   // Delete confirmation dialog state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+
   const [eventForm, setEventForm] = useState<{
     name: string;
     allocationAmount: number;
@@ -80,6 +89,7 @@ export default function EventManagementSection({
     date: "",
     schedules: [],
   });
+
   const [scheduleToAdd, setScheduleToAdd] = useState<EventSession | "">("");
   const [eventDateTbd, setEventDateTbd] = useState(false);
 
@@ -92,13 +102,15 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData] = await Promise.all([
+      const [eventsData, studentsData, contributionsData] = await Promise.all([
         eventsService.getAll(),
         studentsService.getAll(),
+        contributionsService.getAll(),
       ]);
 
       setEvents(eventsData);
       setStudents(studentsData);
+      setContributions(contributionsData);
 
       try {
         setBoardMembers(await boardMembersService.listBoardMembers());
@@ -116,14 +128,15 @@ export default function EventManagementSection({
     }
   }, []);
 
-  // Initial read plus live re-queries for the tables displayed in this view.
+  // Initial read
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  // Live updates
   useEffect(() => {
     return subscribeToTables(
-      ["events", "students", "board_members"],
+      ["events", "students", "contributions", "board_members"],
       () => loadData(false),
       "event-management",
     );
@@ -216,27 +229,33 @@ export default function EventManagementSection({
       schedules: event.schedules ?? [],
     });
 
+    setEventDateTbd(!event.date || event.date === "TBD");
     setShowEventModal(true);
   };
 
   const handleAddEvent = async () => {
     try {
       setSaving(true);
+
       const newEvent = await eventsService.create({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
-        date: eventForm.date,
+        date: eventDateTbd ? "TBD" : eventForm.date,
         schedules: eventForm.schedules,
       });
+
       setEvents([...events, newEvent]);
       setShowEventModal(false);
+
       setEventForm({
         name: "",
         allocationAmount: 0,
         date: "",
         schedules: [],
       });
+
       setEventDateTbd(false);
+
       toast.success("Event created successfully");
     } catch (error) {
       console.error("Error creating event:", error);
@@ -248,24 +267,31 @@ export default function EventManagementSection({
 
   const handleUpdateEvent = async () => {
     if (!editingEvent) return;
+
     try {
       setSaving(true);
+
       const updated = await eventsService.update(editingEvent.id, {
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         date: eventDateTbd ? "TBD" : eventForm.date,
         schedules: eventForm.schedules,
       });
+
       setEvents(events.map((e) => (e.id === editingEvent.id ? updated : e)));
+
       setEditingEvent(null);
       setShowEventModal(false);
+
       setEventForm({
         name: "",
         allocationAmount: 0,
         date: "",
         schedules: [],
       });
+
       setEventDateTbd(false);
+
       toast.success("Event updated successfully");
     } catch (error) {
       console.error("Error updating event:", error);
@@ -276,18 +302,24 @@ export default function EventManagementSection({
   };
 
   const handleOpenDeleteConfirm = (event: Event) => {
+    setOpenActionMenu(null);
     setEventToDelete(event);
     setShowDeleteConfirm(true);
   };
 
   const handleDeleteEvent = async () => {
     if (!eventToDelete) return;
+
     try {
       setSaving(true);
+
       await eventsService.delete(eventToDelete.id);
+
       setEvents(events.filter((e) => e.id !== eventToDelete.id));
+
       setEventToDelete(null);
       setShowDeleteConfirm(false);
+
       toast.success("Event deleted successfully");
     } catch (error) {
       console.error("Error deleting event:", error);
@@ -297,7 +329,8 @@ export default function EventManagementSection({
     }
   };
 
-  // Required contributions are authoritative per student and event.
+  // Expected collection:
+  // Allocation per student × total number of students
   const expectedCollection = (event: Event) => {
     const allocation = Number(event.allocationAmount) || 0;
     const studentCount = students.length;
@@ -305,7 +338,18 @@ export default function EventManagementSection({
     return allocation * studentCount;
   };
 
-  /** Morning / Afternoon schedule label for the events list (12h AM/PM). */
+  // Actual collection:
+  // Sum of amountPaid for all contributions belonging to this event
+  const collectedAmount = (event: Event) => {
+    return contributions
+      .filter((contribution) => contribution.eventId === event.id)
+      .reduce(
+        (total, contribution) => total + (Number(contribution.amountPaid) || 0),
+        0,
+      );
+  };
+
+  /** Schedule label for the events list. */
   const scheduleLabel = (event: Event): React.ReactNode => {
     if (!event.schedules || event.schedules.length === 0) {
       return "-";
@@ -338,6 +382,7 @@ export default function EventManagementSection({
 
   // Upcoming events listed soonest first.
   const todaysISO = today();
+
   const sortedEvents = useMemo(() => {
     return [...events].sort((a, b) => {
       const aTbd = !a.date || a.date === "TBD";
@@ -368,10 +413,12 @@ export default function EventManagementSection({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
             <SectionBackButton onClick={onBack} />
+
             <div>
               <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
                 Event Management
               </h1>
+
               <p className="text-text-secondary text-sm">
                 Manage events and allocations
               </p>
@@ -402,11 +449,13 @@ export default function EventManagementSection({
                 <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
                   <Calendar className="w-5 h-5 text-red" />
                 </div>
+
                 <h3 className="font-display font-semibold text-lg text-dark">
                   Upcoming Events & Allocations
                 </h3>
               </div>
             </div>
+
             <div className="rounded-xl overflow-hidden border border-gray-200">
               <div className="overflow-x-auto">
                 <table className="glass-table">
@@ -417,17 +466,22 @@ export default function EventManagementSection({
                       <th>Schedule</th>
                       <th>Allocation</th>
                       <th>Expected Collection</th>
+                      <th>Collected</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {sortedEvents.map((event) => (
                       <tr key={event.id}>
+                        {/* Event Name */}
                         <td className="font-medium text-dark">
                           <div className="flex items-center gap-2 flex-wrap">
                             {event.name}
                           </div>
                         </td>
+
+                        {/* Date */}
                         <td className="text-text-secondary whitespace-nowrap">
                           {event.date && event.date !== "TBD" ? (
                             <div className="flex items-center gap-2">
@@ -453,37 +507,75 @@ export default function EventManagementSection({
                             </span>
                           )}
                         </td>
+
+                        {/* Schedule */}
                         <td className="text-text-secondary whitespace-nowrap">
                           {scheduleLabel(event)}
                         </td>
-                        <td className="text-text-secondary">
+
+                        {/* Allocation */}
+                        <td className="text-text-secondary whitespace-nowrap">
                           {formatPeso(event.allocationAmount)}
                         </td>
-                        <td className="font-medium text-green-600">
+
+                        {/* Expected Collection */}
+                        <td className="font-medium text-green-600 whitespace-nowrap">
                           {formatPeso(expectedCollection(event))}
                         </td>
 
+                        {/* Actual Collected */}
+                        <td className="font-medium text-blue-600 whitespace-nowrap">
+                          {formatPeso(collectedAmount(event))}
+                        </td>
+
+                        {/* Actions */}
                         <td>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {canManageEvents && (
-                              <>
-                                <button
-                                  onClick={() => handleOpenEditEvent(event)}
-                                  className="text-sm flex items-center gap-1"
-                                  title="Edit event"
-                                >
-                                  <Pencil className="w-4 h-4" /> Edit
-                                </button>
-                                <button
-                                  onClick={() => handleOpenDeleteConfirm(event)}
-                                  className="flex items-center gap-1 text-sm hover:text-red"
-                                  title="Delete event"
-                                >
-                                  <Trash2 className="w-4 h-4 text-red" /> Delete
-                                </button>
-                              </>
-                            )}
-                          </div>
+                          {canManageEvents && (
+                            <div className="relative flex justify-center">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenActionMenu(
+                                    openActionMenu === event.id
+                                      ? null
+                                      : event.id,
+                                  )
+                                }
+                                className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-black/5 transition-colors"
+                                title="Event actions"
+                                aria-label={`Actions for ${event.name}`}
+                              >
+                                <MoreVertical className="w-5 h-5 text-text-secondary" />
+                              </button>
+
+                              {openActionMenu === event.id && (
+                                <div className="absolute right-0 top-10 z-30 w-36 rounded-xl border border-gray-200 bg-white shadow-lg overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenActionMenu(null);
+                                      handleOpenEditEvent(event);
+                                    }}
+                                    className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                    Edit
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenDeleteConfirm(event)
+                                    }
+                                    className="w-full px-4 py-2.5 text-left text-sm text-red hover:bg-red/5 flex items-center gap-2"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -491,6 +583,7 @@ export default function EventManagementSection({
                 </table>
               </div>
             </div>
+
             {events.length === 0 && (
               <SectionEmptyState message="No events found" icon={Calendar} />
             )}
@@ -505,6 +598,7 @@ export default function EventManagementSection({
           if (!open) {
             setShowEventModal(false);
             setEditingEvent(null);
+            setEventDateTbd(false);
           }
         }}
       >
@@ -516,21 +610,27 @@ export default function EventManagementSection({
           </DialogHeader>
 
           <div className="space-y-4 mt-4">
+            {/* Event Name */}
             <div>
               <label className="block text-sm font-medium text-dark mb-1">
                 Event Name
               </label>
+
               <input
                 type="text"
                 value={eventForm.name}
                 onChange={(e) =>
-                  setEventForm({ ...eventForm, name: e.target.value })
+                  setEventForm({
+                    ...eventForm,
+                    name: e.target.value,
+                  })
                 }
                 className="glass-input w-full px-4 py-2"
                 placeholder="e.g., General Assembly"
               />
             </div>
 
+            {/* Date */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-sm font-medium text-dark">
@@ -541,7 +641,9 @@ export default function EventManagementSection({
                   type="button"
                   onClick={() => {
                     const nextValue = !eventDateTbd;
+
                     setEventDateTbd(nextValue);
+
                     if (nextValue) {
                       setEventForm({
                         ...eventForm,
@@ -566,6 +668,7 @@ export default function EventManagementSection({
                 <span className="text-xs text-text-secondary">
                   Mark date as To Be Determined
                 </span>
+
                 {eventDateTbd && (
                   <span className="text-xs font-semibold text-red">TBD</span>
                 )}
@@ -593,6 +696,7 @@ export default function EventManagementSection({
                 <p className="text-sm font-semibold text-dark">
                   Attendance Schedule
                 </p>
+
                 <p className="text-xs text-text-secondary mt-1">
                   Add only the sessions required for this event.
                 </p>
@@ -712,10 +816,12 @@ export default function EventManagementSection({
               )}
             </div>
 
+            {/* Allocation Amount */}
             <div>
               <label className="block text-sm font-medium text-dark mb-1">
                 Allocation Amount (₱)
               </label>
+
               <input
                 type="number"
                 value={eventForm.allocationAmount || ""}
@@ -731,6 +837,7 @@ export default function EventManagementSection({
               />
             </div>
 
+            {/* Assigned Board Members */}
             {canManageEvents && boardMembers.length > 0 && (
               <div>
                 <label className="block text-sm font-medium text-dark mb-1.5">
@@ -739,6 +846,7 @@ export default function EventManagementSection({
                     Assigned Board Members
                   </span>
                 </label>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto rounded-xl border border-white/50 p-3 bg-white/30">
                   {boardMembers.map((member) => (
                     <label
@@ -752,17 +860,20 @@ export default function EventManagementSection({
               </div>
             )}
 
+            {/* Modal Buttons */}
             <div className="flex gap-3 pt-4">
               <button
                 onClick={() => {
                   setShowEventModal(false);
                   setEditingEvent(null);
+                  setEventDateTbd(false);
                 }}
                 className="flex-1 glass-button px-4 py-2.5"
                 disabled={saving}
               >
                 Cancel
               </button>
+
               <button
                 onClick={editingEvent ? handleUpdateEvent : handleAddEvent}
                 className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
@@ -784,6 +895,7 @@ export default function EventManagementSection({
                     ) : (
                       <Plus className="w-4 h-4" />
                     )}
+
                     {editingEvent ? "Update Event" : "Create Event"}
                   </>
                 )}
@@ -802,7 +914,9 @@ export default function EventManagementSection({
         }}
         onConfirm={handleDeleteEvent}
         title="Delete Event"
-        description={`Are you sure you want to delete ${eventToDelete?.name ?? "this event"}? This action cannot be undone.`}
+        description={`Are you sure you want to delete ${
+          eventToDelete?.name ?? "this event"
+        }? This action cannot be undone.`}
         warningText="Deleting this event will also remove related payments, contributions, and attendance records."
         confirmLabel="Delete Event"
         loading={saving}

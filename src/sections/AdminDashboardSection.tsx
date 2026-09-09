@@ -16,12 +16,20 @@ import {
 import { today, daysUntil, formatPeso } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
-import type { ViewState, FinancialSummary, Event, UserRole } from "@/types";
+import type {
+  ViewState,
+  FinancialSummary,
+  FinancialReport,
+  Transaction,
+  Event,
+  UserRole,
+} from "@/types";
 import {
   financialReportingService,
   studentsService,
   eventsService,
   feedbackService,
+  transactionsService,
   subscribeToTables,
 } from "@/services/db";
 import { toast } from "sonner";
@@ -47,6 +55,15 @@ export default function AdminDashboardSection({
   const [loading, setLoading] = useState(true);
   const [financialSummary, setFinancialSummary] =
     useState<FinancialSummary | null>(null);
+
+  const [eventPerformance, setEventPerformance] = useState<
+    FinancialReport["eventAllocations"]
+  >([]);
+
+  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>(
+    [],
+  );
+
   const [studentCount, setStudentCount] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([]);
   const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
@@ -54,24 +71,41 @@ export default function AdminDashboardSection({
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const [summaryData, studentsData, eventsData, pendingFeedbackData] =
-        await Promise.all([
-          financialReportingService
-            .getReport()
-            .then((report) => report.summary),
-          studentsService.getAll(),
-          eventsService.getAll(),
-          feedbackService.getByStatus("pending"),
-        ]);
-      setFinancialSummary(summaryData);
+
+      const [
+        financialReport,
+        studentsData,
+        eventsData,
+        pendingFeedbackData,
+        transactionsData,
+      ] = await Promise.all([
+        financialReportingService.getReport(),
+        studentsService.getAll(),
+        eventsService.getAll(),
+        feedbackService.getByStatus("pending"),
+        transactionsService.getAll(),
+      ]);
+
+      // Financial report
+      setFinancialSummary(financialReport.summary);
+      setEventPerformance(financialReport.eventAllocations ?? []);
+
+      // Transactions
+      setRecentTransactions(transactionsData.slice(0, 5));
+
+      // Students
       setStudentCount(studentsData.length);
+
+      // Feedback
       setPendingFeedbackCount(pendingFeedbackData.length);
 
-      // Upcoming = events whose date is today or later, soonest first.
+      // Upcoming events
       const todays = today();
+
       const upcoming = eventsData
         .filter((e) => e.date && e.date >= todays)
         .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
       setUpcomingEvents(upcoming);
     } catch (error) {
       console.error("Error loading dashboard data:", error);
@@ -110,6 +144,7 @@ export default function AdminDashboardSection({
       from: { x: "-30vw", opacity: 0 },
       to: { x: 0, opacity: 1, duration: 0.7 },
     },
+
     // Summary cards entrance
     {
       ref: summaryRef,
@@ -118,6 +153,7 @@ export default function AdminDashboardSection({
       to: { y: 0, opacity: 1, duration: 0.6, stagger: 0.05 },
       position: "-=0.4",
     },
+
     // Quick actions entrance
     {
       ref: actionsRef,
@@ -178,6 +214,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "admin"
       ? [
           {
@@ -189,6 +226,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "admin" || role === "secretary"
       ? [
           {
@@ -200,6 +238,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "admin" || role === "treasurer"
       ? [
           {
@@ -211,6 +250,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "board-member"
       ? [
           {
@@ -222,6 +262,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "admin" || role === "secretary"
       ? [
           {
@@ -233,6 +274,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "admin" || role === "treasurer" || role === "auditor"
       ? [
           {
@@ -258,6 +300,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     ...(role === "board-member"
       ? [
           {
@@ -269,6 +312,7 @@ export default function AdminDashboardSection({
           },
         ]
       : []),
+
     {
       title: "Feedback Inbox",
       description: "View all complaints, inquiries, and suggestions",
@@ -288,18 +332,20 @@ export default function AdminDashboardSection({
         {/* Header */}
         <div
           ref={headlineRef}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-10"
+          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6"
         >
           <div>
             <h1 className="font-display font-bold text-3xl lg:text-4xl text-dark mb-2">
               Admin Dashboard
             </h1>
+
             <div className="mt-3 flex items-center gap-3">
               <img
                 src="/DSSC_logo.png"
                 alt="DSSC logo"
                 className="h-12 w-12 rounded-full border-2 border-lsc-gold/60 bg-white object-contain p-1"
               />
+
               <p className="text-text-secondary">
                 {userEmail} — your council{" "}
                 {
@@ -322,228 +368,392 @@ export default function AdminDashboardSection({
 
         {!loading && (
           <>
-            {/* Summary Cards */}
-            <div
-              ref={summaryRef}
-              className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-10"
-            >
-              {summaryCards.map((card, index) => {
-                const Icon = card.icon;
-
-                return (
-                  <div
-                    key={index}
-                    className="summary-card glass-card p-4 lg:p-5"
-                  >
-                    <div className="flex items-center gap-3">
-                      {/* Icon */}
-                      <div
-                        className={`w-9 h-9 rounded-lg flex-shrink-0 flex items-center justify-center ${
-                          card.color === "blue"
-                            ? "bg-blue-100"
-                            : card.color === "green"
-                              ? "bg-green-100"
-                              : card.color === "red"
-                                ? "bg-red/10"
-                                : card.color === "purple"
-                                  ? "bg-purple-100"
-                                  : "bg-yellow-100"
-                        }`}
-                      >
-                        <Icon
-                          className={`w-4 h-4 ${
-                            card.color === "blue"
-                              ? "text-blue-600"
-                              : card.color === "green"
-                                ? "text-green-600"
-                                : card.color === "red"
-                                  ? "text-red"
-                                  : card.color === "purple"
-                                    ? "text-purple-600"
-                                    : "text-yellow-600"
-                          }`}
-                        />
-                      </div>
-
-                      {/* Text */}
-                      <div className="min-w-0">
-                        <p className="text-xs text-text-secondary truncate">
-                          {card.label}
-                        </p>
-
-                        <p className="font-display font-bold text-xl lg:text-2xl text-dark">
-                          {card.value}
-                          {card.suffix}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {/* Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
-              <div className="glass-card p-5 flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
-                  <Calendar className="w-6 h-6 text-blue-600" />
-                </div>
-                <div>
-                  <p className="font-display font-bold text-2xl text-dark">
-                    {upcomingEvents.length}
-                  </p>
-                  <p className="text-sm text-text-secondary">Upcoming Events</p>
-                </div>
-              </div>
-              <div className="glass-card p-5 flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg bg-yellow-100 flex flex-shrink-0 items-center justify-center">
-                  <FileText className="w-6 h-6 text-yellow-600" />
-                </div>
-                <div>
-                  <p className="font-display font-bold text-2xl text-dark">
-                    {pendingFeedbackCount}
-                  </p>
-                  <p className="text-sm text-text-secondary">
-                    Pending Feedback
-                  </p>
-                </div>
-              </div>
-            </div>
-            {/* Quick Actions */}
-            <div>
-              <h2 className="font-display font-semibold text-xl text-dark mb-4">
-                Quick Actions
-              </h2>
-
+            {/* Council Overview */}
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 mb-10">
+              {/* Council Overview Card */}
               <div
-                ref={actionsRef}
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+                ref={summaryRef}
+                className="summary-card glass-card p-5 lg:p-5"
               >
-                {quickActions.map((action, index) => {
-                  const Icon = action.icon;
+                <div className="mb-4">
+                  <h2 className="font-display font-semibold text-lg text-dark">
+                    Council Overview
+                  </h2>
 
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => onNavigate(action.view)}
-                      className="action-card glass-card p-5 text-left hover:shadow-lg transition-all group"
-                    >
-                      {/* Icon + Title */}
-                      <div className="flex items-center gap-3 mb-2">
-                        <div
-                          className={`w-9 h-9 rounded-lg flex-shrink-0 flex items-center justify-center ${
-                            action.color === "blue"
-                              ? "bg-blue-100"
-                              : action.color === "green"
-                                ? "bg-green-100"
-                                : action.color === "purple"
-                                  ? "bg-purple-100"
-                                  : "bg-yellow-100"
-                          }`}
-                        >
-                          <Icon
-                            className={`w-5 h-5 ${
-                              action.color === "blue"
-                                ? "text-blue-600"
-                                : action.color === "green"
-                                  ? "text-green-600"
-                                  : action.color === "purple"
-                                    ? "text-purple-600"
-                                    : "text-yellow-600"
-                            }`}
-                          />
-                        </div>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Current financial and membership summary
+                  </p>
+                </div>
 
-                        <h3 className="font-display font-semibold text-dark">
-                          {action.title}
-                        </h3>
-                      </div>
-
-                      {/* Description */}
-                      <p className="text-sm text-text-secondary mb-3">
-                        {action.description}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
+                  {summaryCards.map((card, index) => (
+                    <div key={index} className="min-w-0">
+                      <p className="font-display font-bold text-2xl sm:text-2xl lg:text-3xl text-dark leading-none tracking-tight truncate">
+                        {card.value}
+                        {card.suffix}
                       </p>
 
-                      {/* Action Link */}
-                      <span className="inline-flex items-center gap-1 text-sm font-medium text-royal-blue group-hover:gap-2 transition-all">
+                      <p className="text-[10px] sm:text-[11px] text-text-secondary uppercase tracking-wider mt-2 truncate">
+                        {card.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-dark/5">
+                  <div className="grid grid-cols-2 gap-6">
+                    {/* Upcoming Events Count */}
+                    <div>
+                      <p className="font-display font-bold text-2xl lg:text-3xl text-dark leading-none">
+                        {upcomingEvents.length}
+                      </p>
+
+                      <p className="text-[10px] sm:text-[11px] text-text-secondary uppercase tracking-wider mt-2">
+                        Upcoming Events
+                      </p>
+                    </div>
+
+                    {/* Pending Feedback Count */}
+                    <div>
+                      <p className="font-display font-bold text-2xl lg:text-3xl text-dark leading-none">
+                        {pendingFeedbackCount}
+                      </p>
+
+                      <p className="text-[10px] sm:text-[11px] text-text-secondary uppercase tracking-wider mt-2">
+                        Pending Feedback
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Upcoming Events */}
+                <div className="mt-6 pt-5 border-t border-dark/5">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="font-display font-semibold text-sm text-dark">
+                        Upcoming Events
+                      </h3>
+
+                      <p className="text-[10px] text-text-secondary mt-0.5">
+                        Scheduled council activities
+                      </p>
+                    </div>
+
+                    {(role === "admin" || role === "treasurer") && (
+                      <button
+                        onClick={() => onNavigate("event-management")}
+                        className="inline-flex items-center gap-1 text-xs text-royal-blue hover:gap-2 transition-all flex-shrink-0"
+                      >
                         Manage
-                        <ArrowRight className="w-4 h-4" />
-                      </span>
-                    </button>
-                  );
-                })}
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {upcomingEvents.length === 0 ? (
+                    <div className="rounded-lg bg-white/30 p-5 text-center text-text-secondary">
+                      <p className="text-xs">
+                        {role === "board-member"
+                          ? "No events assigned to you yet"
+                          : "No upcoming events scheduled"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2">
+                      {upcomingEvents.map((event) => {
+                        const days = daysUntil(event.date || "");
+
+                        return (
+                          <div
+                            key={event.id}
+                            className="rounded-lg bg-white/35 px-3 py-3 flex items-center justify-between gap-3 hover:bg-white/50 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <h4 className="font-display font-semibold text-sm text-dark truncate">
+                                {event.name}
+                              </h4>
+
+                              <p className="text-[11px] text-text-secondary mt-1">
+                                {event.date
+                                  ? new Date(event.date).toLocaleDateString(
+                                      "en-US",
+                                      {
+                                        weekday: "short",
+                                        month: "short",
+                                        day: "numeric",
+                                        year: "numeric",
+                                      },
+                                    )
+                                  : "Date not set"}
+                              </p>
+
+                              <p className="text-[10px] text-text-secondary mt-1">
+                                Allocation:{" "}
+                                <span className="font-medium text-dark">
+                                  ₱{event.allocationAmount.toLocaleString()}
+                                </span>
+                              </p>
+                            </div>
+
+                            <span
+                              className={`text-[10px] px-2 py-1 rounded-full font-medium flex-shrink-0 ${
+                                days === 0
+                                  ? "bg-red-500 text-white"
+                                  : days > 0
+                                    ? "bg-green-100 text-green-600"
+                                    : "bg-red/10 text-red-500"
+                              }`}
+                            >
+                              {days === 0
+                                ? "Today"
+                                : days > 0
+                                  ? `${days}d`
+                                  : "Over"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="glass-card p-4 lg:p-5">
+                <div className="mb-3">
+                  <h2 className="font-display font-semibold text-lg text-dark">
+                    Quick Actions
+                  </h2>
+
+                  <p className="text-xs text-text-secondary mt-1">
+                    Access council management tools
+                  </p>
+                </div>
+
+                <div ref={actionsRef} className="flex flex-col">
+                  {quickActions.map((action, index) => {
+                    const Icon = action.icon;
+
+                    return (
+                      <button
+                        key={index}
+                        onClick={() => onNavigate(action.view)}
+                        className="action-card group w-full flex items-center gap-3 py-3 px-2 text-left border-b border-dark/5 last:border-b-0 hover:bg-white/40 transition-all duration-200"
+                      >
+                        {/* Icon */}
+                        <div
+                          className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center ${
+                            action.color === "blue"
+                              ? "bg-blue-100 text-blue-600"
+                              : action.color === "green"
+                                ? "bg-green-100 text-green-600"
+                                : action.color === "purple"
+                                  ? "bg-purple-100 text-purple-600"
+                                  : "bg-yellow-100 text-yellow-600"
+                          }`}
+                        >
+                          <Icon className="w-5 h-5" />
+                        </div>
+
+                        {/* Content */}
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-display font-semibold text-sm text-dark truncate">
+                            {action.title}
+                          </h3>
+
+                          <p className="text-xs text-text-secondary mt-0.5 line-clamp-1">
+                            {action.description}
+                          </p>
+                        </div>
+
+                        {/* Arrow */}
+                        <ArrowRight className="w-4 h-4 flex-shrink-0 text-text-secondary/40 group-hover:text-royal-blue group-hover:translate-x-1 transition-all" />
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-            {/* Upcoming Events */}
-            <div className="mt-10">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                <h2 className="font-display font-semibold text-xl text-dark">
-                  Upcoming Events
-                </h2>
-                {(role === "admin" || role === "treasurer") && (
-                  <button
-                    onClick={() => onNavigate("event-management")}
-                    className="text-sm self-start"
-                  >
-                    Manage all events
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
+
+            {/* Event Collection Performance + Recent Transactions */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {/* Event Collection Performance */}
+              <div className="glass-card p-4 lg:p-5">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="min-w-0">
+                    <h2 className="font-display font-semibold text-lg text-dark">
+                      Event Collection Performance
+                    </h2>
+
+                    <p className="text-xs text-text-secondary mt-1">
+                      Collection progress based on event allocation targets
+                    </p>
+                  </div>
+
+                  {(role === "admin" ||
+                    role === "treasurer" ||
+                    role === "board-member") && (
+                    <button
+                      onClick={() => onNavigate("event-management")}
+                      className="inline-flex items-center gap-1 text-xs text-royal-blue hover:gap-2 transition-all flex-shrink-0"
+                    >
+                      View All
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {eventPerformance.length === 0 ? (
+                  <div className="rounded-lg bg-white/30 p-5 text-center text-text-secondary">
+                    <p className="text-xs">
+                      No event collection data available.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {eventPerformance.slice(0, 5).map((event) => {
+                      const expected =
+                        Number(event.allocationAmount ?? 0) * studentCount;
+
+                      const collected = Number(event.totalCollected ?? 0);
+
+                      const progress =
+                        expected > 0
+                          ? Math.min((collected / expected) * 100, 100)
+                          : 0;
+
+                      return (
+                        <div
+                          key={event.eventId ?? event.eventId}
+                          className="rounded-lg bg-white/35 px-3 py-2.5 hover:bg-white/50 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-display font-semibold text-sm text-dark truncate">
+                                {event.eventName}
+                              </h4>
+
+                              <p className="text-[10px] text-text-secondary mt-0.5">
+                                {formatPeso(collected)} / {formatPeso(expected)}
+                              </p>
+                            </div>
+
+                            <span className="text-[11px] font-display font-bold text-dark flex-shrink-0">
+                              {Math.round(progress)}%
+                            </span>
+                          </div>
+
+                          <div className="mt-2 h-1.5 w-full rounded-full bg-dark/5 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-green-500 transition-all duration-500"
+                              style={{
+                                width: `${progress}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
 
-              {upcomingEvents.length === 0 ? (
-                <div className="glass-card p-10 text-center text-text-secondary">
-                  <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                  <p>
-                    {role === "board-member"
-                      ? "No events assigned to you yet"
-                      : "No upcoming events scheduled"}
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {upcomingEvents.slice(0, 6).map((event) => {
-                    const days = daysUntil(event.date || "");
-                    return (
-                      <div key={event.id} className="glass-card p-5">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <h3 className="font-display font-semibold text-dark leading-snug">
-                            {event.name}
-                          </h3>
-                          <span
-                            className={`text-xs px-2 py-1 rounded-full font-medium flex-shrink-0 ${
-                              days === 0
-                                ? "bg-red-500 text-white"
-                                : days > 0
-                                  ? "bg-green-100 text-green-600"
-                                  : "bg-red/10 text-red-500"
-                            }`}
+              {/* Recent Transactions */}
+              {(role === "admin" ||
+                role === "treasurer" ||
+                role === "auditor") && (
+                <div className="glass-card p-4 lg:p-5">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="min-w-0">
+                      <h2 className="font-display font-semibold text-lg text-dark">
+                        Recent Transactions
+                      </h2>
+
+                      <p className="text-xs text-text-secondary mt-1">
+                        Latest income and expense records
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => onNavigate("transaction-management")}
+                      className="inline-flex items-center gap-1 text-xs text-royal-blue hover:gap-2 transition-all flex-shrink-0"
+                    >
+                      View All
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {recentTransactions.length === 0 ? (
+                    <div className="rounded-lg bg-white/30 p-5 text-center text-text-secondary">
+                      <p className="text-xs">No transactions recorded yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {recentTransactions.map((transaction) => {
+                        const isIncome =
+                          String(transaction.type).toLowerCase() === "income";
+
+                        const Icon = isIncome ? TrendingUp : TrendingDown;
+
+                        const amount = Math.abs(
+                          Number(transaction.amount) || 0,
+                        );
+
+                        const transactionType = isIncome ? "Income" : "Expense";
+
+                        const description =
+                          transaction.description ||
+                          transaction.type ||
+                          "Transaction";
+
+                        return (
+                          <div
+                            key={transaction.id}
+                            className="rounded-lg bg-white/35 px-3 py-2.5 flex items-center gap-3 hover:bg-white/50 transition-colors"
                           >
-                            {days === 0
-                              ? "Today"
-                              : days > 0
-                                ? `In ${days} day${days === 1 ? "" : "s"}`
-                                : "Over"}
-                          </span>
-                        </div>
-                        <p className="text-sm text-text-secondary mb-3">
-                          {event.date
-                            ? new Date(event.date).toLocaleDateString("en-US", {
-                                weekday: "short",
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })
-                            : "Date not set"}
-                        </p>
-                        <p className="text-xs text-text-secondary">
-                          Allocation:{" "}
-                          <span className="font-medium text-dark">
-                            ₱{event.allocationAmount.toLocaleString()}
-                          </span>
-                        </p>
-                      </div>
-                    );
-                  })}
+                            <div
+                              className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center ${
+                                isIncome
+                                  ? "bg-green-100 text-green-600"
+                                  : "bg-red-100 text-red-600"
+                              }`}
+                            >
+                              <Icon className="w-4 h-4" />
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="font-display font-semibold text-sm text-dark truncate">
+                                {description}
+                              </p>
+
+                              <p className="text-[10px] text-text-secondary mt-0.5 truncate">
+                                {transactionType}{" "}
+                                <span className="mx-1">•</span>
+                                {transaction.date
+                                  ? new Date(
+                                      transaction.date,
+                                    ).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })
+                                  : "No date"}
+                              </p>
+                            </div>
+
+                            <span
+                              className={`text-sm font-display font-semibold flex-shrink-0 ${
+                                isIncome ? "text-green-600" : "text-red-600"
+                              }`}
+                            >
+                              {isIncome ? "+" : "-"}
+                              {formatPeso(amount)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

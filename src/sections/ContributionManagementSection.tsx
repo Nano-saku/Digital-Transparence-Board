@@ -346,14 +346,26 @@ export default function ContributionManagementSection({
         event.id,
       );
       if (!contribution) {
-        contribution = await contributionsService.create({
-          studentId: student.id,
-          eventId: event.id,
-          eventName: event.name,
-          requiredAmount: event.allocationAmount,
-          amountPaid: 0,
-          remainingBalance: event.allocationAmount,
-        });
+        try {
+          contribution = await contributionsService.create({
+            studentId: student.id,
+            eventId: event.id,
+            eventName: event.name,
+            requiredAmount: event.allocationAmount,
+            amountPaid: 0,
+            remainingBalance: event.allocationAmount,
+          });
+        } catch (createError) {
+          // Someone else (another officer, or an in-flight import) may have
+          // just created this student's contribution for this event -- the
+          // database's unique (student_id, event_id) constraint rejected
+          // ours as a duplicate. Use theirs instead of failing the payment.
+          contribution = await contributionsService.getByStudentAndEvent(
+            student.id,
+            event.id,
+          );
+          if (!contribution) throw createError;
+        }
       }
       const validationError = validatePaymentAmount(
         paymentForm.amount,
@@ -458,17 +470,25 @@ export default function ContributionManagementSection({
       return;
     }
 
-    // One contribution record per student + event combination.
-    const conflict = records.find(
-      (r) =>
-        (editingRecord ? r.id !== editingRecord.id : true) &&
-        r.studentId === form.studentId &&
-        r.eventId === form.eventId,
-    );
-    if (conflict) {
-      toast.error(
-        "This student already has a contribution record for that event",
+    // One contribution record per student + event combination. `records`
+    // only holds the current table page, so it can't reliably catch a
+    // conflict sitting on a different page -- check the database directly
+    // for this specific pair instead (this is also enforced by a UNIQUE
+    // constraint on the table itself as the last line of defense).
+    try {
+      const existing = await contributionsService.getByStudentAndEvent(
+        form.studentId,
+        form.eventId,
       );
+      if (existing && existing.id !== editingRecord?.id) {
+        toast.error(
+          `${student.name} already has a contribution record for ${event.name}.`,
+        );
+        return;
+      }
+    } catch (error) {
+      console.error("Error checking for an existing contribution:", error);
+      toast.error("Failed to save contribution record");
       return;
     }
 
@@ -564,6 +584,12 @@ export default function ContributionManagementSection({
     let importFailures = 0;
     let receiptsIssued = 0;
     let receiptFailures = 0;
+    // Caught when the database's unique (student_id, event_id) constraint
+    // rejects a row -- e.g. a second import running at the same time, or a
+    // payment recorded for that student+event mid-import. Distinct from
+    // duplicateCount below, which is rows this import already knew were
+    // duplicates before touching the database.
+    let raceDuplicates = 0;
 
     // Lookup tables (case-insensitive) so rows can reference the student by
     // ID or by full name, and the event by name.
@@ -675,10 +701,22 @@ export default function ContributionManagementSection({
     // Skip rows that already have a contribution record, or are duplicated
     // within the file itself.
     //
-    // `contributions` contains the raw records with real database student IDs,
-    // unlike `records`, which is used for display.
+    // `contributions` only holds the current table page (PAGE_SIZE rows), so
+    // checking against it here would miss existing contributions sitting on
+    // any other page and let real duplicates slip into the import on any
+    // dataset bigger than one page. Fetch the complete set once, just for
+    // this check.
+    let allContributions: ContributionRecord[];
+    try {
+      allContributions = await contributionsService.getAll();
+    } catch (error) {
+      console.error("Error loading existing contributions for import:", error);
+      toast.error("Failed to check for existing contribution records");
+      return;
+    }
+
     const existingKeys = new Set(
-      contributions.map(
+      allContributions.map(
         (r) => `${r.studentId.toLowerCase()}|${r.eventId.toLowerCase()}`,
       ),
     );
@@ -794,9 +832,18 @@ export default function ContributionManagementSection({
               }
             }
           } catch (error) {
-            importFailures++;
+            const isDuplicate =
+              error instanceof Error &&
+              error.message.includes(
+                "already has a contribution record for this event",
+              );
 
-            console.error("Error importing a contribution row:", error);
+            if (isDuplicate) {
+              raceDuplicates++;
+            } else {
+              importFailures++;
+              console.error("Error importing a contribution row:", error);
+            }
           }
         }
       };
@@ -812,7 +859,11 @@ export default function ContributionManagementSection({
 
       // Combine all reasons rows may have been skipped.
       const totalSkipped =
-        unmatchedStudent + unmatchedEvent + invalidAmount + duplicateCount;
+        unmatchedStudent +
+        unmatchedEvent +
+        invalidAmount +
+        duplicateCount +
+        raceDuplicates;
 
       const parts = [`${successfulImports} contribution(s) imported`];
       if (importFailures > 0) {

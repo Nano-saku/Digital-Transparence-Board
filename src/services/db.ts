@@ -24,6 +24,20 @@ const createRecordId = (): string => crypto.randomUUID();
 // union type to stay in sync with.
 type OfflineTable = Parameters<typeof offlineSyncService.read>[0];
 
+/**
+ * True when a Supabase/Postgres error is a unique-constraint violation
+ * (Postgres error code 23505). Used to turn a duplicate-row insert into a
+ * friendly, catchable error instead of a raw Postgres error.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "23505"
+  );
+}
+
 // Shared "online-first, cache-fallback" read pattern used by every getAll().
 async function cachedRead<T>(
   table: OfflineTable,
@@ -871,7 +885,19 @@ export const contributionsService = {
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          // The contributions table has a UNIQUE (student_id, event_id)
+          // constraint (see the 2026-09-10 migration) as the authoritative
+          // guard against double entry -- callers can catch this specific
+          // message to recover gracefully (e.g. re-fetch and use the
+          // existing record) instead of surfacing a raw Postgres error.
+          if (isUniqueViolation(error)) {
+            throw new Error(
+              "This student already has a contribution record for this event.",
+            );
+          }
+          throw error;
+        }
 
         return {
           id: data.id,
