@@ -48,7 +48,6 @@ import {
   normalizeStudentId,
   expandEventGroups,
 } from "@/lib/spreadsheet";
-import { useSearch } from "@/hooks/useSearch";
 import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface ContributionManagementSectionProps {
   onBack: () => void;
@@ -112,6 +111,24 @@ export default function ContributionManagementSection({
 
   // Filters
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [filters, setFilters] = useState({
+    eventId: "",
+    status: "",
+  });
+  // Debounce database searches so we don't query Supabase on every
+  // individual keystroke.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchTerm]);
+
   const [contributionToDelete, setContributionToDelete] =
     useState<ContributionRow | null>(null);
 
@@ -145,6 +162,7 @@ export default function ContributionManagementSection({
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
+
       const [
         contributionsPage,
         contributionTotalsData,
@@ -152,7 +170,13 @@ export default function ContributionManagementSection({
         allEvents,
         paymentsData,
       ] = await Promise.all([
-        contributionsService.getPage(currentPage - 1, PAGE_SIZE),
+        contributionsService.getPage(
+          currentPage - 1,
+          PAGE_SIZE,
+          debouncedSearchTerm,
+          filters.eventId,
+          filters.status,
+        ),
         contributionsService.getTotals(),
         studentsService.getAll(),
         eventsService.getAll(),
@@ -160,6 +184,7 @@ export default function ContributionManagementSection({
       ]);
 
       const studentById = new Map(allStudents.map((s) => [s.id, s]));
+
       const rows: ContributionRow[] = contributionsPage.data.map((record) => {
         const student = studentById.get(record.studentId);
 
@@ -183,7 +208,7 @@ export default function ContributionManagementSection({
     } finally {
       setLoading(false);
     }
-  }, [currentPage]);
+  }, [currentPage, debouncedSearchTerm, filters.eventId, filters.status]);
 
   useEffect(() => {
     loadData();
@@ -211,21 +236,6 @@ export default function ContributionManagementSection({
     [events],
   );
 
-  const {
-    searchTerm,
-    setSearchTerm,
-    filters,
-    setFilter,
-    filtered: filteredRecords,
-  } = useSearch<ContributionRow>({
-    items: records,
-    searchKeys: ["studentName", "studentDisplayId"],
-    filters: {
-      eventId: (r) => r.eventId,
-      status: (r) => contributionStatus(r).label,
-    },
-  });
-
   // Summary stats
   const { totalRequired, totalPaid } = contributionTotals;
 
@@ -236,14 +246,11 @@ export default function ContributionManagementSection({
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filters.eventId, filters.status]);
-
-  const totalPages = Math.max(1, Math.ceil(totalContributions / PAGE_SIZE));
-  // Clamp back onto a valid page if a delete or realtime update shrinks the
-  // result set out from under the page the user is currently viewing.
+  const totalPages = Math.max(1, Math.ceil(totalContributions / PAGE_SIZE)); // Clamp back onto a valid page if a delete or realtime update shrinks // the result set out from under the current page.
   useEffect(() => {
     setCurrentPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
-  const paginatedRecords = filteredRecords;
+  const paginatedRecords = records;
 
   // ---------------------------------------------------------------------------
   // Record Payment (merged in from the former Payments screen — recording a
@@ -1063,7 +1070,12 @@ export default function ContributionManagementSection({
         </div>
         <select
           value={filters.eventId}
-          onChange={(e) => setFilter("eventId", e.target.value)}
+          onChange={(e) =>
+            setFilters((prev) => ({
+              ...prev,
+              eventId: e.target.value,
+            }))
+          }
           className="glass-input px-4 py-2 text-sm"
           disabled={loading}
         >
@@ -1076,7 +1088,12 @@ export default function ContributionManagementSection({
         </select>
         <select
           value={filters.status}
-          onChange={(e) => setFilter("status", e.target.value)}
+          onChange={(e) =>
+            setFilters((prev) => ({
+              ...prev,
+              status: e.target.value,
+            }))
+          }
           className="glass-input px-4 py-2 text-sm"
           disabled={loading}
         >
@@ -1171,7 +1188,7 @@ export default function ContributionManagementSection({
             </table>
           </div>
 
-          {filteredRecords.length === 0 && (
+          {records.length === 0 && (
             <SectionEmptyState
               message="No contribution records found"
               icon={Coins}
@@ -1184,18 +1201,18 @@ export default function ContributionManagementSection({
       {/* Stats */}
       <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
         <span>
-          Total Records: <strong className="text-dark">{records.length}</strong>
+          Total Records:{" "}
+          <strong className="text-dark">{totalContributions}</strong>
         </span>
         <span>
-          Filtered:{" "}
-          <strong className="text-dark">{filteredRecords.length}</strong>
+          Filtered: <strong className="text-dark">{records.length}</strong>
         </span>
       </div>
 
       <Pagination
         page={currentPage}
         totalPages={totalPages}
-        totalItems={filteredRecords.length}
+        totalItems={totalContributions}
         startIndex={(currentPage - 1) * PAGE_SIZE}
         endIndex={(currentPage - 1) * PAGE_SIZE + paginatedRecords.length}
         onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))}

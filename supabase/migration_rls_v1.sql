@@ -2,6 +2,12 @@
 -- DIGITAL TRANSPARENCY BOARD - RLS POLICIES v1
 -- ============================================================
 -- PURPOSE: Row Level Security policies for all tables
+--
+-- RUN ORDER: must be run AFTER migration_schema_v1.sql, in the same
+-- sitting. This file creates policies on student_requirement_files /
+-- student_requirement_file_access, which only exist once schema_v1 has
+-- created them -- running this file alone against a database that hasn't
+-- had schema_v1 applied will fail on those statements.
 -- ============================================================
 
 BEGIN;
@@ -20,7 +26,7 @@ BEGIN
         AND tablename IN (
             'students', 'events', 'board_members', 'attendance',
             'contributions', 'payments', 'transactions', 'feedback',
-            'financial_summaries', 'event_allocations', 'user_roles',
+            'user_roles',
             'student_requirement_files', 'student_requirement_file_access'
         )
     LOOP
@@ -42,7 +48,7 @@ BEGIN
             policyname
         FROM pg_policies
         WHERE schemaname = 'public'
-        AND policyname LIKE '%_v1' OR policyname LIKE '%_v2' OR policyname LIKE '%_v3'
+        AND (policyname LIKE '%\_v1' OR policyname LIKE '%\_v2' OR policyname LIKE '%\_v3')
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 
                       policy_record.policyname, policy_record.tablename);
@@ -81,13 +87,10 @@ CREATE POLICY "payments_read_public" ON payments FOR SELECT TO public USING (tru
 DROP POLICY IF EXISTS "transactions_read_public" ON public.transactions;
 CREATE POLICY "transactions_read_public" ON transactions FOR SELECT TO public USING (true);
 
--- Financial Summaries
-DROP POLICY IF EXISTS "financial_summaries_read_public" ON public.financial_summaries;
-CREATE POLICY "financial_summaries_read_public" ON financial_summaries FOR SELECT TO public USING (true);
-
--- Event Allocations
-DROP POLICY IF EXISTS "event_allocations_read_public" ON public.event_allocations;
-CREATE POLICY "event_allocations_read_public" ON event_allocations FOR SELECT TO public USING (true);
+-- NOTE: financial_summaries and event_allocations are intentionally not
+-- covered here -- see the matching note in migration_schema_v1.sql. Both
+-- tables were deliberately dropped by 2026-09-05_remove_obsolete_dashboard_tables.sql;
+-- creating policies for tables that don't exist aborts this whole script.
 
 -- Student Requirement Files (published + unrestricted only)
 DROP POLICY IF EXISTS "student_req_files_read_published" ON public.student_requirement_files;
@@ -154,18 +157,6 @@ DROP POLICY IF EXISTS "transactions_write_staff" ON public.transactions;
 CREATE POLICY "transactions_write_staff" ON transactions FOR ALL TO authenticated
     USING (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'))
     WITH CHECK (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'));
-
--- Financial Summaries: admin + treasurer
-DROP POLICY IF EXISTS "financial_summaries_write_staff" ON public.financial_summaries;
-CREATE POLICY "financial_summaries_write_staff" ON financial_summaries FOR ALL TO authenticated
-    USING (public.has_role('admin') OR public.has_role('treasurer'))
-    WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
-
--- Event Allocations: admin + treasurer
-DROP POLICY IF EXISTS "event_allocations_write_staff" ON public.event_allocations;
-CREATE POLICY "event_allocations_write_staff" ON event_allocations FOR ALL TO authenticated
-    USING (public.has_role('admin') OR public.has_role('treasurer'))
-    WITH CHECK (public.has_role('admin') OR public.has_role('treasurer'));
 
 -- ============================================================
 -- 6. FEEDBACK POLICIES
@@ -322,6 +313,7 @@ COMMIT;
 DO $$
 DECLARE
     policy_count INTEGER;
+    policy_record record;
 BEGIN
     SELECT COUNT(*) INTO policy_count
     FROM pg_policies

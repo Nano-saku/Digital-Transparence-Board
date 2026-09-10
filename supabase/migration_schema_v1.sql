@@ -3,6 +3,13 @@
 -- ============================================================
 -- PURPOSE: Core database schema with all tables, indexes,
 --          functions, and triggers
+--
+-- RUN ORDER: this file creates tables and triggers but no RLS policies.
+-- Always follow it immediately with migration_rls_v1.sql in the same
+-- sitting -- between the two, new tables (student_requirement_files,
+-- student_requirement_file_access) would otherwise be open to anon/
+-- authenticated via the broad GRANT in section 10 with no policy
+-- restricting them.
 -- ============================================================
 
 BEGIN;
@@ -84,11 +91,31 @@ CREATE TABLE IF NOT EXISTS public.payments (
     recorded_by  TEXT NOT NULL DEFAULT ''
 );
 
+-- payments.contribution_id + the OR-number auto-assign trigger below both
+-- come from 2026-09-01_offline_payment_or_sequence.sql, copied verbatim.
+-- That migration is already applied to production, so these are no-ops
+-- there; they're included here so this file is a complete, correct
+-- baseline on its own (e.g. for a fresh environment) instead of silently
+-- missing them.
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS contribution_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_payments_contribution_id ON public.payments (contribution_id);
+
 -- OR Sequence
 CREATE TABLE IF NOT EXISTS public.or_sequence (
     year      INTEGER PRIMARY KEY CHECK (year >= 2000),
     last_used INTEGER NOT NULL DEFAULT 0 CHECK (last_used >= 0)
 );
+
+-- Keep the sequence at least as high as OR numbers that already exist.
+-- This matters when upgrading an existing production database.
+INSERT INTO public.or_sequence (year, last_used)
+SELECT
+    EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER,
+    COALESCE(MAX(SUBSTRING(or_number FROM '(\d{6})$')::INTEGER), 0)
+FROM public.payments
+WHERE or_number ~ ('^OR-' || EXTRACT(YEAR FROM CURRENT_DATE)::TEXT || '-\d{6}$')
+ON CONFLICT (year) DO UPDATE
+    SET last_used = GREATEST(public.or_sequence.last_used, EXCLUDED.last_used);
 
 -- Transactions
 CREATE TABLE IF NOT EXISTS public.transactions (
@@ -118,26 +145,12 @@ CREATE TABLE IF NOT EXISTS public.feedback (
                  CHECK (status IN ('pending', 'in-progress', 'resolved'))
 );
 
--- Financial Summaries
-CREATE TABLE IF NOT EXISTS public.financial_summaries (
-    id                           TEXT PRIMARY KEY,
-    total_budget                 INTEGER NOT NULL DEFAULT 0,
-    total_funds_collected        INTEGER NOT NULL DEFAULT 0,
-    total_funds_spent            INTEGER NOT NULL DEFAULT 0,
-    remaining_budget             INTEGER NOT NULL DEFAULT 0,
-    total_expected_contributions INTEGER NOT NULL DEFAULT 0
-);
-
--- Event Allocations
-CREATE TABLE IF NOT EXISTS public.event_allocations (
-    id                TEXT PRIMARY KEY,
-    event_id          TEXT NOT NULL,
-    event_name        TEXT NOT NULL DEFAULT '',
-    allocation_amount INTEGER NOT NULL DEFAULT 0,
-    total_collected   INTEGER NOT NULL DEFAULT 0,
-    total_spent       INTEGER NOT NULL DEFAULT 0,
-    remaining_balance INTEGER NOT NULL DEFAULT 0
-);
+-- NOTE: financial_summaries and event_allocations are intentionally NOT
+-- created here. They were dropped as dead/obsolete tables by
+-- 2026-09-05_remove_obsolete_dashboard_tables.sql (the app now computes
+-- every figure on the fly via get_financial_report() / get_contribution_totals()
+-- instead of a cached snapshot table). Re-adding them here would silently
+-- resurrect two tables with RLS disabled and no policies -- see the RLS file.
 
 -- Student Requirement Files
 CREATE TABLE IF NOT EXISTS public.student_requirement_files (
@@ -184,7 +197,6 @@ CREATE INDEX IF NOT EXISTS idx_contributions_event_id ON public.contributions (e
 CREATE INDEX IF NOT EXISTS idx_payments_student_id ON public.payments (student_id);
 CREATE INDEX IF NOT EXISTS idx_payments_event_id ON public.payments (event_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_event_id ON public.transactions (event_id);
-CREATE INDEX IF NOT EXISTS idx_event_allocations_event_id ON public.event_allocations (event_id);
 CREATE INDEX IF NOT EXISTS idx_student_requirement_files_published ON public.student_requirement_files (is_published);
 CREATE INDEX IF NOT EXISTS idx_student_requirement_files_created_at ON public.student_requirement_files (created_at);
 CREATE INDEX IF NOT EXISTS idx_student_req_file_access_student ON public.student_requirement_file_access (student_id);
@@ -272,6 +284,90 @@ BEGIN
     RETURN 'OR-' || current_yr::TEXT || '-' || LPAD(next_seq::TEXT, 6, '0');
 END;
 $$;
+
+-- Assigns a real OR number to every payment as it's inserted -- including
+-- offline-recorded payments replaying later -- so OR numbers stay
+-- authoritative and gap-free regardless of client-side state. Copied
+-- verbatim from 2026-09-01_offline_payment_or_sequence.sql.
+CREATE OR REPLACE FUNCTION public.assign_payment_or_number()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  current_yr INTEGER := EXTRACT(YEAR FROM CURRENT_DATE)::INTEGER;
+  supplied_year INTEGER;
+  supplied_seq INTEGER;
+  current_seq INTEGER;
+BEGIN
+  IF NEW.or_number IS NULL OR btrim(NEW.or_number) = '' THEN
+    NEW.or_number := public.get_next_or_number();
+    RETURN NEW;
+  END IF;
+
+  IF NEW.or_number ~ '^OR-[0-9]{4}-[0-9]{6}$' THEN
+    supplied_year := SUBSTRING(NEW.or_number FROM '^OR-(\d{4})-')::INTEGER;
+    supplied_seq := SUBSTRING(NEW.or_number FROM '(\d{6})$')::INTEGER;
+  ELSE
+    NEW.or_number := public.get_next_or_number();
+    RETURN NEW;
+  END IF;
+
+  IF supplied_year <> current_yr THEN
+    NEW.or_number := public.get_next_or_number();
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO public.or_sequence (year, last_used)
+  VALUES (current_yr, 0)
+  ON CONFLICT (year) DO NOTHING;
+
+  SELECT last_used INTO current_seq
+  FROM public.or_sequence
+  WHERE year = current_yr
+  FOR UPDATE;
+
+  IF supplied_seq = current_seq + 1 THEN
+    UPDATE public.or_sequence
+       SET last_used = supplied_seq
+     WHERE year = current_yr;
+    RETURN NEW;
+  END IF;
+
+  IF supplied_seq <= current_seq THEN
+    UPDATE public.or_sequence
+       SET last_used = last_used + 1
+     WHERE year = current_yr
+     RETURNING last_used INTO supplied_seq;
+
+    NEW.or_number := 'OR-' || current_yr::TEXT || '-' || LPAD(supplied_seq::TEXT, 6, '0');
+    RETURN NEW;
+  END IF;
+
+  UPDATE public.or_sequence
+     SET last_used = last_used + 1
+   WHERE year = current_yr
+   RETURNING last_used INTO current_seq;
+
+  NEW.or_number := 'OR-' || current_yr::TEXT || '-' || LPAD(current_seq::TEXT, 6, '0');
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS payments_assign_or_number ON public.payments;
+CREATE TRIGGER payments_assign_or_number
+    BEFORE INSERT ON public.payments
+    FOR EACH ROW
+    EXECUTE FUNCTION public.assign_payment_or_number();
+
+-- Prevent two payment rows from ever carrying the same official OR. NULL
+-- remains allowed for old rows that predate OR numbering.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_or_number_unique
+    ON public.payments (or_number)
+    WHERE or_number IS NOT NULL AND btrim(or_number) <> '';
+
+GRANT EXECUTE ON FUNCTION public.get_next_or_number() TO anon, authenticated;
 
 -- Role helper functions
 CREATE OR REPLACE FUNCTION public.has_role(required_role text)
@@ -795,8 +891,8 @@ BEGIN
     WHERE table_schema = 'public'
     AND table_name IN (
         'students', 'events', 'board_members', 'attendance',
-        'contributions', 'payments', 'transactions', 'feedback',
-        'financial_summaries', 'event_allocations', 'user_roles',
+        'contributions', 'payments', 'or_sequence', 'transactions',
+        'feedback', 'user_roles',
         'student_requirement_files', 'student_requirement_file_access'
     );
     
@@ -804,9 +900,10 @@ BEGIN
     SELECT COUNT(*) INTO function_count
     FROM pg_proc
     WHERE pronamespace = 'public'::regnamespace
-   AND proname IN ('has_role', 'is_staff', 'get_next_or_number', 
+   AND proname IN ('has_role', 'is_staff', 'get_next_or_number',
+                'assign_payment_or_number',
                 'get_student_requirement_files', 'get_financial_report',
-                'get_contribution_totals',  -- ← ADD THIS
+                'get_contribution_totals',
                 'create_student_contributions', 'create_event_contributions',
                 'sync_event_contributions');
     
@@ -829,7 +926,7 @@ BEGIN
     PERFORM public.get_financial_report();
     RAISE NOTICE '✅ Financial report function works!';
     
-    IF table_count >= 13 AND function_count >= 7 AND trigger_count >= 3 THEN
+    IF table_count >= 12 AND function_count >= 10 AND trigger_count >= 3 THEN
         RAISE NOTICE '✅ Schema migration completed successfully!';
     ELSE
         RAISE NOTICE '⚠️ Some objects may be missing. Check above counts.';

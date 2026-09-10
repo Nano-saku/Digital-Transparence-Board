@@ -721,7 +721,7 @@ export default function StudentManagementSection({
         onConfirm={confirmDeleteStudent}
         title="Delete Student"
         description={`Are you sure you want to delete ${studentToDelete?.name ?? "this student"}?`}
-        warningText="This action cannot be undone. The student's record will be permanently removed from the system."
+        warningText="This action cannot be undone. The student's record and all related contributions, attendance, and payment records will be permanently removed."
         confirmLabel="Delete Student"
       />
       {/* Attendance QR Code Modal */}

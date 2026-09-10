@@ -23,7 +23,6 @@ import type {
   Student,
   UserRole,
   BoardMember,
-  ContributionRecord,
 } from "@/types";
 import {
   Dialog,
@@ -59,7 +58,7 @@ export default function EventManagementSection({
 }: EventManagementSectionProps) {
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
+  const [eventTotals, setEventTotals] = useState<Record<string, number>>({});
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -102,15 +101,15 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData, contributionsData] = await Promise.all([
+      const [eventsData, studentsData, totalsData] = await Promise.all([
         eventsService.getAll(),
         studentsService.getAll(),
-        contributionsService.getAll(),
+        contributionsService.getTotalsByEvent(),
       ]);
 
       setEvents(eventsData);
       setStudents(studentsData);
-      setContributions(contributionsData);
+      setEventTotals(totalsData);
 
       try {
         setBoardMembers(await boardMembersService.listBoardMembers());
@@ -339,14 +338,11 @@ export default function EventManagementSection({
   };
 
   // Actual collection:
-  // Sum of amountPaid for all contributions belonging to this event
+  // Sum of amountPaid for all contributions belonging to this event,
+  // computed in Postgres via get_event_contribution_totals() rather than
+  // downloading every contribution row to sum client-side.
   const collectedAmount = (event: Event) => {
-    return contributions
-      .filter((contribution) => contribution.eventId === event.id)
-      .reduce(
-        (total, contribution) => total + (Number(contribution.amountPaid) || 0),
-        0,
-      );
+    return eventTotals[event.id] ?? 0;
   };
 
   /** Schedule label for the events list. */
@@ -917,7 +913,7 @@ export default function EventManagementSection({
         description={`Are you sure you want to delete ${
           eventToDelete?.name ?? "this event"
         }? This action cannot be undone.`}
-        warningText="Deleting this event will also remove related payments, contributions, and attendance records."
+        warningText="Deleting this event will also remove related payments, contributions, attendance records, and transactions."
         confirmLabel="Delete Event"
         loading={saving}
       />

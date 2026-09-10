@@ -58,6 +58,65 @@ async function cachedRead<T>(
   }
 }
 
+// Fetches every row from a query by looping with .range() in batches.
+//
+// A plain .select("*") with no .range()/.limit() is silently capped by
+// PostgREST's project-level "Max Rows" API setting (Settings > API in the
+// Supabase dashboard) — no error, no truncation flag, just a partial array
+// back. This is what caused students to load only ~20 rows even though the
+// code never set any limit. Looping with .range() until a page comes back
+// short makes getAll() immune to that setting regardless of what it's set
+// to, the same way contributionsService.getAll() already worked around it.
+async function fetchAllRows<Row>(
+  fetchPage: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: Row[] | null; error: unknown }>,
+): Promise<Row[]> {
+  const pageSize = 1000;
+  let from = 0;
+  const allData: Row[] = [];
+
+  while (true) {
+    const { data, error } = await fetchPage(from, from + pageSize - 1);
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allData.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allData;
+}
+
+// In-memory, session-lifetime cache for students/events, sitting in front
+// of the network fetch inside their getAll(). Every section that needs the
+// full student or event list (for name lookups, dropdowns, totals...)
+// currently calls getAll() independently on its own mount, so switching
+// tabs re-fetches both entire tables from scratch every time even when
+// nothing changed. This makes the first fetch each session serve every
+// later caller until something invalidates it.
+//
+// This is intentionally NOT folded into cachedRead() itself: several other
+// tables behind cachedRead (attendance, in particular) have multiple
+// callers issuing *different* server-side-filtered queries under the same
+// table name (getAll() vs. getByStudentId() vs. getByEventIdAndSession()).
+// A table-keyed cache there would risk one caller's filtered result
+// leaking into another caller expecting the full table, or vice versa.
+// students/events only ever have a single unfiltered getAll() behind
+// cachedRead (getByStudentId/getByName now route through that same
+// getAll() instead of keeping their own copy), so caching by table name
+// here is safe — don't extend this map to other tables without checking
+// that same invariant first.
+const referenceDataCache = new Map<"students" | "events", unknown[]>();
+
+function invalidateReferenceCache(table: "students" | "events"): void {
+  referenceDataCache.delete(table);
+}
+
 const mapEvent = (item: Record<string, unknown>): Event => {
   // Handle schedules that might be stored as JSON string or array
   let schedules: EventSchedule[] = [];
@@ -94,64 +153,43 @@ const mapEvent = (item: Record<string, unknown>): Event => {
 // ============================================
 export const studentsService = {
   async getAll(): Promise<Student[]> {
-    return cachedRead<Student>("students", async () => {
-      const { data, error } = await getSupabase()
-        .from("students")
-        .select("*")
-        .order("name");
+    const cached = referenceDataCache.get("students");
+    if (cached) return cached as Student[];
 
-      if (error) throw error;
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          name: item.name,
-          program: item.program,
-          yearLevel: item.year_level,
-          section: item.section,
-        })) || []
+    const students = await cachedRead<Student>("students", async () => {
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        getSupabase()
+          .from("students")
+          .select("*")
+          .order("name")
+          .range(from, to),
       );
+
+      return data.map((item) => ({
+        id: item.id as string,
+        studentId: item.student_id as string,
+        name: item.name as string,
+        program: item.program as string,
+        yearLevel: item.year_level as number,
+        section: item.section as string,
+      }));
     });
+
+    referenceDataCache.set("students", students);
+    return students;
   },
 
   async getByStudentId(studentId: string): Promise<Student | null> {
-    const students = await cachedRead<Student>("students", async () => {
-      const { data, error } = await getSupabase().from("students").select("*");
-
-      if (error) throw error;
-
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          name: item.name,
-          program: item.program,
-          yearLevel: item.year_level,
-          section: item.section,
-        })) || []
-      );
-    });
+    // Reuses the already-paginated getAll() instead of keeping a second,
+    // separately-capped copy of the same unranged fetch (which had the
+    // same silent-truncation bug getAll() used to have).
+    const students = await this.getAll();
 
     return students.find((student) => student.studentId === studentId) ?? null;
   },
 
   async getByName(name: string): Promise<Student | null> {
-    const students = await cachedRead<Student>("students", async () => {
-      const { data, error } = await getSupabase().from("students").select("*");
-
-      if (error) throw error;
-
-      return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          name: item.name,
-          program: item.program,
-          yearLevel: item.year_level,
-          section: item.section,
-        })) || []
-      );
-    });
+    const students = await this.getAll();
 
     const searchName = name.toLowerCase();
 
@@ -198,6 +236,7 @@ export const studentsService = {
     });
 
     if (!result) throw new Error("Failed to create student");
+    invalidateReferenceCache("students");
     return result;
   },
 
@@ -240,6 +279,7 @@ export const studentsService = {
     });
 
     if (!result) throw new Error("Failed to update student");
+    invalidateReferenceCache("students");
     return result;
   },
 
@@ -258,6 +298,7 @@ export const studentsService = {
         if (error) throw error;
       },
     });
+    invalidateReferenceCache("students");
   },
 
   async createMany(students: Omit<Student, "id">[]): Promise<{
@@ -327,15 +368,23 @@ export const studentsService = {
 // ============================================
 export const eventsService = {
   async getAll(): Promise<Event[]> {
-    return cachedRead<Event>("events", async () => {
-      const { data, error } = await getSupabase()
-        .from("events")
-        .select("*")
-        .order("date", { ascending: false });
+    const cached = referenceDataCache.get("events");
+    if (cached) return cached as Event[];
 
-      if (error) throw error;
-      return data?.map(mapEvent) || [];
+    const events = await cachedRead<Event>("events", async () => {
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        getSupabase()
+          .from("events")
+          .select("*")
+          .order("date", { ascending: false })
+          .range(from, to),
+      );
+
+      return data.map(mapEvent);
     });
+
+    referenceDataCache.set("events", events);
+    return events;
   },
 
   async create(event: Omit<Event, "id">): Promise<Event> {
@@ -374,6 +423,7 @@ export const eventsService = {
     });
 
     if (!result) throw new Error("Failed to create event");
+    invalidateReferenceCache("events");
     return result;
   },
 
@@ -422,6 +472,7 @@ export const eventsService = {
     });
 
     if (!result) throw new Error("Failed to update event");
+    invalidateReferenceCache("events");
     return result;
   },
 
@@ -440,6 +491,7 @@ export const eventsService = {
         if (error) throw error;
       },
     });
+    invalidateReferenceCache("events");
   },
 };
 
@@ -690,9 +742,6 @@ export const contributionsService = {
 
   async getAll(): Promise<ContributionRecord[]> {
     return cachedRead<ContributionRecord>("contributions", async () => {
-      const supabase = getSupabase();
-      const pageSize = 1000;
-      let from = 0;
       type ContributionRow = {
         id: string;
         student_id: string;
@@ -702,25 +751,14 @@ export const contributionsService = {
         amount_paid: number;
         remaining_balance: number;
       };
-      const allData: ContributionRow[] = [];
 
-      while (true) {
-        const { data, error } = await supabase
+      const allData = await fetchAllRows<ContributionRow>((from, to) =>
+        getSupabase()
           .from("contributions")
           .select("*")
           .order("id", { ascending: false })
-          .range(from, from + pageSize - 1);
-
-        if (error) throw error;
-
-        if (!data || data.length === 0) break;
-
-        allData.push(...data);
-
-        if (data.length < pageSize) break;
-
-        from += pageSize;
-      }
+          .range(from, to),
+      );
 
       return allData.map((item) => ({
         id: item.id,
@@ -741,23 +779,155 @@ export const contributionsService = {
    * page 0 = first page
    * page 1 = second page
    */
+
   async getPage(
     page: number,
     pageSize: number,
-  ): Promise<{
-    data: ContributionRecord[];
-    total: number;
-  }> {
+    searchTerm = "",
+    eventId = "",
+    status = "",
+  ): Promise<{ data: ContributionRecord[]; total: number }> {
     const from = page * pageSize;
     const to = from + pageSize - 1;
+    const supabase = getSupabase();
 
-    const { data, error, count } = await getSupabase()
+    const normalizedSearch = searchTerm.trim();
+
+    let studentIds: string[] = [];
+
+    /*
+     * SEARCH
+     * -------
+     * Search the students table directly for matching names/student IDs.
+     * The resulting student IDs are then used to search contributions.
+     *
+     * This means the Contributions screen does NOT search only the
+     * currently loaded page.
+     */
+    if (normalizedSearch) {
+      const escapedSearch = normalizedSearch
+        .replace(/\\/g, "\\\\")
+        .replace(/%/g, "\\%")
+        .replace(/_/g, "\\_");
+
+      const [nameMatches, idMatches] = await Promise.all([
+        supabase
+          .from("students")
+          .select("id")
+          .ilike("name", `%${escapedSearch}%`),
+
+        supabase
+          .from("students")
+          .select("id")
+          .ilike("student_id", `%${escapedSearch}%`),
+      ]);
+
+      if (nameMatches.error) {
+        throw nameMatches.error;
+      }
+
+      if (idMatches.error) {
+        throw idMatches.error;
+      }
+
+      const matchedIds = new Set<string>();
+
+      for (const student of nameMatches.data ?? []) {
+        matchedIds.add(student.id);
+      }
+
+      for (const student of idMatches.data ?? []) {
+        matchedIds.add(student.id);
+      }
+
+      studentIds = [...matchedIds];
+    }
+
+    /*
+     * BASE CONTRIBUTION QUERY
+     */
+    let query = supabase
       .from("contributions")
       .select("*", { count: "exact" })
-      .order("id", { ascending: false })
-      .range(from, to);
+      .order("id", { ascending: false });
 
-    if (error) throw error;
+    /*
+     * EVENT FILTER
+     */
+    if (eventId) {
+      query = query.eq("event_id", eventId);
+    }
+
+    /*
+     * SEARCH FILTER
+     *
+     * Search matches:
+     *   1. event name
+     *   2. student name
+     *   3. student ID
+     *
+     * Student name/ID are resolved to student UUIDs above.
+     */
+    if (normalizedSearch) {
+      const escapedSearch = normalizedSearch
+        .replace(/\\/g, "\\\\")
+        .replace(/%/g, "\\%")
+        .replace(/_/g, "\\_")
+        .replace(/,/g, "\\,")
+        .replace(/\(/g, "\\(")
+        .replace(/\)/g, "\\)");
+
+      const eventSearch = `event_name.ilike.%${escapedSearch}%`;
+
+      if (studentIds.length > 0) {
+        const studentIdSearch = `student_id.in.(${studentIds.join(",")})`;
+        query = query.or(`${eventSearch},${studentIdSearch}`);
+      } else {
+        /*
+         * No matching student was found.
+         * Still allow event-name matches.
+         */
+        query = query.ilike("event_name", `%${escapedSearch}%`);
+      }
+    }
+
+    /*
+     * STATUS FILTER
+     *
+     * Status is derived from amount_paid and remaining_balance:
+     *
+     * unpaid  = nothing has been paid
+     * partial = some payment exists but balance remains
+     * paid    = balance is fully cleared
+     */
+    switch (status) {
+      case "unpaid":
+        query = query.eq("amount_paid", 0);
+        break;
+
+      case "partial":
+        query = query.gt("amount_paid", 0).gt("remaining_balance", 0);
+        break;
+
+      case "paid":
+        query = query.lte("remaining_balance", 0);
+        break;
+
+      default:
+        break;
+    }
+
+    /*
+     * SERVER-SIDE PAGINATION
+     *
+     * count is the number of records matching ALL active filters,
+     * not merely the number of records returned on this page.
+     */
+    const { data, error, count } = await query.range(from, to);
+
+    if (error) {
+      throw error;
+    }
 
     return {
       data:
@@ -769,11 +939,10 @@ export const contributionsService = {
           requiredAmount: item.required_amount,
           amountPaid: item.amount_paid,
           remainingBalance: item.remaining_balance,
-        })) || [],
+        })) ?? [],
       total: count ?? 0,
     };
   },
-
   /**
    * Get contribution totals directly from PostgreSQL.
    *
@@ -796,6 +965,28 @@ export const contributionsService = {
       totalPaid: Number(row?.total_paid ?? 0),
       totalBalance: Number(row?.total_balance ?? 0),
     };
+  },
+
+  /**
+   * Get collected amount per event directly from PostgreSQL.
+   *
+   * Like getTotals(), this avoids downloading the entire contributions
+   * table just to sum amount_paid per event (what EventManagementSection
+   * used to do with getAll()). Returns a map of eventId -> collected.
+   */
+  async getTotalsByEvent(): Promise<Record<string, number>> {
+    const { data, error } = await getSupabase().rpc(
+      "get_event_contribution_totals",
+    );
+
+    if (error) throw error;
+
+    const rows = Array.isArray(data) ? data : [];
+    const totals: Record<string, number> = {};
+    for (const row of rows) {
+      totals[row.event_id as string] = Number(row.collected ?? 0);
+    }
+    return totals;
   },
 
   /**
@@ -1544,7 +1735,12 @@ export const subscribeToTables = (
     channel.on(
       "postgres_changes",
       { event: "*", schema: "public", table },
-      onChange,
+      () => {
+        if (table === "students" || table === "events") {
+          invalidateReferenceCache(table);
+        }
+        onChange();
+      },
     );
   }
 
