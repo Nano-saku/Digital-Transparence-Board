@@ -182,8 +182,8 @@ export default function LandingSection({
                 Find Your Records
               </h2>
               <p className="text-text-secondary mb-6 text-sm">
-                Enter your name or student ID to view your contributions and
-                attendance.
+                Enter your student name and Student ID to verify your identity
+                and view your contributions and attendance.
               </p>
 
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -233,25 +233,13 @@ export default function LandingSection({
                                   e.preventDefault();
 
                                   setName(student.name);
-                                  setStudentId(student.studentId);
                                   setShowSuggestions(false);
                                   setStudentMatches([]);
-
-                                  onSearch(student.name, student.studentId);
                                 }}
                                 className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b last:border-b-0 border-gray-100"
                               >
                                 <div className="font-semibold text-gray-900">
                                   {student.name}
-                                </div>
-
-                                <div className="text-sm text-gray-500 mt-0.5">
-                                  ID: {student.studentId}
-                                  {" • "}
-                                  {student.program}
-                                  {" • "}
-                                  {student.yearLevel}
-                                  {student.section && ` • ${student.section}`}
                                 </div>
                               </button>
                             ))}
@@ -270,38 +258,28 @@ export default function LandingSection({
                   )}
                 </div>
 
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-silver-gray/30"></div>
-                  </div>
-                  <div className="relative flex justify-center">
-                    <span className="px-3 bg-white text-xs text-text-secondary rounded-full">
-                      OR
-                    </span>
-                  </div>
-                </div>
-
                 <div>
                   <label
                     className="block text-sm font-medium mb-1.5"
                     style={{ color: "var(--dssc-deep-navy)" }}
                   >
-                    Student ID
+                    Student ID (verification)
                   </label>
                   <input
-                    type="text"
+                    type="password"
                     value={studentId}
                     onChange={(e) => setStudentId(e.target.value)}
                     className="glass-input w-full px-4 py-3"
-                    placeholder="e.g., 2021-00001"
+                    placeholder="Enter your Student ID"
                     disabled={searching}
+                    autoComplete="current-password"
                   />
                 </div>
 
                 <button
                   type="submit"
                   className="w-full btn-primary px-6 py-3 justify-center"
-                  disabled={searching || (!name && !studentId)}
+                  disabled={searching || !name.trim() || !studentId.trim()}
                 >
                   {searching ? (
                     <>
