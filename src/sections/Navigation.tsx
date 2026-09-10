@@ -34,22 +34,20 @@ function buildAdminNavItems(role: UserRole | null): {
     ...(role
       ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),
+    ...(role === "admin" || role === "secretary"
+      ? [{ label: "Reports", view: "report-management" as ViewState }]
+      : []),
 
-    ...(role
+    ...(role === "admin" || role === "treasurer" || role === "auditor"
       ? [
           {
-            label: "Council Sharing Files",
-            view: "requirement-files-management" as ViewState,
+            label: "Finances",
+            view: "transaction-management" as ViewState,
           },
         ]
       : []),
-
-    ...(role === "secretary"
-      ? [{ label: "Attendance", view: "attendance-management" as ViewState }]
-      : []),
-
     ...(role === "admin" || role === "secretary"
-      ? [{ label: "Reports", view: "report-management" as ViewState }]
+      ? [{ label: "Attendance", view: "attendance-management" as ViewState }]
       : []),
 
     ...(role === "admin" || role === "treasurer" || role === "auditor"
@@ -61,11 +59,11 @@ function buildAdminNavItems(role: UserRole | null): {
         ]
       : []),
 
-    ...(role === "admin" || role === "treasurer" || role === "auditor"
+    ...(role
       ? [
           {
-            label: "Finances",
-            view: "transaction-management" as ViewState,
+            label: "Council Sharing Files",
+            view: "requirement-files-management" as ViewState,
           },
         ]
       : []),
@@ -103,22 +101,6 @@ export default function Navigation({
 
   const isLoggedIn = !!role;
 
-  const adminViews: ViewState[] = [
-    "admin-dashboard",
-    "landing",
-    "student-management",
-    "event-management",
-    "payment-management",
-    "contribution-management",
-    "attendance-management",
-    "transaction-management",
-    "feedback-management",
-    "report-management",
-    "requirement-files-management",
-  ];
-
-  const isPublicPage = !isLoggedIn && !adminViews.includes(currentView);
-
   const adminNav = isLoggedIn
     ? buildAdminNavItems(role)
     : { main: [], management: [] };
@@ -142,10 +124,6 @@ export default function Navigation({
 
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
-
-  if (!isPublicPage && !isLoggedIn) {
-    return null;
-  }
 
   const go = (view: ViewState) => {
     onNavigate(view);

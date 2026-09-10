@@ -115,32 +115,34 @@ export default function AttendanceAnalysisChart({
       </div>
 
       <div className="mt-5 overflow-x-auto">
-        <table className="glass-table min-w-[680px]">
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th className="text-right">Total Population</th>
-              <th className="text-right">Actual Population Attended</th>
-              <th className="text-right">Attendance Gap</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row) => (
-              <tr key={row.eventId}>
-                <td className="font-medium text-dark">{row.eventLabel}</td>
-                <td className="text-right text-royal-blue font-medium">
-                  {row.totalPopulation}
-                </td>
-                <td className="text-right text-status-success font-medium">
-                  {row.actualPopulationAttended}
-                </td>
-                <td className="text-right text-status-danger font-medium">
-                  {row.attendanceGap}
-                </td>
+        <div className="rounded-xl overflow-hidden border border-gray-200">
+          <table className="glass-table min-w-[680px]">
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th className="text-right">Total Population</th>
+                <th className="text-right">Actual Population Attended</th>
+                <th className="text-right">Attendance Gap</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((row) => (
+                <tr key={row.eventId}>
+                  <td className="font-medium text-dark">{row.eventLabel}</td>
+                  <td className="text-right text-royal-blue font-medium">
+                    {row.totalPopulation}
+                  </td>
+                  <td className="text-right text-status-success font-medium">
+                    {row.actualPopulationAttended}
+                  </td>
+                  <td className="text-right text-status-danger font-medium">
+                    {row.attendanceGap}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

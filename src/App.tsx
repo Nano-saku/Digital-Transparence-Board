@@ -44,7 +44,9 @@ const FeedbackManagementSection = lazy(
 const ReportManagementSection = lazy(
   () => import("@/sections/ReportManagementSection"),
 );
-
+const AttendanceManagementSection = lazy(
+  () => import("@/sections/AttendanceManagementSection"),
+);
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Admin",
   secretary: "Secretary",
@@ -320,7 +322,6 @@ function App() {
             staffName={auth?.displayName ?? ""}
             userId={auth?.user.id ?? ""}
             onBack={() => navigateTo("admin-dashboard")}
-            initialTab={currentView}
           />
         ) : (
           renderAdminLogin()
@@ -328,12 +329,10 @@ function App() {
 
       case "attendance-management":
         return canAccess("attendance-management") ? (
-          <EventManagementSection
+          <AttendanceManagementSection
             role={role!}
-            staffName={auth?.displayName ?? ""}
             userId={auth?.user.id ?? ""}
             onBack={() => navigateTo("admin-dashboard")}
-            initialTab="attendance-management"
           />
         ) : (
           renderAdminLogin()

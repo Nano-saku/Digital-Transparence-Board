@@ -42,7 +42,12 @@ import { toast } from "sonner";
 import { formatDate, formatPeso, today } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
-import { pickField, parseAmount } from "@/lib/spreadsheet";
+import {
+  pickField,
+  parseAmount,
+  normalizeStudentId,
+  expandEventGroups,
+} from "@/lib/spreadsheet";
 import { useSearch } from "@/hooks/useSearch";
 import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface ContributionManagementSectionProps {
@@ -54,13 +59,21 @@ interface ContributionManagementSectionProps {
 /** A contribution record enriched with the student's display info. */
 interface ContributionRow extends ContributionRecord {
   studentName: string;
-  studentId: string;
+  studentDisplayId: string;
 }
 
 /** Form state for the Edit modal. */
 interface ContributionForm {
   studentId: string;
   eventId: string;
+  requiredAmount: number;
+  amountPaid: number;
+}
+
+/** One parsed & matched (student, event) import row waiting to be created. */
+interface ParsedContributionRow {
+  student: Student;
+  event: Event;
   requiredAmount: number;
   amountPaid: number;
 }
@@ -116,6 +129,14 @@ export default function ContributionManagementSection({
   const [paymentStudentOpen, setPaymentStudentOpen] = useState(false);
   const paymentSearchRef = useRef<HTMLDivElement>(null);
 
+  // While a bulk CSV/Excel import is running, each created row would
+  // otherwise fire its own realtime "contributions changed" event and
+  // reload (and re-render) the whole table — see the subscribeToTables
+  // effect below and importContributionRows further down. This flag lets
+  // the realtime callback skip those reloads until the import is done, at
+  // which point importContributionRows reloads the table exactly once.
+  const isImportingRef = useRef(false);
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
@@ -129,13 +150,14 @@ export default function ContributionManagementSection({
 
       const studentById = new Map(allStudents.map((s) => [s.id, s]));
       const rows: ContributionRow[] = contributionsData.map((record) => {
-        const student = studentById.get(record.studentId);
-        return {
-          ...record,
-          studentName: student?.name ?? "Unknown Student",
-          studentId: student?.studentId ?? "—",
-        };
-      });
+  const student = studentById.get(record.studentId);
+
+  return {
+  ...record,
+  studentName: student?.name ?? "Unknown Student",
+  studentDisplayId: student?.studentId ?? "—",
+};
+});
 
       setRecords(rows);
       setContributions(contributionsData);
@@ -159,7 +181,10 @@ export default function ContributionManagementSection({
   useEffect(() => {
     return subscribeToTables(
       ["contributions", "students", "events", "payments"],
-      loadData,
+      () => {
+        if (isImportingRef.current) return; // see isImportingRef above
+        loadData();
+      },
       "contribution-management",
     );
   }, [loadData]);
@@ -181,7 +206,7 @@ export default function ContributionManagementSection({
     filtered: filteredRecords,
   } = useSearch<ContributionRow>({
     items: records,
-    searchKeys: ["studentName", "studentId"],
+   searchKeys: ["studentName", "studentDisplayId"],
     filters: {
       eventId: (r) => r.eventId,
       status: (r) => contributionStatus(r).label,
@@ -289,7 +314,23 @@ export default function ContributionManagementSection({
     setPaymentStudentOpen(false);
     setShowPaymentModal(true);
   };
+const validatePaymentAmount = (
+  amount: number,
+  requiredAmount: number,
+  currentPaid = 0,
+): string | null => {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'Payment amount must be greater than zero.';
+  }
 
+  const remainingBalance = requiredAmount - currentPaid;
+
+  if (amount > remainingBalance) {
+    return `Payment exceeds the remaining balance of ₱${remainingBalance.toFixed(2)}.`;
+  }
+
+  return null;
+};
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -319,7 +360,16 @@ export default function ContributionManagementSection({
           remainingBalance: event.allocationAmount,
         });
       }
+const validationError = validatePaymentAmount(
+  paymentForm.amount,
+  contribution.requiredAmount,
+  contribution.amountPaid,
+);
 
+if (validationError) {
+  toast.error(validationError);
+  return;
+}
       // An official receipt is generated automatically (as SVG, uploaded to
       // the "receipts" Storage bucket) and attached to the payment.
       let receiptUrl: string | undefined;
@@ -438,15 +488,17 @@ export default function ContributionManagementSection({
         remainingBalance: computedBalance,
       };
 
-      const enrich = (record: ContributionRecord) => {
-        const studentInfo = students.find((s) => s.id === record.studentId);
-        return {
-          ...record,
-          studentName: studentInfo?.name ?? "Unknown Student",
-          studentId: studentInfo?.studentId ?? "—",
-        };
-      };
+      const enrich = (record: ContributionRecord): ContributionRow => {
+  const studentInfo = students.find(
+    (s) => s.id === record.studentId,
+  );
 
+  return {
+    ...record,
+    studentName: studentInfo?.name ?? "Unknown Student",
+    studentDisplayId: studentInfo?.studentId ?? "—",
+  };
+};
       if (editingRecord) {
         const updated = await contributionsService.update(
           editingRecord.id,
@@ -506,134 +558,343 @@ export default function ContributionManagementSection({
   // CSV / Excel import
   // ---------------------------------------------------------------------------
 
-  const importContributionRows = async (rows: Record<string, string>[]) => {
-    if (rows.length === 0) {
-      toast.error("File is empty or invalid");
-      return;
+ const importContributionRows = async (rows: Record<string, string>[]) => {
+  if (rows.length === 0) {
+    toast.error("File is empty or invalid");
+    return;
+  }
+
+  const canIssueReceipts =
+    role === "admin" || role === "treasurer" || role === "auditor";
+
+  let successfulImports = 0;
+let importFailures = 0;
+let receiptsIssued = 0;
+let receiptFailures = 0;
+
+  // Lookup tables (case-insensitive) so rows can reference the student by
+  // ID or by full name, and the event by name.
+  const studentById = new Map(
+    students.map((s) => [
+      normalizeStudentId(s.studentId).toLowerCase(),
+      s,
+    ]),
+  );
+
+  const studentByName = new Map(
+    students.map((s) => [s.name.toLowerCase(), s]),
+  );
+
+  const eventByName = new Map(
+    events.map((e) => [e.name.toLowerCase(), e]),
+  );
+
+  const parsed: ParsedContributionRow[] = [];
+
+  let unmatchedStudent = 0;
+  let unmatchedEvent = 0;
+  let invalidAmount = 0;
+
+  for (const row of rows) {
+    const fileStudentId = pickField(
+      row,
+      "studentid",
+      "studentno",
+      "studentnumber",
+      "studid",
+      "idnumber",
+      "lrn",
+      "id",
+    );
+
+    const studentName = pickField(
+      row,
+      "name",
+      "fullname",
+      "studentname",
+    );
+
+    const student =
+      studentById.get(
+        normalizeStudentId(fileStudentId).toLowerCase(),
+      ) ??
+      studentByName.get(studentName.toLowerCase());
+
+    if (!student) {
+      unmatchedStudent++;
+      continue;
     }
 
-    // Lookup tables (case-insensitive) so rows can reference the student by
-    // ID or by full name, and the event by name.
-    const studentById = new Map(
-      students.map((s) => [s.studentId.toLowerCase(), s]),
-    );
-    const studentByName = new Map(
-      students.map((s) => [s.name.toLowerCase(), s]),
-    );
-    const eventByName = new Map(events.map((e) => [e.name.toLowerCase(), e]));
+    // A row can contain either:
+    //   Event / Required Amount / Amount Paid
+    //
+    // or multiple repeated groups:
+    //   Event / Required Amount / Amount Paid /
+    //   Event / Required Amount / Amount Paid / ...
+    const groups = expandEventGroups(row);
 
-    const parsed: Array<Omit<ContributionRecord, "id">> = [];
-    let unmatched = 0;
+    if (groups.length === 0) {
+      unmatchedEvent++;
+      continue;
+    }
 
-    for (const row of rows) {
-      const fileStudentId = pickField(
-        row,
-        "studentid",
-        "studentno",
-        "studentnumber",
-        "studid",
-        "idnumber",
-        "lrn",
-        "id",
-      );
-      const studentName = pickField(row, "name", "fullname", "studentname");
-      const eventName = pickField(
-        row,
-        "event",
-        "eventname",
-        "activity",
-        "contributionfor",
+    for (const group of groups) {
+      const event = eventByName.get(
+        group.eventName.toLowerCase(),
       );
 
-      const student =
-        studentById.get(fileStudentId.toLowerCase()) ??
-        studentByName.get(studentName.toLowerCase());
-      const event = eventByName.get(eventName.toLowerCase());
-
-      if (!student || !event) {
-        unmatched++;
+      if (!event) {
+        unmatchedEvent++;
         continue;
       }
 
-      const requiredAmount = parseAmount(
-        pickField(
-          row,
-          "required",
-          "requiredamount",
-          "requiredamountpeso",
-          "amount",
-          "fee",
-          "contribution",
-        ),
-      );
+      const requiredAmount = parseAmount(group.requiredAmount);
+      const amountPaid = parseAmount(group.amountPaid);
+
+      // Required amount must be a valid positive amount.
       if (requiredAmount <= 0) {
-        unmatched++;
+        invalidAmount++;
         continue;
       }
 
-      const amountPaid = parseAmount(
-        pickField(
-          row,
-          "amountpaid",
-          "paid",
-          "paidamount",
-          "collected",
-          "payment",
-        ),
-      );
+      // Paid amount cannot be negative or greater than the required amount.
+      if (amountPaid < 0 || amountPaid > requiredAmount) {
+        invalidAmount++;
+
+        console.warn(
+          `Skipped invalid amount: ${student.studentId} / ${event.name} ` +
+            `(required ₱${requiredAmount}, paid ₱${amountPaid})`,
+        );
+
+        continue;
+      }
+
+      // IMPORTANT:
+      // Do NOT skip a contribution just because the current user cannot
+      // issue receipts.
+      //
+      // The contribution and its historical Amount Paid should still be
+      // imported. Receipt/payment creation is handled separately below
+      // and remains restricted by canIssueReceipts.
 
       parsed.push({
-        studentId: student.id,
-        eventId: event.id,
-        eventName: event.name,
+        student,
+        event,
         requiredAmount,
         amountPaid,
-        remainingBalance: Math.max(0, requiredAmount - amountPaid),
       });
     }
+  }
 
-    if (parsed.length === 0) {
-      toast.error(
-        "No valid rows found. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid",
-      );
-      return;
+  if (parsed.length === 0) {
+    toast.error(
+      "No valid rows found. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid (repeat that trio for each additional event).",
+    );
+    return;
+  }
+
+  // Skip rows that already have a contribution record, or are duplicated
+  // within the file itself.
+  //
+  // `contributions` contains the raw records with real database student IDs,
+  // unlike `records`, which is used for display.
+  const existingKeys = new Set(
+    contributions.map(
+      (r) =>
+        `${r.studentId.toLowerCase()}|${r.eventId.toLowerCase()}`,
+    ),
+  );
+
+  const seen = new Set<string>();
+
+  const deduped = parsed.filter((c) => {
+    const key =
+      `${c.student.id.toLowerCase()}|${c.event.id.toLowerCase()}`;
+
+    if (existingKeys.has(key) || seen.has(key)) {
+      return false;
     }
 
-    // Skip rows that already exist in the table or are duplicated in the file.
-    const existingKeys = new Set(
-      records.map(
-        (r) => `${r.studentId.toLowerCase()}|${r.eventId.toLowerCase()}`,
+    seen.add(key);
+    return true;
+  });
+
+  const duplicateCount = parsed.length - deduped.length;
+
+  if (deduped.length === 0) {
+    toast.info(
+      "All rows in the file already have contribution records",
+    );
+    return;
+  }
+
+  // Pause realtime-triggered reloads during the import.
+  isImportingRef.current = true;
+
+  toast.info(
+    `Importing ${deduped.length} contribution(s)...`,
+  );
+
+  try {
+    // Bounded concurrency so a large spreadsheet doesn't fire
+    // hundreds of Supabase requests at once.
+    const CONCURRENCY = 5;
+    let cursor = 0;
+let receiptQueue = Promise.resolve();
+
+const getNextReceiptNumber = async () => {
+  const previous = receiptQueue;
+
+  let resolveQueue!: () => void;
+
+  receiptQueue = new Promise<void>((resolve) => {
+    resolveQueue = resolve;
+  });
+
+  await previous;
+
+  try {
+    return await officialReceiptNumber();
+  } finally {
+    resolveQueue();
+  }
+};
+    const worker = async () => {
+      while (cursor < deduped.length) {
+        const item = deduped[cursor++];
+
+        try {
+          const contribution =
+            await contributionsService.create({
+              studentId: item.student.id,
+              eventId: item.event.id,
+              eventName: item.event.name,
+              requiredAmount: item.requiredAmount,
+              amountPaid: item.amountPaid,
+              remainingBalance: Math.max(
+                0,
+                item.requiredAmount - item.amountPaid,
+              ),
+            });
+successfulImports++;
+          // Only users allowed to issue receipts should generate
+          // official receipts and payment records.
+          //
+          // The contribution itself has already stored Amount Paid,
+          // so users without receipt permission do not lose the
+          // historical payment amount.
+          if (item.amountPaid > 0 && canIssueReceipts) {
+            try {
+              const orNumber =
+  await getNextReceiptNumber();
+
+              const receiptUrl =
+                await autoCreateReceipt({
+                  tag: "PAYMENT",
+                  receiptNumber: orNumber,
+                  issuedTo: item.student.name,
+                  eventName: item.event.name,
+                  description:
+                    `Payment for ${item.event.name} (imported)`,
+                  amount: item.amountPaid,
+                  type: "income",
+                  date: today(),
+                  recordedBy:
+                    staffName || "Council Officer",
+                });
+
+              await paymentsService.create({
+                studentId: item.student.id,
+                studentName: item.student.name,
+                eventId: item.event.id,
+                eventName: item.event.name,
+                contributionId: contribution.id,
+                amount: item.amountPaid,
+                date: today(),
+                recordedBy:
+                  staffName || "Council Officer",
+                receiptUrl,
+              });
+
+              receiptsIssued++;
+            } catch (receiptError) {
+              console.warn(
+                "Auto receipt generation failed for an imported row:",
+                receiptError,
+              );
+
+              receiptFailures++;
+            }
+          }
+        } catch (error) {
+  importFailures++;
+
+  console.error(
+    "Error importing a contribution row:",
+    error,
+  );
+}
+      }
+    };
+
+    await Promise.all(
+      Array.from(
+        {
+          length: Math.min(
+            CONCURRENCY,
+            deduped.length,
+          ),
+        },
+        worker,
       ),
     );
-    const seen = new Set<string>();
-    const deduped = parsed.filter((c) => {
-      const key = `${c.studentId.toLowerCase()}|${c.eventId.toLowerCase()}`;
-      if (existingKeys.has(key) || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
 
-    if (deduped.length === 0) {
-      toast.info("All rows in the file already have contribution records");
-      return;
-    }
+    // Combine all reasons rows may have been skipped.
+    const totalSkipped =
+  unmatchedStudent +
+  unmatchedEvent +
+  invalidAmount +
+  duplicateCount;
 
-    try {
-      for (const payload of deduped) {
-        await contributionsService.create(payload);
-      }
-      await loadData();
-      const skipped = unmatched + (parsed.length - deduped.length);
-      toast.success(
-        skipped > 0
-          ? `${deduped.length} contribution(s) imported, ${skipped} skipped (duplicates or unmatched)`
-          : `${deduped.length} contribution(s) imported successfully`,
+    const parts = [
+  `${successfulImports} contribution(s) imported`,
+];if (importFailures > 0) {
+  parts.push(
+    `${importFailures} contribution(s) failed`,
+  );
+}
+
+    if (receiptsIssued > 0) {
+      parts.push(
+        `${receiptsIssued} receipt(s) generated`,
       );
-    } catch (error) {
-      console.error("Error importing contribution records:", error);
-      toast.error("Failed to import contribution records");
     }
-  };
+
+    if (totalSkipped > 0) {
+      parts.push(`${totalSkipped} skipped`);
+    }
+
+    if (receiptFailures > 0) {
+      parts.push(
+        `${receiptFailures} receipt(s) failed`,
+      );
+    }
+
+    toast.success(parts.join(", "));
+  } catch (error) {
+    console.error(
+      "Error importing contribution records:",
+      error,
+    );
+
+    toast.error(
+      "Failed to import contribution records",
+    );
+  } finally {
+    isImportingRef.current = false;
+    await loadData();
+  }
+};
 
   // Shared CSV / Excel file-read shell + importing state (row mapping + dedupe
   // handled by importContributionRows above).
@@ -653,7 +914,7 @@ export default function ContributionManagementSection({
             onClick={() => importInputRef.current?.click()}
             className="glass-button px-4 py-2.5 text-sm w-fit"
             disabled={loading || importing}
-            title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, Event, Required Amount, Amount Paid."
+            title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid — repeat that trio for each additional event (as in the official Student Body tracking sheet). A receipt is generated automatically for every imported row with a payment."
           >
             {importing ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -850,7 +1111,7 @@ export default function ContributionManagementSection({
                               {record.studentName}
                             </span>
                             <span className="text-xs text-text-secondary">
-                              {record.studentId}
+                               {record.studentDisplayId}
                             </span>
                           </div>
                         </div>
@@ -1128,7 +1389,7 @@ export default function ContributionManagementSection({
                       <User className="w-3.5 h-3.5 text-text-secondary" />
                       <span className="text-sm text-dark">
                         {student.name}{" "}
-                        <span className="text-text-secondary">
+                        <span className="text-text-secondary flex items-left">
                           ({student.studentId})
                         </span>
                       </span>

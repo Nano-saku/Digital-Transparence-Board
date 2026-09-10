@@ -34,19 +34,28 @@ export default function SummaryCard({
   subtitle,
 }: SummaryCardProps) {
   return (
-    <div className="glass-card p-4 text-center">
+    <div className="glass-card p-4 lg:p-5 flex items-center gap-3">
+      {/* Icon */}
       <div
-        className={`w-9 h-9 rounded-lg flex items-center justify-center mx-auto mb-2 ${COLOR_CLASSES[color]}`}
+        className={`w-9 h-9 rounded-lg flex-shrink-0 flex items-center justify-center ${COLOR_CLASSES[color]}`}
       >
-        <Icon className="w-5 h-5" />
+        <Icon className="w-4 h-4" />
       </div>
-      <p className="text-2xl font-bold text-dark">{value}</p>
-      <p className="text-xs text-text-secondary uppercase tracking-wider">
-        {label}
-      </p>
-      {subtitle && (
-        <p className="text-xs text-text-secondary/70 mt-1">{subtitle}</p>
-      )}
+
+      {/* Text */}
+      <div className="min-w-0">
+        <p className="font-display font-bold text-xl lg:text-2xl text-dark truncate">
+          {value}
+        </p>
+        <p className="text-xs text-text-secondary uppercase tracking-wider truncate">
+          {label}
+        </p>
+        {subtitle && (
+          <p className="text-xs text-text-secondary/70 mt-0.5 truncate">
+            {subtitle}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
