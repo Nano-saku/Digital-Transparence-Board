@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type {
   Student,
+  Event,
   AttendanceRecord,
   ContributionRecord,
   PaymentRecord,
@@ -24,6 +25,7 @@ import type {
 import {
   attendanceService,
   contributionsService,
+  eventsService,
   paymentsService,
   studentRequirementFilesService,
 } from "@/services/db";
@@ -56,17 +58,23 @@ import {
   formatTimeRange,
   today,
 } from "@/lib/format";
-import { contributionStatus } from "@/lib/contributions";
+import {
+  calculateContributionTotals,
+  contributionStatus,
+} from "@/lib/contributions";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
+import Pagination from "@/components/common/Pagination";
 import AnimatedNetwork from "@/components/ui/animated-network";
 
 interface StudentRecordSectionProps {
   student: Student;
   onBack: () => void;
 }
+
+const RECORDS_PAGE_SIZE = 5;
 
 /** Formats a byte count into a human-readable file size (e.g. "1.4 MB"). */
 function formatFileSize(bytes?: number): string {
@@ -100,9 +108,11 @@ export default function StudentRecordSection({
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
+  const [attendancePage, setAttendancePage] = useState(1);
   const [contributionRecords, setContributionRecords] = useState<
     ContributionRecord[]
   >([]);
+  const [contributionPage, setContributionPage] = useState(1);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
 
   // Published Student Requirement Files (Student Viewer)
@@ -117,15 +127,57 @@ export default function StudentRecordSection({
   const loadStudentData = useCallback(async () => {
     try {
       setLoading(true);
-      const [attendanceData, contributionsData, paymentsData, publishedData] =
-        await Promise.all([
-          attendanceService.getByStudentId(student.id),
-          contributionsService.getByStudentId(student.id),
-          paymentsService.getByStudentId(student.id),
-          studentRequirementFilesService.getVisibleForStudent(student.id),
-        ]);
+      const [
+        attendanceData,
+        contributionsData,
+        eventsData,
+        paymentsData,
+        publishedData,
+      ] = await Promise.all([
+        attendanceService.getByStudentId(student.id),
+        contributionsService.getByStudentId(student.id),
+        eventsService.getAll(),
+        paymentsService.getByStudentId(student.id),
+        studentRequirementFilesService.getVisibleForStudent(student.id),
+      ]);
+
+      // A contribution row is created when a payment or contribution is
+      // recorded, so unpaid events may not have a row yet. The student view
+      // must still show every event in the catalog, with an in-memory unpaid
+      // row for any event that has no persisted contribution record.
+      const contributionsByEvent = new Map(
+        contributionsData.map((record) => [record.eventId, record]),
+      );
+      const displayedContributions: ContributionRecord[] = eventsData.map(
+        (event: Event) => {
+          const record = contributionsByEvent.get(event.id);
+          if (record) {
+            return { ...record, eventName: event.name };
+          }
+
+          return {
+            id: `unpaid-${student.id}-${event.id}`,
+            studentId: student.id,
+            eventId: event.id,
+            eventName: event.name,
+            requiredAmount: event.allocationAmount,
+            amountPaid: 0,
+            remainingBalance: event.allocationAmount,
+          };
+        },
+      );
+
+      // Preserve persisted rows for an event that was removed from the event
+      // catalog so no existing contribution data disappears from the profile.
+      const catalogEventIds = new Set(eventsData.map((event) => event.id));
+      displayedContributions.push(
+        ...contributionsData.filter(
+          (record) => !catalogEventIds.has(record.eventId),
+        ),
+      );
+
       setAttendanceRecords(attendanceData);
-      setContributionRecords(contributionsData);
+      setContributionRecords(displayedContributions);
       setPaymentRecords(paymentsData);
       // Published requirement files shown to the student (Student Viewer).
       setPublishedFiles(publishedData);
@@ -247,19 +299,66 @@ export default function StudentRecordSection({
     },
   ]);
 
-  // Summary figures share a single pass over the records so the per-render
-  // cost stays O(n), not O(3n).
-  const { totalPaid, totalRequired, totalBalance } = useMemo(() => {
-    let paid = 0;
-    let required = 0;
-    let balance = 0;
-    for (const record of contributionRecords) {
-      paid += record.amountPaid;
-      required += record.requiredAmount;
-      balance += record.remainingBalance;
-    }
-    return { totalPaid: paid, totalRequired: required, totalBalance: balance };
-  }, [contributionRecords]);
+  // Contribution records are loaded for the student across all events. The
+  // shared calculator sums each record's actual amountPaid value, so partial
+  // payments are included in Total Paid.
+  const { totalPaid, totalRequired, totalBalance } = useMemo(
+    () => calculateContributionTotals(contributionRecords),
+    [contributionRecords],
+  );
+
+  const attendanceTotalPages = Math.max(
+    1,
+    Math.ceil(attendanceRecords.length / RECORDS_PAGE_SIZE),
+  );
+  const currentAttendancePage = Math.min(attendancePage, attendanceTotalPages);
+  const attendancePageStartIndex =
+    (currentAttendancePage - 1) * RECORDS_PAGE_SIZE;
+  const paginatedAttendanceRecords = useMemo(
+    () =>
+      attendanceRecords.slice(
+        attendancePageStartIndex,
+        attendancePageStartIndex + RECORDS_PAGE_SIZE,
+      ),
+    [attendanceRecords, attendancePageStartIndex],
+  );
+
+  const contributionTotalPages = Math.max(
+    1,
+    Math.ceil(contributionRecords.length / RECORDS_PAGE_SIZE),
+  );
+  const currentContributionPage = Math.min(
+    contributionPage,
+    contributionTotalPages,
+  );
+  const contributionPageStartIndex =
+    (currentContributionPage - 1) * RECORDS_PAGE_SIZE;
+  const paginatedContributionRecords = useMemo(
+    () =>
+      contributionRecords.slice(
+        contributionPageStartIndex,
+        contributionPageStartIndex + RECORDS_PAGE_SIZE,
+      ),
+    [contributionRecords, contributionPageStartIndex],
+  );
+
+  // Return to the first page whenever a student or the underlying records
+  // change, and keep each table's page valid after a data update.
+  useEffect(() => {
+    setAttendancePage(1);
+  }, [student.id, attendanceRecords]);
+
+  useEffect(() => {
+    setContributionPage(1);
+  }, [student.id, contributionRecords]);
+
+  useEffect(() => {
+    setAttendancePage((page) => Math.min(page, attendanceTotalPages));
+  }, [attendanceTotalPages]);
+
+  useEffect(() => {
+    setContributionPage((page) => Math.min(page, contributionTotalPages));
+  }, [contributionTotalPages]);
 
   const presentCount = attendanceRecords.filter(
     (r) => r.status === "present",
@@ -378,7 +477,7 @@ export default function StudentRecordSection({
                       </tr>
                     </thead>
                     <tbody>
-                      {attendanceRecords.map((record) => (
+                      {paginatedAttendanceRecords.map((record) => (
                         <tr key={record.id}>
                           <td className="font-medium text-dark">
                             {record.eventName}
@@ -418,6 +517,23 @@ export default function StudentRecordSection({
                   </table>
                 </div>
 
+                <Pagination
+                  page={currentAttendancePage}
+                  totalPages={attendanceTotalPages}
+                  totalItems={attendanceRecords.length}
+                  startIndex={attendancePageStartIndex}
+                  endIndex={attendancePageStartIndex + paginatedAttendanceRecords.length}
+                  onPrev={() =>
+                    setAttendancePage((page) => Math.max(1, page - 1))
+                  }
+                  onNext={() =>
+                    setAttendancePage((page) =>
+                      Math.min(attendanceTotalPages, page + 1),
+                    )
+                  }
+                  onJump={setAttendancePage}
+                />
+
                 {attendanceRecords.length === 0 && (
                   <SectionEmptyState
                     message="No attendance records found"
@@ -442,14 +558,14 @@ export default function StudentRecordSection({
                   <table className="glass-table">
                     <thead>
                       <tr>
-                        <th>Event</th>
+                        <th>Events</th>
                         <th>Amount</th>
                         <th>Status</th>
-                        <th>Downloadable Receipt</th>
+                        <th>Downloadable Receipts</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {contributionRecords.map((record) => {
+                      {paginatedContributionRecords.map((record) => {
                         const status = contributionStatus(record);
                         const paymentReceipts = receiptsForEvent(
                           record.eventId,
@@ -551,6 +667,26 @@ export default function StudentRecordSection({
                     </tbody>
                   </table>
                 </div>
+
+                <Pagination
+                  page={currentContributionPage}
+                  totalPages={contributionTotalPages}
+                  totalItems={contributionRecords.length}
+                  startIndex={contributionPageStartIndex}
+                  endIndex={
+                    contributionPageStartIndex +
+                    paginatedContributionRecords.length
+                  }
+                  onPrev={() =>
+                    setContributionPage((page) => Math.max(1, page - 1))
+                  }
+                  onNext={() =>
+                    setContributionPage((page) =>
+                      Math.min(contributionTotalPages, page + 1),
+                    )
+                  }
+                  onJump={setContributionPage}
+                />
 
                 {contributionRecords.length === 0 && (
                   <SectionEmptyState

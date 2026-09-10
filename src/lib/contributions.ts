@@ -22,3 +22,30 @@ export function contributionStatus(
     return { label: "Partial Payment", className: "text-amber-600" };
   return { label: "Fully Paid", className: "text-green-600" };
 }
+
+export interface ContributionTotals {
+  totalPaid: number;
+  totalRequired: number;
+  totalBalance: number;
+}
+
+/**
+ * Calculates a student's contribution totals across every event record.
+ * `totalPaid` is the sum of the actual amountPaid value from every record.
+ * Unpaid records normally contribute zero, while partial and fully paid
+ * records contribute the amount that has actually been recorded as paid.
+ */
+export function calculateContributionTotals(
+  records: ContributionRecord[],
+): ContributionTotals {
+  return records.reduce(
+    (totals, record) => {
+      return {
+        totalPaid: totals.totalPaid + record.amountPaid,
+        totalRequired: totals.totalRequired + record.requiredAmount,
+        totalBalance: totals.totalBalance + record.remainingBalance,
+      };
+    },
+    { totalPaid: 0, totalRequired: 0, totalBalance: 0 },
+  );
+}
