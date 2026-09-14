@@ -123,7 +123,8 @@ function App() {
       setSearching(true);
       const student = await studentsService.getByStudentId(studentId.trim());
       const isVerified =
-        student !== null && student.name.trim().toLowerCase() === normalizedName;
+        student !== null &&
+        student.name.trim().toLowerCase() === normalizedName;
 
       if (isVerified) {
         setSelectedStudent(student);
@@ -403,6 +404,7 @@ function App() {
         onNavigate={navigateTo}
         role={auth ? role : null}
         onLogout={handleLogout}
+        studentId={selectedStudent?.id}
       />
       {/* Main Content */}
       <main className="relative">

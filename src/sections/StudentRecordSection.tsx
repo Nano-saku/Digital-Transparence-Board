@@ -522,7 +522,9 @@ export default function StudentRecordSection({
                   totalPages={attendanceTotalPages}
                   totalItems={attendanceRecords.length}
                   startIndex={attendancePageStartIndex}
-                  endIndex={attendancePageStartIndex + paginatedAttendanceRecords.length}
+                  endIndex={
+                    attendancePageStartIndex + paginatedAttendanceRecords.length
+                  }
                   onPrev={() =>
                     setAttendancePage((page) => Math.max(1, page - 1))
                   }

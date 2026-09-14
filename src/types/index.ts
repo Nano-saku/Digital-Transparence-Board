@@ -43,6 +43,8 @@ export interface Event {
   name: string;
   allocationAmount: number;
   date?: string;
+  /** Last day a student's contribution counts as on-time. Empty string = no deadline set. */
+  contributionDeadline?: string;
 
   schedules?: EventSchedule[];
 

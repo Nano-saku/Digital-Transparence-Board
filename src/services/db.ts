@@ -136,6 +136,8 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     name: item.name as string,
     allocationAmount: item.allocation_amount as number,
     date: (item.date as string | null) ?? undefined,
+    contributionDeadline:
+      (item.contribution_deadline as string | null) || undefined,
     schedules,
     timeIn: (item.time_in as string | null) || undefined,
     timeOut: (item.time_out as string | null) || undefined,
@@ -393,6 +395,7 @@ export const eventsService = {
       name: event.name,
       allocation_amount: event.allocationAmount,
       date: event.date,
+      contribution_deadline: event.contributionDeadline ?? "",
       schedules: event.schedules ?? [],
       time_in: event.timeIn ?? "",
       time_out: event.timeOut ?? "",
@@ -436,6 +439,8 @@ export const eventsService = {
       updateData.schedules = event.schedules;
     }
     if (event.date !== undefined) updateData.date = event.date;
+    if (event.contributionDeadline !== undefined)
+      updateData.contribution_deadline = event.contributionDeadline;
     if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
     if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
     if (event.morningTimeIn !== undefined)

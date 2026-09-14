@@ -1,12 +1,15 @@
 ﻿import { useState, useEffect } from "react";
 import { Menu, X, Shield, LogOut } from "lucide-react";
 import type { ViewState, UserRole } from "@/types";
+import NotificationBell from "@/components/NotificationBell";
 
 interface NavigationProps {
   currentView: ViewState;
   onNavigate: (view: ViewState) => void;
   role: UserRole | null;
   onLogout: () => void;
+  /** Set once a visitor has verified name + Student ID via the landing search. */
+  studentId?: string;
 }
 
 type NavItem = {
@@ -94,6 +97,7 @@ export default function Navigation({
   onNavigate,
   role,
   onLogout,
+  studentId,
 }: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -240,6 +244,13 @@ export default function Navigation({
               </div>
             )}
 
+            {/* Notifications */}
+            <NotificationBell
+              onNavigate={onNavigate}
+              isLoggedIn={isLoggedIn}
+              studentId={studentId}
+            />
+
             {/* Logout */}
             {isLoggedIn && (
               <button
@@ -357,6 +368,15 @@ export default function Navigation({
                 <span>Admin Access</span>
               </button>
             )}
+
+            {/* Mobile Notifications */}
+            <div className="px-4 py-2">
+              <NotificationBell
+                onNavigate={go}
+                isLoggedIn={isLoggedIn}
+                studentId={studentId}
+              />
+            </div>
 
             {/* Mobile Logout */}
             {isLoggedIn && (

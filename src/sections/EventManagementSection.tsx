@@ -81,11 +81,13 @@ export default function EventManagementSection({
     name: string;
     allocationAmount: number;
     date: string;
+    contributionDeadline: string;
     schedules: EventSchedule[];
   }>({
     name: "",
     allocationAmount: 0,
     date: "",
+    contributionDeadline: "",
     schedules: [],
   });
 
@@ -211,6 +213,7 @@ export default function EventManagementSection({
       name: "",
       allocationAmount: 0,
       date: "",
+      contributionDeadline: "",
       schedules: [],
     });
 
@@ -225,6 +228,7 @@ export default function EventManagementSection({
       name: event.name,
       allocationAmount: event.allocationAmount,
       date: event.date && event.date !== "TBD" ? event.date : "",
+      contributionDeadline: event.contributionDeadline ?? "",
       schedules: event.schedules ?? [],
     });
 
@@ -240,6 +244,7 @@ export default function EventManagementSection({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         date: eventDateTbd ? "TBD" : eventForm.date,
+        contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
       });
 
@@ -250,6 +255,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         date: "",
+        contributionDeadline: "",
         schedules: [],
       });
 
@@ -274,6 +280,7 @@ export default function EventManagementSection({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         date: eventDateTbd ? "TBD" : eventForm.date,
+        contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
       });
 
@@ -286,6 +293,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         date: "",
+        contributionDeadline: "",
         schedules: [],
       });
 
@@ -459,6 +467,7 @@ export default function EventManagementSection({
                     <tr>
                       <th>Event Name</th>
                       <th>Date</th>
+                      <th>Deadline</th>
                       <th>Schedule</th>
                       <th>Allocation</th>
                       <th>Expected Collection</th>
@@ -500,6 +509,38 @@ export default function EventManagementSection({
                           ) : (
                             <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
                               TBD
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Deadline */}
+                        <td className="text-text-secondary whitespace-nowrap">
+                          {event.contributionDeadline ? (
+                            <div className="flex items-center gap-2">
+                              <span>
+                                {formatDate(event.contributionDeadline)}
+                              </span>
+
+                              <span
+                                className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
+                                  daysUntil(event.contributionDeadline) < 0
+                                    ? "bg-red-500 text-white"
+                                    : daysUntil(event.contributionDeadline) ===
+                                        0
+                                      ? "bg-red-500 text-white"
+                                      : "bg-green-100 text-green-600"
+                                }`}
+                              >
+                                {daysUntil(event.contributionDeadline) < 0
+                                  ? "Overdue"
+                                  : daysUntil(event.contributionDeadline) === 0
+                                    ? "Today"
+                                    : `In ${daysUntil(event.contributionDeadline)}d`}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-text-secondary/60">
+                              No deadline
                             </span>
                           )}
                         </td>
@@ -683,6 +724,30 @@ export default function EventManagementSection({
                 className={`glass-input w-full px-4 py-2 ${
                   eventDateTbd ? "opacity-50 cursor-not-allowed" : ""
                 }`}
+              />
+            </div>
+
+            {/* Contribution deadline */}
+            <div>
+              <label className="block text-sm font-medium text-dark mb-1">
+                Contribution deadline
+              </label>
+
+              <p className="text-xs text-text-secondary mb-2">
+                Last day a student's contribution counts as on-time. Leave blank
+                for no deadline.
+              </p>
+
+              <input
+                type="date"
+                value={eventForm.contributionDeadline}
+                onChange={(e) =>
+                  setEventForm({
+                    ...eventForm,
+                    contributionDeadline: e.target.value,
+                  })
+                }
+                className="glass-input w-full px-4 py-2"
               />
             </div>
 
