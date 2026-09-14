@@ -274,17 +274,28 @@ export default function Navigation({
             )}
           </div>
 
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-white hover:text-lsc-gold transition-colors"
-          >
-            {isMobileMenuOpen ? (
-              <X className="w-5 h-5" />
-            ) : (
-              <Menu className="w-5 h-5" />
-            )}
-          </button>
+          {/* Mobile Actions */}
+          <div className="md:hidden flex items-center gap-1">
+            {/* Notifications */}
+            <NotificationBell
+              onNavigate={go}
+              isLoggedIn={isLoggedIn}
+              studentId={studentId}
+            />
+
+            {/* Mobile Menu Button */}
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2 rounded-lg text-white hover:text-lsc-gold transition-colors"
+              aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+            >
+              {isMobileMenuOpen ? (
+                <X className="w-5 h-5" />
+              ) : (
+                <Menu className="w-5 h-5" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -368,15 +379,6 @@ export default function Navigation({
                 <span>Admin Access</span>
               </button>
             )}
-
-            {/* Mobile Notifications */}
-            <div className="px-4 py-2">
-              <NotificationBell
-                onNavigate={go}
-                isLoggedIn={isLoggedIn}
-                studentId={studentId}
-              />
-            </div>
 
             {/* Mobile Logout */}
             {isLoggedIn && (
