@@ -8,6 +8,7 @@ import SyncStatusBadge from "@/components/SyncStatusBadge";
 
 // Public-facing sections load eagerly — most visitors land here first.
 import Navigation from "@/sections/Navigation";
+import PushPromptModal from "@/components/PushPromptModal";
 import LandingSection from "@/sections/LandingSection";
 import StudentRecordSection from "@/sections/StudentRecordSection";
 import TransparencyBoardSection from "@/sections/TransparencyBoardSection";
@@ -404,6 +405,10 @@ function App() {
         onNavigate={navigateTo}
         role={auth ? role : null}
         onLogout={handleLogout}
+        studentId={selectedStudent?.id}
+      />
+      <PushPromptModal
+        isLoggedIn={!!(auth && role)}
         studentId={selectedStudent?.id}
       />
       {/* Main Content */}

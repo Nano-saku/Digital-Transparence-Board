@@ -3,7 +3,11 @@ import { getSupabase } from "../lib/supabase";
 const createRecordId = (): string => crypto.randomUUID();
 
 export type NotificationType = "payment" | "file" | "deadline" | "announcement";
-export type RecipientKind = "officer" | "all_officers" | "student" | "all_students";
+export type RecipientKind =
+  | "officer"
+  | "all_officers"
+  | "student"
+  | "all_students";
 
 export interface AppNotification {
   id: string;
@@ -113,11 +117,16 @@ function subscribeOfficer(onInsert: (n: AppNotification) => void): () => void {
 // No persisted read state (no identity to attach it to).
 // ============================================
 
-async function getForStudent(studentId: string, limit = 20): Promise<AppNotification[]> {
+async function getForStudent(
+  studentId: string,
+  limit = 20,
+): Promise<AppNotification[]> {
   const { data, error } = await getSupabase()
     .from("notifications")
     .select("*")
-    .or(`recipient_kind.eq.all_students,and(recipient_kind.eq.student,recipient_student_id.eq.${studentId})`)
+    .or(
+      `recipient_kind.eq.all_students,and(recipient_kind.eq.student,recipient_student_id.eq.${studentId})`,
+    )
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -125,7 +134,10 @@ async function getForStudent(studentId: string, limit = 20): Promise<AppNotifica
   return (data as NotificationRow[]).map(fromRow);
 }
 
-function subscribeStudent(studentId: string, onInsert: (n: AppNotification) => void): () => void {
+function subscribeStudent(
+  studentId: string,
+  onInsert: (n: AppNotification) => void,
+): () => void {
   const sb = getSupabase();
   const channel = sb.channel(`notifications-student-${createRecordId()}`);
 
@@ -136,7 +148,8 @@ function subscribeStudent(studentId: string, onInsert: (n: AppNotification) => v
       const row = payload.new as NotificationRow;
       const relevant =
         row.recipient_kind === "all_students" ||
-        (row.recipient_kind === "student" && row.recipient_student_id === studentId);
+        (row.recipient_kind === "student" &&
+          row.recipient_student_id === studentId);
       if (relevant) onInsert(fromRow(row));
     },
   );
@@ -166,7 +179,9 @@ async function getPublicBroadcasts(limit = 20): Promise<AppNotification[]> {
   return (data as NotificationRow[]).map(fromRow);
 }
 
-function subscribePublicBroadcasts(onInsert: (n: AppNotification) => void): () => void {
+function subscribePublicBroadcasts(
+  onInsert: (n: AppNotification) => void,
+): () => void {
   const sb = getSupabase();
   const channel = sb.channel(`notifications-public-${createRecordId()}`);
 
@@ -196,16 +211,21 @@ interface PushKeys {
 }
 
 async function subscribeOfficerPush(keys: PushKeys): Promise<void> {
-  const { data: userData, error: userError } = await getSupabase().auth.getUser();
+  const { data: userData, error: userError } =
+    await getSupabase().auth.getUser();
   if (userError) throw userError;
-  if (!userData.user) throw new Error("Must be signed in to subscribe to push notifications.");
+  if (!userData.user)
+    throw new Error("Must be signed in to subscribe to push notifications.");
 
   // Delete-then-insert rather than upsert: this endpoint may currently
   // belong to a different subscriber_kind row (same browser, different
   // identity earlier), and there's no UPDATE policy to transfer it —
   // deleting by endpoint is allowed for anyone who has that endpoint,
   // which only the owning browser ever does.
-  await getSupabase().from("push_subscriptions").delete().eq("endpoint", keys.endpoint);
+  await getSupabase()
+    .from("push_subscriptions")
+    .delete()
+    .eq("endpoint", keys.endpoint);
 
   const { error } = await getSupabase().from("push_subscriptions").insert({
     id: createRecordId(),
@@ -220,8 +240,14 @@ async function subscribeOfficerPush(keys: PushKeys): Promise<void> {
   if (error) throw error;
 }
 
-async function subscribeStudentPush(studentId: string, keys: PushKeys): Promise<void> {
-  await getSupabase().from("push_subscriptions").delete().eq("endpoint", keys.endpoint);
+async function subscribeStudentPush(
+  studentId: string,
+  keys: PushKeys,
+): Promise<void> {
+  await getSupabase()
+    .from("push_subscriptions")
+    .delete()
+    .eq("endpoint", keys.endpoint);
 
   const { error } = await getSupabase().from("push_subscriptions").insert({
     id: createRecordId(),
@@ -237,7 +263,10 @@ async function subscribeStudentPush(studentId: string, keys: PushKeys): Promise<
 }
 
 async function unsubscribePush(endpoint: string): Promise<void> {
-  const { error } = await getSupabase().from("push_subscriptions").delete().eq("endpoint", endpoint);
+  const { error } = await getSupabase()
+    .from("push_subscriptions")
+    .delete()
+    .eq("endpoint", endpoint);
   if (error) throw error;
 }
 
@@ -247,7 +276,10 @@ async function unsubscribePush(endpoint: string): Promise<void> {
 // ============================================
 
 interface SendAnnouncementInput {
-  recipientKind: Extract<RecipientKind, "all_students" | "all_officers" | "student">;
+  recipientKind: Extract<
+    RecipientKind,
+    "all_students" | "all_officers" | "student"
+  >;
   /** Required when recipientKind === "student" — the internal students.id. */
   recipientStudentId?: string;
   title: string;
@@ -255,22 +287,48 @@ interface SendAnnouncementInput {
 }
 
 async function sendAnnouncement(input: SendAnnouncementInput): Promise<void> {
-  const { error } = await getSupabase().from("notifications").insert({
-    id: createRecordId(),
-    recipient_kind: input.recipientKind,
-    recipient_student_id: input.recipientKind === "student" ? input.recipientStudentId ?? null : null,
-    type: "announcement",
-    title: input.title,
-    body: input.body,
-    link: null,
-    created_at: new Date().toISOString(),
-  });
+  const { error } = await getSupabase()
+    .from("notifications")
+    .insert({
+      id: createRecordId(),
+      recipient_kind: input.recipientKind,
+      recipient_student_id:
+        input.recipientKind === "student"
+          ? (input.recipientStudentId ?? null)
+          : null,
+      type: "announcement",
+      title: input.title,
+      body: input.body,
+      link: null,
+      created_at: new Date().toISOString(),
+    });
 
   if (error) throw error;
 }
 
 async function deleteNotification(id: string): Promise<void> {
-  const { error } = await getSupabase().from("notifications").delete().eq("id", id);
+  const { error } = await getSupabase()
+    .from("notifications")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+async function subscribeAnonymousPush(keys: PushKeys): Promise<void> {
+  await getSupabase()
+    .from("push_subscriptions")
+    .delete()
+    .eq("endpoint", keys.endpoint);
+
+  const { error } = await getSupabase().from("push_subscriptions").insert({
+    id: createRecordId(),
+    subscriber_kind: "anonymous",
+    endpoint: keys.endpoint,
+    p256dh: keys.p256dh,
+    auth_key: keys.authKey,
+    created_at: new Date().toISOString(),
+  });
+
   if (error) throw error;
 }
 
@@ -288,5 +346,6 @@ export const notificationsService = {
   deleteNotification,
   subscribeOfficerPush,
   subscribeStudentPush,
+  subscribeAnonymousPush,
   unsubscribePush,
 };

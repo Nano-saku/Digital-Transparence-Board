@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
           .eq("student_id", notification.recipient_student_id);
         break;
       case "all_students":
-        query = query.eq("subscriber_kind", "student");
+        query = query.in("subscriber_kind", ["student", "anonymous"]);
         break;
     }
 
