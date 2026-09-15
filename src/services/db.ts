@@ -12,6 +12,7 @@ import type {
   FinancialReport,
   BoardMember,
   StudentRequirementFile,
+  EventEvaluation,
 } from "../types";
 
 // Operational tables use TEXT primary keys so they remain compatible with the
@@ -138,6 +139,8 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     date: (item.date as string | null) ?? undefined,
     contributionDeadline:
       (item.contribution_deadline as string | null) || undefined,
+    evaluationActive: Boolean(item.evaluation_active),
+    evaluationFormUrl: (item.evaluation_form_url as string | null) || undefined,
     schedules,
     timeIn: (item.time_in as string | null) || undefined,
     timeOut: (item.time_out as string | null) || undefined,
@@ -396,6 +399,8 @@ export const eventsService = {
       allocation_amount: event.allocationAmount,
       date: event.date,
       contribution_deadline: event.contributionDeadline ?? "",
+      evaluation_active: event.evaluationActive ?? false,
+      evaluation_form_url: event.evaluationFormUrl ?? "",
       schedules: event.schedules ?? [],
       time_in: event.timeIn ?? "",
       time_out: event.timeOut ?? "",
@@ -441,6 +446,10 @@ export const eventsService = {
     if (event.date !== undefined) updateData.date = event.date;
     if (event.contributionDeadline !== undefined)
       updateData.contribution_deadline = event.contributionDeadline;
+    if (event.evaluationActive !== undefined)
+      updateData.evaluation_active = event.evaluationActive;
+    if (event.evaluationFormUrl !== undefined)
+      updateData.evaluation_form_url = event.evaluationFormUrl;
     if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
     if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
     if (event.morningTimeIn !== undefined)
@@ -497,6 +506,63 @@ export const eventsService = {
       },
     });
     invalidateReferenceCache("events");
+  },
+};
+
+// ============================================
+// EVENT EVALUATIONS SERVICE
+// ============================================
+// Rows here are written by a per-event Google Apps Script trigger (using
+// the Supabase service role key), not by this app — see
+// supabase/migrations/2026-09-15_event_evaluations.sql and
+// event-evaluation-sync.gs. This service only ever reads.
+const normalizeEvalKey = (value: string): string => value.trim().toLowerCase();
+
+const mapEventEvaluation = (
+  item: Record<string, unknown>,
+): EventEvaluation => ({
+  id: item.id as string,
+  eventId: item.event_id as string,
+  studentId: item.student_id as string,
+  studentName: item.student_name as string,
+  submittedAt: item.submitted_at as string,
+});
+
+export const eventEvaluationsService = {
+  async hasSubmitted(eventId: string, studentId: string): Promise<boolean> {
+    const { data, error } = await getSupabase()
+      .from("event_evaluations")
+      .select("id")
+      .eq("event_id", eventId)
+      .eq("student_id", normalizeEvalKey(studentId))
+      .maybeSingle();
+
+    if (error) throw error;
+    return data !== null;
+  },
+
+  // The record-search gate: returns the most recently rolled-out event the
+  // student hasn't submitted an evaluation for, or null if they're clear.
+  // eventsService.getAll() is already sorted by date descending, so the
+  // first evaluationActive match is "the most recent" per that ordering.
+  async getPendingGate(studentId: string): Promise<Event | null> {
+    const events = await eventsService.getAll();
+    const activeEvent = events.find((event) => event.evaluationActive);
+    if (!activeEvent) return null;
+
+    const submitted = await this.hasSubmitted(activeEvent.id, studentId);
+    return submitted ? null : activeEvent;
+  },
+
+  async getForEvent(eventId: string): Promise<EventEvaluation[]> {
+    const { data, error } = await getSupabase()
+      .from("event_evaluations")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("submitted_at", { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []).map(mapEventEvaluation);
   },
 };
 

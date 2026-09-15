@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, Suspense, lazy } from "react";
-import type { ViewState, Student, UserRole } from "@/types";
-import { studentsService } from "@/services/db";
+import type { ViewState, Student, UserRole, Event } from "@/types";
+import { studentsService, eventEvaluationsService } from "@/services/db";
 import { authService, type AuthSession } from "@/services/auth";
 import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
@@ -66,6 +66,8 @@ const SectionFallback = () => (
 function App() {
   const [currentView, setCurrentView] = useState<ViewState>("landing");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [pendingEvaluationEvent, setPendingEvaluationEvent] =
+    useState<Event | null>(null);
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -128,8 +130,18 @@ function App() {
         student.name.trim().toLowerCase() === normalizedName;
 
       if (isVerified) {
-        setSelectedStudent(student);
-        setCurrentView("student-record");
+        const pendingEvent = await eventEvaluationsService.getPendingGate(
+          student.studentId,
+        );
+
+        if (pendingEvent) {
+          setSelectedStudent(student);
+          setPendingEvaluationEvent(pendingEvent);
+          setCurrentView("evaluation-required");
+        } else {
+          setSelectedStudent(student);
+          setCurrentView("student-record");
+        }
       } else {
         toast.error("Student Name and Student ID do not match.");
       }
@@ -269,6 +281,56 @@ function App() {
               student={selectedStudent}
               onBack={() => navigateTo("landing")}
             />
+          )
+        );
+
+      case "evaluation-required":
+        return (
+          pendingEvaluationEvent && (
+            <div className="min-h-screen w-full bg-white py-20 lg:py-24 px-4 flex items-center justify-center">
+              <div className="max-w-md w-full text-center">
+                <h2 className="text-xl font-semibold mb-2">
+                  One quick thing first
+                </h2>
+                <p className="text-muted-foreground mb-6">
+                  Please complete the evaluation for{" "}
+                  <span className="font-medium">
+                    {pendingEvaluationEvent.name}
+                  </span>{" "}
+                  before accessing your record.
+                </p>
+                <a
+                  href={pendingEvaluationEvent.evaluationFormUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block rounded-md bg-primary text-primary-foreground px-4 py-2 font-medium mb-3"
+                >
+                  Fill out the evaluation
+                </a>
+                <div>
+                  <button
+                    onClick={() =>
+                      selectedStudent &&
+                      handleSearch(
+                        selectedStudent.name,
+                        selectedStudent.studentId,
+                      )
+                    }
+                    className="text-sm underline text-muted-foreground"
+                  >
+                    I've submitted it — check again
+                  </button>
+                </div>
+                <div className="mt-4">
+                  <button
+                    onClick={() => navigateTo("landing")}
+                    className="text-sm text-muted-foreground"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            </div>
           )
         );
 

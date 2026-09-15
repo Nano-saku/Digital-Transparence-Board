@@ -16,6 +16,7 @@ import {
   boardMembersService,
   subscribeToTables,
 } from "@/services/db";
+import { notificationsService } from "@/services/notificationsService";
 import type {
   Event,
   EventSchedule,
@@ -76,6 +77,11 @@ export default function EventManagementSection({
   // Delete confirmation dialog state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+
+  // Evaluation rollout dialog state
+  const [evaluationTarget, setEvaluationTarget] = useState<Event | null>(null);
+  const [evaluationFormUrlInput, setEvaluationFormUrlInput] = useState("");
+  const [savingEvaluation, setSavingEvaluation] = useState(false);
 
   const [eventForm, setEventForm] = useState<{
     name: string;
@@ -312,6 +318,72 @@ export default function EventManagementSection({
     setOpenActionMenu(null);
     setEventToDelete(event);
     setShowDeleteConfirm(true);
+  };
+
+  const handleOpenEvaluationRollout = (event: Event) => {
+    setOpenActionMenu(null);
+    setEvaluationTarget(event);
+    setEvaluationFormUrlInput(event.evaluationFormUrl ?? "");
+  };
+
+  const handleConfirmEvaluationRollout = async () => {
+    if (!evaluationTarget) return;
+    if (!evaluationFormUrlInput.trim()) {
+      toast.error("Paste this event's evaluation Form URL first.");
+      return;
+    }
+
+    try {
+      setSavingEvaluation(true);
+
+      await eventsService.update(evaluationTarget.id, {
+        evaluationActive: true,
+        evaluationFormUrl: evaluationFormUrlInput.trim(),
+      });
+
+      await notificationsService.sendAnnouncement({
+        recipientKind: "all_students",
+        title: `Evaluation open: ${evaluationTarget.name}`,
+        body: "Please complete the evaluation for this event — it's required before you can access your record again.",
+      });
+
+      setEvents(
+        events.map((e) =>
+          e.id === evaluationTarget.id
+            ? {
+                ...e,
+                evaluationActive: true,
+                evaluationFormUrl: evaluationFormUrlInput.trim(),
+              }
+            : e,
+        ),
+      );
+
+      setEvaluationTarget(null);
+      toast.success("Evaluation rolled out and students notified");
+    } catch (error) {
+      console.error("Error rolling out evaluation:", error);
+      toast.error("Failed to roll out evaluation");
+    } finally {
+      setSavingEvaluation(false);
+    }
+  };
+
+  const handleStopEvaluationRollout = async (event: Event) => {
+    setOpenActionMenu(null);
+
+    try {
+      await eventsService.update(event.id, { evaluationActive: false });
+      setEvents(
+        events.map((e) =>
+          e.id === event.id ? { ...e, evaluationActive: false } : e,
+        ),
+      );
+      toast.success("Evaluation requirement turned off");
+    } catch (error) {
+      console.error("Error stopping evaluation rollout:", error);
+      toast.error("Failed to update event");
+    }
   };
 
   const handleDeleteEvent = async () => {
@@ -598,6 +670,30 @@ export default function EventManagementSection({
                                     <Pencil className="w-4 h-4" />
                                     Edit
                                   </button>
+
+                                  {event.evaluationActive ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleStopEvaluationRollout(event)
+                                      }
+                                      className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
+                                    >
+                                      <UserCheck className="w-4 h-4" />
+                                      Turn off evaluation
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleOpenEvaluationRollout(event)
+                                      }
+                                      className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
+                                    >
+                                      <UserCheck className="w-4 h-4" />
+                                      Roll out evaluation
+                                    </button>
+                                  )}
 
                                   <button
                                     type="button"
@@ -960,6 +1056,61 @@ export default function EventManagementSection({
                     {editingEvent ? "Update Event" : "Create Event"}
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Evaluation Rollout Dialog */}
+      <Dialog
+        open={!!evaluationTarget}
+        onOpenChange={(open) => {
+          if (!open) setEvaluationTarget(null);
+        }}
+      >
+        <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Roll out evaluation
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            <p className="text-sm text-text-secondary">
+              Paste the Google Form URL for{" "}
+              <span className="font-medium">{evaluationTarget?.name}</span>.
+              Every student not yet recorded in this event's response Sheet will
+              be required to fill it out before they can view their record, and
+              all students will be notified.
+            </p>
+
+            <input
+              type="url"
+              value={evaluationFormUrlInput}
+              onChange={(e) => setEvaluationFormUrlInput(e.target.value)}
+              placeholder="https://docs.google.com/forms/d/e/.../viewform"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEvaluationTarget(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmEvaluationRollout}
+                disabled={savingEvaluation}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground disabled:opacity-60 flex items-center gap-2"
+              >
+                {savingEvaluation && (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                )}
+                Roll out & notify
               </button>
             </div>
           </div>

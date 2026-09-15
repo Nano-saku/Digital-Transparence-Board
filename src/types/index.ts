@@ -45,6 +45,10 @@ export interface Event {
   date?: string;
   /** Last day a student's contribution counts as on-time. Empty string = no deadline set. */
   contributionDeadline?: string;
+  /** Whether the post-event evaluation is currently rolled out to students. */
+  evaluationActive?: boolean;
+  /** Google Form URL for this event's evaluation (ideally prefilled with name/ID entry IDs). */
+  evaluationFormUrl?: string;
 
   schedules?: EventSchedule[];
 
@@ -58,6 +62,16 @@ export interface Event {
 
   timeIn?: string;
   timeOut?: string;
+}
+
+// A row synced from an event's evaluation Google Sheet (via Apps Script).
+// studentId/studentName are stored normalized (trim + lowercase).
+export interface EventEvaluation {
+  id: string;
+  eventId: string;
+  studentId: string;
+  studentName: string;
+  submittedAt: string;
 }
 
 // Attendance Types
@@ -180,6 +194,7 @@ export interface FinancialReport {
 export type ViewState =
   | "landing"
   | "student-record"
+  | "evaluation-required"
   | "transparency"
   | "inquiry"
   | "complaint"
