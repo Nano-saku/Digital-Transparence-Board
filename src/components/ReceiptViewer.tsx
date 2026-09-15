@@ -55,6 +55,7 @@ export default function ReceiptViewer({ receiptUrl, onClose, title = "Receipt" }
   };
 
   const isGeneratedSvg = receiptUrl ? isSvgUrl(receiptUrl) : false;
+  const isPdf = receiptUrl ? /\.pdf(?:$|[?#])/i.test(receiptUrl) : false;
 
   return (
     <Dialog open={!!receiptUrl} onOpenChange={onClose}>
@@ -69,14 +70,22 @@ export default function ReceiptViewer({ receiptUrl, onClose, title = "Receipt" }
           {receiptUrl ? (
             <div className="space-y-4">
               <div className="max-h-[55vh] overflow-auto rounded-lg bg-white/30">
-                <img
-                  src={receiptUrl}
-                  alt="Receipt"
-                  className="w-full rounded-lg"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = "/receipts/placeholder.svg";
-                  }}
-                />
+                {isPdf ? (
+                  <iframe
+                    src={receiptUrl}
+                    title="Uploaded physical receipt PDF"
+                    className="w-full h-[55vh] rounded-lg"
+                  />
+                ) : (
+                  <img
+                    src={receiptUrl}
+                    alt="Uploaded physical receipt"
+                    className="w-full rounded-lg"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "/receipts/placeholder.svg";
+                    }}
+                  />
+                )}
               </div>
 
               <div className="flex flex-wrap gap-3">
