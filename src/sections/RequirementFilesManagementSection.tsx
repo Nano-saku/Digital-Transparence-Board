@@ -14,12 +14,14 @@ import {
   Users,
   Lock,
   Clock,
+  Download,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import SearchFilterBar from "@/components/common/SearchFilterBar";
+import FilePreview from "@/components/FilePreview";
 import {
   Dialog,
   DialogContent,
@@ -80,6 +82,10 @@ export default function RequirementFilesManagementSection({
 
   // Delete confirm state
   const [deleteTarget, setDeleteTarget] =
+    useState<StudentRequirementFile | null>(null);
+
+  // File preview modal state
+  const [previewFile, setPreviewFile] =
     useState<StudentRequirementFile | null>(null);
 
   // Manage Access (student-specific downloads) modal state
@@ -409,15 +415,26 @@ export default function RequirementFilesManagementSection({
                     <td>
                       <div className="flex items-center gap-2">
                         {file.fileUrl ? (
-                          <a
-                            href={file.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
-                            title="Open file"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </a>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewFile(file)}
+                              className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
+                              title="Preview file"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <a
+                              href={file.fileUrl}
+                              download={file.fileName}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-2 rounded-lg text-royal-blue hover:bg-white/60"
+                              title="Download file"
+                            >
+                              <Download className="w-4 h-4" />
+                            </a>
+                          </>
                         ) : (
                           <span
                             className="p-2 rounded-lg text-text-secondary/50 cursor-not-allowed"
@@ -483,6 +500,52 @@ export default function RequirementFilesManagementSection({
           </div>
         </div>
       )}
+
+      {/* Requirement File Preview Modal */}
+      <Dialog
+        open={!!previewFile}
+        onOpenChange={(open) => {
+          if (!open) setPreviewFile(null);
+        }}
+      >
+        <DialogContent className="glass-card-strong max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              {previewFile?.title}
+            </DialogTitle>
+          </DialogHeader>
+
+          {previewFile && (
+            <div className="mt-4">
+              {previewFile.description && (
+                <p className="mb-4 text-sm text-text-secondary">
+                  {previewFile.description}
+                </p>
+              )}
+
+              <div className="max-h-[55vh] overflow-auto rounded-lg bg-white/30">
+                <FilePreview file={previewFile} />
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-text-secondary">
+                  {previewFile.fileName} · {formatFileSize(previewFile.fileSize)}
+                </span>
+                <a
+                  href={previewFile.fileUrl}
+                  download={previewFile.fileName}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm glass-button"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </a>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Upload / Edit Modal */}
       <Dialog
