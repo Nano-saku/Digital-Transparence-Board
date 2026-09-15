@@ -117,14 +117,15 @@ results.
   `node scripts/generate-receipts.mjs`.
 - The Receipt viewer dialog has **Open in new tab** and **Download** buttons.
   Auto-generated (SVG) receipts can be exported as **SVG, PNG, or JPG**.
-- When the **treasurer, auditor, or admin** records a payment or a ledger
-  transaction, an **official receipt is generated automatically** (SVG, via
-  `src/lib/receipts.ts`) and uploaded to the Supabase Storage bucket `receipts`
-  (created by `security.sql`). If the bucket is not configured yet, the record
-  is still saved — just without a receipt.
-- There is no manual receipt upload in the Record Payment form or the
-  transaction-ledger dialog anymore — the generated receipt is the receipt.
-  The public URL is stored in `payments.receipt_url` / `transactions.receipt_url`.
+- When the **treasurer, auditor, or admin** adds or edits a transaction in the
+  ledger, they can upload a scanned physical receipt or photo (PDF or image,
+  up to 10 MB). The file is stored in the public Supabase Storage bucket
+  `receipts` (created by `security.sql`) and its URL is stored in
+  `transactions.receipt_url`.
+- The ledger's authorized users can use **Preview** to view an attached image
+  or PDF inline without downloading it. Existing generated receipt files remain
+  viewable for historical records; new transaction receipts are not generated
+  automatically.
 
 ## Schema (tables)
 

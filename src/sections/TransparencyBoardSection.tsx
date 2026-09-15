@@ -7,13 +7,14 @@ import {
   FileText,
   Download,
   MessageCircle,
-  Receipt,
   Search,
   Plus,
   Pencil,
   Trash2,
   Loader2,
   Save,
+  Upload,
+  Eye,
 } from "lucide-react";
 import type {
   ViewState,
@@ -29,9 +30,8 @@ import {
   eventsService,
 } from "@/services/db";
 import {
-  autoCreateReceipt,
-  officialReceiptNumber,
   downloadBlob,
+  uploadReceiptFile,
 } from "@/lib/receipts";
 import ReceiptViewer from "@/components/ReceiptViewer";
 import {
@@ -98,7 +98,8 @@ export default function TransparencyBoardSection({
     eventId: "",
     eventName: "",
     amount: 0,
-    type: "income" as "income" | "expense",
+    type: "expense" as const,
+    receiptFile: null as File | null,
   });
 
   // Only the admin, treasurer, and auditor manage the ledger.
@@ -188,7 +189,8 @@ export default function TransparencyBoardSection({
       eventId: "",
       eventName: "",
       amount: 0,
-      type: "income",
+      type: "expense",
+      receiptFile: null,
     });
   };
 
@@ -314,29 +316,11 @@ export default function TransparencyBoardSection({
       eventId: transaction.eventId ?? "",
       eventName: transaction.eventName ?? "",
       amount: transaction.amount,
-      type: transaction.type,
+      type: "expense",
+      receiptFile: null,
     });
     setShowTransactionModal(true);
   };
-
-  const ensureTransactionReceipt = async (base: {
-    type: "income" | "expense";
-    amount: number;
-    date: string;
-    description: string;
-    eventName?: string;
-  }): Promise<string> =>
-    autoCreateReceipt({
-      tag: base.type === "income" ? "COLLECTION" : "EXPENSE",
-      receiptNumber: await officialReceiptNumber(),
-      issuedTo: base.type === "income" ? "Student payments" : "Council funds",
-      eventName: base.eventName,
-      description: base.description,
-      amount: base.amount,
-      type: base.type,
-      date: base.date,
-      recordedBy: staffName || "Council Officer",
-    });
 
   const handleSaveTransaction = async () => {
     if (!transactionForm.description.trim() || transactionForm.amount <= 0) {
@@ -349,37 +333,21 @@ export default function TransparencyBoardSection({
         (e) => e.id === transactionForm.eventId,
       )?.name;
 
-      // An official receipt is generated automatically for staff roles (as
-      // SVG, uploaded to the "receipts" Storage bucket). Edited
-      // transactions keep any receipt they already have.
+      // Keep the existing attachment when editing unless a replacement file
+      // was selected. Receipts are physical scans/photos supplied by the
+      // authorized ledger user; no receipt is generated automatically.
       let receiptUrl: string | undefined = editingTransaction?.receiptUrl;
-      if (
-        !receiptUrl &&
-        (role === "admin" || role === "treasurer" || role === "auditor")
-      ) {
-        try {
-          receiptUrl = await ensureTransactionReceipt({
-            type: transactionForm.type,
-            amount: transactionForm.amount,
-            date: transactionForm.date,
-            description: transactionForm.description,
-            eventName,
-          });
-          toast.success(
-            "An official receipt was generated and attached automatically.",
-          );
-        } catch (receiptError) {
-          console.warn("Auto receipt generation failed:", receiptError);
-        }
+      if (transactionForm.receiptFile) {
+        receiptUrl = await uploadReceiptFile(transactionForm.receiptFile);
       }
 
-      const payload = {
+      const payload: Omit<Transaction, "id"> = {
         date: transactionForm.date,
         description: transactionForm.description,
         eventId: transactionForm.eventId || undefined,
         eventName,
         amount: transactionForm.amount,
-        type: transactionForm.type,
+        type: "expense",
         responsibleOfficer: staffName || "Council Officer",
         receiptUrl,
       };
@@ -643,7 +611,7 @@ export default function TransparencyBoardSection({
                         <th>Type</th>
                         <th>Amount</th>
                         <th>Officer</th>
-                        <th>Receipt</th>
+                         {canManageLedger && <th>Receipt</th>}
                         {canManageLedger && <th>Actions</th>}
                       </tr>
                     </thead>
@@ -661,46 +629,41 @@ export default function TransparencyBoardSection({
                           </td>
                           <td>
                             <span
-                              className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                transaction.type === "income"
-                                  ? "bg-green-100 text-green-600"
-                                  : "bg-red/10 text-red-500"
-                              }`}
+                              className="px-2 py-1 rounded-full text-xs font-medium bg-red/10 text-red-500"
                             >
-                              {transaction.type === "income"
-                                ? "Income"
-                                : "Expense"}
+                              Expense
                             </span>
                           </td>
                           <td
-                            className={`font-medium ${
-                              transaction.type === "income"
-                                ? "text-green-600"
-                                : "text-red-500"
-                            }`}
+                            className="font-medium text-red-500"
                           >
-                            {transaction.type === "income" ? "+" : "-"}
+                            -
                             {formatPeso(transaction.amount)}
                           </td>
                           <td className="text-text-secondary">
                             {transaction.responsibleOfficer}
                           </td>
-                          <td>
-                            {transaction.receiptUrl ? (
-                              <button
-                                onClick={() =>
-                                  setSelectedReceipt(
-                                    transaction.receiptUrl || null,
-                                  )
-                                }
-                                className="p-2 rounded-lg"
-                              >
-                                <Receipt className="w-4 h-4 text-red" />
-                              </button>
-                            ) : (
-                              <span className="text-text-secondary/50">-</span>
-                            )}
-                          </td>
+                          {canManageLedger && (
+                            <td>
+                              {transaction.receiptUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedReceipt(
+                                      transaction.receiptUrl || null,
+                                    )
+                                  }
+                                  className="glass-button px-2.5 py-1.5 flex items-center gap-1.5 text-xs"
+                                  title="Preview receipt"
+                                >
+                                  <Eye className="w-4 h-4 text-red" />
+                                  <span>Preview</span>
+                                </button>
+                              ) : (
+                                <span className="text-text-secondary/50">-</span>
+                              )}
+                            </td>
+                          )}
                           {canManageLedger && (
                             <td>
                               <div className="flex items-center gap-1">
@@ -856,19 +819,9 @@ export default function TransparencyBoardSection({
                 <label className="block text-sm font-medium text-dark mb-1">
                   Type
                 </label>
-                <select
-                  value={transactionForm.type}
-                  onChange={(e) =>
-                    setTransactionForm({
-                      ...transactionForm,
-                      type: e.target.value as "income" | "expense",
-                    })
-                  }
-                  className="glass-input w-full px-4 py-2 text-sm"
-                >
-                  <option value="income">Income</option>
-                  <option value="expense">Expense</option>
-                </select>
+                <div className="glass-input w-full px-4 py-2 text-sm text-red-500">
+                  Expense
+                </div>
               </div>
 
               <div>
@@ -890,6 +843,35 @@ export default function TransparencyBoardSection({
                   required
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark mb-1">
+                Physical Receipt (optional)
+              </label>
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                onChange={(e) =>
+                  setTransactionForm({
+                    ...transactionForm,
+                    receiptFile: e.target.files?.[0] ?? null,
+                  })
+                }
+                className="block w-full text-sm text-text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-red file:text-white file:text-sm file:cursor-pointer"
+              />
+              <p className="mt-1.5 text-xs text-text-secondary">
+                Upload a scanned copy or photo of the physical receipt (PDF or image, up to 10 MB).
+                {editingTransaction?.receiptUrl && !transactionForm.receiptFile
+                  ? " The current receipt will be kept unless you choose a replacement."
+                  : ""}
+              </p>
+              {transactionForm.receiptFile && (
+                <p className="mt-1 text-xs font-medium text-dark flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5" />
+                  {transactionForm.receiptFile.name}
+                </p>
+              )}
             </div>
 
             <div className="flex gap-3 pt-4">

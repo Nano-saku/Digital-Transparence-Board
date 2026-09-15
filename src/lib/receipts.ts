@@ -1,17 +1,44 @@
 // ======================================================================
 // Receipt generation & export (no third-party dependencies)
 // ======================================================================
-// When the treasurer / auditor / admin records a payment or a ledger
-// transaction, the app automatically generates an SVG receipt and uploads
-// it to the public "receipts" storage bucket. The same module powers the
-// ReceiptViewer export buttons: the generated SVG can be downloaded as
-// SVG (vector), PNG (raster), or JPG (compressed raster). PDF is not
-// supported for receipts.
+// The module supports receipt uploads and the existing generated receipt
+// flows used by contribution records. Transaction ledger receipts are now
+// uploaded physical receipt scans/photos rather than generated automatically.
 // ======================================================================
 
 import { getSupabase } from "./supabase";
 
 export type ReceiptFormat = "svg" | "png" | "jpg";
+
+const MAX_UPLOADED_RECEIPT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Uploads a scanned physical receipt or receipt photo to the receipts bucket
+ * and returns its public URL. Transaction ledger callers are role-gated in
+ * the UI and by the Storage policy.
+ */
+export async function uploadReceiptFile(file: File): Promise<string> {
+  if (
+    file.type !== "application/pdf" &&
+    !file.type.toLowerCase().startsWith("image/")
+  ) {
+    throw new Error("Receipt must be a PDF or an image file.");
+  }
+  if (file.size > MAX_UPLOADED_RECEIPT_BYTES) {
+    throw new Error("Receipt files must be 10 MB or smaller.");
+  }
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const path = `manual/${crypto.randomUUID()}-${safeName || "receipt"}`;
+  const { error } = await getSupabase().storage.from("receipts").upload(path, file, {
+    upsert: false,
+    contentType: file.type,
+  });
+  if (error) throw new Error(error.message);
+
+  const { data } = getSupabase().storage.from("receipts").getPublicUrl(path);
+  return data.publicUrl;
+}
 
 // ----------------------------------------------------------------------
 // Logo data URI cache (browser-only, fetched once then reused)
