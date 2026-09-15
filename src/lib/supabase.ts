@@ -11,10 +11,6 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 let client: SupabaseClient | null = null;
 
-/** True when the required Supabase env vars are present. */
-export const isSupabaseConfigured = (): boolean =>
-  Boolean(supabaseUrl && supabaseKey);
-
 /**
  * Returns the initialized Supabase client, or throws a helpful error when the
  * project has not been configured yet. Initialization is lazy so importing

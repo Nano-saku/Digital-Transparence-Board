@@ -51,15 +51,11 @@ The system uses a modern frontend architecture with Supabase serving as the back
 
 ### Additional Libraries
 
-* React Hook Form
-* Zod
 * Recharts
 * GSAP
-* date-fns
 * QRCode
 * jsQR
 * read-excel-file
-* Embla Carousel
 
 ---
 

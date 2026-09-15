@@ -9,4 +9,3 @@
 // ======================================================================
 
 export const ATTENDANCE_COURSES = ["ACT", "DIT", "BSIT", "BPA", "BSAB"] as const;
-export type AttendanceCourse = (typeof ATTENDANCE_COURSES)[number];

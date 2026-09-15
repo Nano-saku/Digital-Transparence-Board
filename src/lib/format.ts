@@ -46,18 +46,6 @@ export function today(): string {
 }
 
 /**
- * Today's date in the *local* timezone as a `YYYY-MM-DD` string (the plain
- * `today()` helper uses UTC, which can be a calendar day behind/behind ahead of
- * the user's local date). Used for the 10:00 PM auto-absent check so an event
- * scheduled on the user's local "today" is the one that gets closed out.
- */
-export function todayLocal(): string {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-  return local.toISOString().split("T")[0];
-}
-
-/**
  * Converts a 24h `HH:MM` (or `H:MM`) time to a 12-hour label, e.g.
  * `"06:30" -> "6:30 AM"`, `"17:00" -> "5:00 PM"`. Returns "—" for empty
  * input and the raw string when it does not look like a time.
