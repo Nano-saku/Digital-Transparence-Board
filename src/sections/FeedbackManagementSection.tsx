@@ -10,13 +10,13 @@ import {
   Clock,
   Wrench,
   Inbox,
-  Loader2,
 } from "lucide-react";
 import type { FeedbackItem, UserRole } from "@/types";
 import { feedbackService } from "@/services/db";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/format";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -299,7 +299,7 @@ function FeedbackCard({
                     <CheckCircle className="w-4 h-4" />
                   </button>
                   {updating && (
-                    <Loader2 className="w-4 h-4 animate-spin text-text-secondary" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                   )}
                   <button
                     onClick={() => onDelete(item)}

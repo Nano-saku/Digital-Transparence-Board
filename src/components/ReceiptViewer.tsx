@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { downloadReceipt, isSvgUrl, type ReceiptFormat } from "@/lib/receipts";
+import Skeleton from "@/components/Skeleton";
 interface ReceiptViewerProps {
   receiptUrl: string | null;
   onClose: () => void;
@@ -107,7 +108,7 @@ onClick={openInNewTab}
 className="flex-1 px-4 py-2.5 text-sm disabled:opacity-70"
                       >
                         {downloading ? (
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <Skeleton className="h-4 w-4 rounded-full bg-white/30" />
                         ) : (
                           <>
                             <Download className="w-4 h-4" />
@@ -137,7 +138,7 @@ onClick={() => handleDownload("svg")}
                     className="flex-1 px-4 py-2.5 text-sm disabled:opacity-70"
                   >
                     {downloading ? (
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <Skeleton className="h-4 w-4 rounded-full bg-white/30" />
                     ) : (
                       <Download className="w-4 h-4" />
                     )}

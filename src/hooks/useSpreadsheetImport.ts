@@ -13,7 +13,7 @@ import { parseCsv, excelRowsToRecords } from "@/lib/spreadsheet";
  *   - validate the extension (.csv / .xlsx),
  *   - parse the file into header-keyed row objects (CSV or Excel),
  *   - delegate those rows to the section's own `onRows` importer,
- *   - manage the `importing` spinner state and surface any parse/read error.
+ *   - manage the `importing` loading state and surface any parse/read error.
  *
  * It intentionally does NOT contain any row-mapping, deduping, persistence, or
  * success/`skipped` accounting logic — each section keeps its own importer so

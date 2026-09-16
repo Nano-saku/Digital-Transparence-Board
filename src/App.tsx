@@ -6,6 +6,7 @@ import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
 import { namesMatch } from "@/lib/utils";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
+import Skeleton from "@/components/Skeleton";
 
 // Public-facing sections load eagerly — most visitors land here first.
 import Navigation from "@/sections/Navigation";
@@ -58,9 +59,15 @@ const ROLE_LABEL: Record<UserRole, string> = {
 };
 const SectionFallback = () => (
   <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-    <div className="text-center">
-      <div className="w-10 h-10 border-4 border-red/20 border-t-red rounded-full animate-spin mx-auto mb-4" />
-      <p className="text-text-secondary">Loading...</p>
+    <div className="w-full max-w-3xl space-y-5 px-6" role="status" aria-label="Loading section">
+      <Skeleton className="h-8 w-56" />
+      <Skeleton className="h-4 w-80 max-w-full" />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+      </div>
+      <Skeleton className="h-64 w-full rounded-xl" />
     </div>
   </section>
 );
@@ -242,9 +249,15 @@ function App() {
     if (!authReady) {
       return (
         <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-10 h-10 border-4 border-red/20 border-t-red rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-text-secondary">Loading...</p>
+          <div className="w-full max-w-3xl space-y-5 px-6" role="status" aria-label="Loading application">
+            <Skeleton className="h-8 w-56" />
+            <Skeleton className="h-4 w-80 max-w-full" />
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Skeleton className="h-28 w-full rounded-xl" />
+              <Skeleton className="h-28 w-full rounded-xl" />
+              <Skeleton className="h-28 w-full rounded-xl" />
+            </div>
+            <Skeleton className="h-64 w-full rounded-xl" />
           </div>
         </section>
       );
@@ -289,7 +302,7 @@ function App() {
       case "evaluation-required":
         return (
           pendingEvaluationEvent && (
-            <div className="min-h-screen w-full bg-white py-20 lg:py-24 px-4 flex items-center justify-center">
+            <div className="min-h-screen w-full bg-surface py-20 lg:py-24 px-4 flex items-center justify-center">
               <div className="max-w-md w-full text-center">
                 <h2 className="text-xl font-semibold mb-2">
                   One quick thing first

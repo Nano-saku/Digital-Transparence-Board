@@ -2,6 +2,7 @@
 import { gsap } from "gsap";
 import { Shield, Lock, Mail, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
+import Skeleton from "@/components/Skeleton";
 interface AdminLoginSectionProps {
   onLogin: (email: string, password: string) => Promise<void>;
   onForgotPassword: () => void;
@@ -56,7 +57,7 @@ export default function AdminLoginSection({
   return (
     <section
       ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-red relative overflow-x-hidden overflow-y-auto flex items-center justify-center py-6 sm:py-8"
+      className="admin-login-section w-full gradient-bg-red relative overflow-x-hidden overflow-y-auto flex items-center justify-center px-3 py-8 sm:px-6 sm:py-10"
     >
       {/* Background orbs */}
       <div className="absolute inset-0 pointer-events-none">
@@ -82,19 +83,16 @@ export default function AdminLoginSection({
       <div className="relative z-10 w-full px-4 sm:px-6">
         <div
           ref={cardRef}
-          className="glass-card-strong w-full max-w-sm mx-auto p-6 sm:p-7"
+          className="admin-login-card glass-card-strong w-full max-w-5xl mx-auto p-6 sm:p-8 lg:p-10 md:grid md:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.2fr)] md:gap-x-10 md:gap-y-6"
         >
           {/* Header */}
-          <div className="text-center mb-6">
+          <div className="admin-login-intro text-center mb-6 md:mb-0">
             <img
               src="/lsc-logo.jpg"
               alt="LSC Seal"
               className="w-14 h-14 rounded-full object-cover mx-auto mb-3 ring-2 ring-lsc-gold/50"
             />
-            <h2
-              className="font-display font-bold text-2xl mb-1"
-              style={{ color: "var(--dssc-deep-navy)" }}
-            >
+            <h2 className="font-display font-bold text-2xl mb-1 text-theme-heading">
               Admin Access
             </h2>
             <p className="text-text-secondary text-sm">
@@ -111,8 +109,7 @@ export default function AdminLoginSection({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label
-                className="block text-sm font-medium mb-1.5"
-                style={{ color: "var(--dssc-deep-navy)" }}
+                className="block text-sm font-medium mb-1.5 text-theme-heading"
               >
                 <span className="flex items-center gap-1.5">
                   <Mail className="w-4 h-4 text-text-secondary" />
@@ -132,8 +129,7 @@ export default function AdminLoginSection({
 
             <div>
               <label
-                className="block text-sm font-medium mb-1.5"
-                style={{ color: "var(--dssc-deep-navy)" }}
+                className="block text-sm font-medium mb-1.5 text-theme-heading"
               >
                 <span className="flex items-center gap-1.5">
                   <Lock className="w-4 h-4 text-text-secondary" />
@@ -169,7 +165,7 @@ export default function AdminLoginSection({
               className="btn-primary w-full py-3 justify-center disabled:opacity-70"
             >
               {isLoading ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <Skeleton className="h-5 w-5 rounded-full bg-white/30" />
               ) : (
                 <>
                   <Lock className="w-4 h-4" />
@@ -188,7 +184,7 @@ export default function AdminLoginSection({
           </form>
 
           {/* Footer */}
-          <div className="mt-5 pt-5 border-t border-silver-gray/30 text-center">
+          <div className="admin-login-footer mt-5 pt-5 border-t border-silver-gray/30 text-center md:col-span-2">
             <p className="text-xs text-text-secondary flex items-center justify-center gap-1.5">
               <Shield className="w-3 h-3" />
               All actions are logged for security purposes
@@ -197,7 +193,7 @@ export default function AdminLoginSection({
 
           {/* Contact note */}
           <div
-            className="mt-3 p-3 rounded-xl text-center"
+            className="admin-login-note mt-3 p-3 rounded-xl text-center md:col-span-2"
             style={{ background: "var(--dssc-off-white)" }}
           >
             <p className="text-xs text-text-secondary">

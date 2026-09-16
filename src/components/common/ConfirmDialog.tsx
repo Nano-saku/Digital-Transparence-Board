@@ -1,4 +1,5 @@
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import Skeleton from "@/components/Skeleton";
 import {
   Dialog,
   DialogContent,
@@ -75,12 +76,12 @@ export default function ConfirmDialog({
             </button>
             <button
               onClick={onConfirm}
-              className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-red !border-none"
+              className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2 !bg-danger !border-none !text-white"
               disabled={loading}
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Skeleton className="h-4 w-4 rounded-full" />
                   Processing...
                 </>
               ) : (

@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   FileText,
   Download,
-  Loader2,
   Users,
   CheckCircle,
   Clock,
@@ -18,6 +17,7 @@ import type { Event, Student, AttendanceRecord } from "@/types";
 import { compareTime24, formatTime12, getOrdinalSuffix } from "@/lib/format";
 import { downloadBlob } from "@/lib/receipts";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import SummaryCard from "@/components/common/SummaryCard";
@@ -390,7 +390,7 @@ export default function ReportManagementSection({
                   {reportRows.length > 0 && (
                     <button onClick={generatePrintableReport} disabled={generating} className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm self-start">
                       {generating ? (
-                        <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
+                        <><Skeleton className="h-4 w-4 rounded-full" />Generating...</>
                       ) : (
                         <><Download className="w-4 h-4" />Download Printable Report</>
                       )}

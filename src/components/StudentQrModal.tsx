@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Download, Loader2, QrCode } from 'lucide-react';
+import { Download, QrCode } from 'lucide-react';
 import type { Student } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { downloadStudentAttendancePass, studentAttendancePassSvg } from '@/lib/qr';
+import Skeleton from '@/components/Skeleton';
 
 interface StudentQrModalProps {
   student: Student | null;
@@ -84,8 +85,8 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
                   className="h-full w-full object-contain"
                 />
               ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-text-secondary" />
+                <div className="flex h-full w-full items-center justify-center" role="status" aria-label="Generating attendance pass">
+                  <Skeleton className="h-3/5 w-3/5 rounded-lg" />
                 </div>
               )}
             </article>
@@ -104,7 +105,7 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
                   className="min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {downloading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                   ) : (
                     <Download className="h-4 w-4" />
                   )}
@@ -117,7 +118,7 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
                   className="min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {downloading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                   ) : (
                     <Download className="h-4 w-4" />
                   )}

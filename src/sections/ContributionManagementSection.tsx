@@ -6,13 +6,13 @@ import {
   User,
   Calendar,
   Save,
-  Loader2,
   Coins,
   FileText,
   CreditCard,
   DollarSign,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -921,7 +921,7 @@ export default function ContributionManagementSection({
             title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid — repeat that trio for each additional event (as in the official Student Body tracking sheet). A receipt is generated automatically for every imported row with a payment."
           >
             {importing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Skeleton className="h-4 w-4 rounded-full" />
             ) : (
               <FileText className="w-4 h-4" />
             )}
@@ -1348,7 +1348,7 @@ export default function ContributionManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Saving...
                   </>
                 ) : (
@@ -1526,7 +1526,7 @@ export default function ContributionManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Recording...
                   </>
                 ) : (

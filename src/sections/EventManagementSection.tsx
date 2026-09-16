@@ -3,11 +3,11 @@ import {
   Calendar,
   Plus,
   Save,
-  Loader2,
   UserCheck,
   Pencil,
   Trash2,
   MoreVertical,
+  Loader2,
 } from "lucide-react";
 import {
   eventsService,
@@ -41,6 +41,7 @@ import {
 } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import TimeInput12 from "@/features/events/TimeInput12";
@@ -1042,7 +1043,7 @@ export default function EventManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Saving...
                   </>
                 ) : (

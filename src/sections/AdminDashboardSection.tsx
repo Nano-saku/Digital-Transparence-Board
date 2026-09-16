@@ -364,7 +364,9 @@ export default function AdminDashboardSection({
         </div>
 
         {/* Loading State */}
-        {loading && <SectionLoader message="Loading dashboard data..." />}
+        {loading && (
+          <SectionLoader message="Loading dashboard data..." variant="dashboard" />
+        )}
 
         {!loading && (
           <>

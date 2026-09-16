@@ -1,7 +1,8 @@
 ﻿import { useState, useEffect } from "react";
-import { Menu, X, Shield, LogOut } from "lucide-react";
+import { Menu, X, Shield, LogOut, Moon, Sun } from "lucide-react";
 import type { ViewState, UserRole } from "@/types";
 import NotificationBell from "@/components/NotificationBell";
+import { useTheme } from "@/hooks/useTheme";
 
 interface NavigationProps {
   currentView: ViewState;
@@ -102,6 +103,7 @@ export default function Navigation({
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isManagementOpen, setIsManagementOpen] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   const isLoggedIn = !!role;
 
@@ -144,17 +146,17 @@ export default function Navigation({
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      className={`theme-navigation fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
         isScrolled
-          ? "bg-deep-navy/95 backdrop-blur-lg shadow-lg"
-          : "bg-deep-navy"
+          ? "bg-deep-navy/95 backdrop-blur-lg shadow-2xl"
+          : "bg-deep-navy/80 backdrop-blur-md"
       }`}
       style={{
-        borderBottom: "1px solid rgba(201,163,78,0.25)",
+        borderBottom: "1px solid rgba(166,180,226,0.16)",
       }}
     >
       <div className="w-full px-6 lg:px-12">
-        <div className="flex items-center justify-between h-16 lg:h-20">
+        <div className="flex items-center justify-between h-16 lg:h-[4.75rem]">
           {/* Logo */}
           <button
             onClick={() => go("landing")}
@@ -163,7 +165,7 @@ export default function Navigation({
             <img
               src="/lsc-logo.jpg"
               alt="Local Student Council logo"
-              className="w-9 h-9 rounded-lg object-cover ring-2 ring-lsc-gold/40"
+              className="w-9 h-9 rounded-xl object-cover ring-1 ring-lsc-gold/60 shadow-lg"
             />
 
             <div className="flex flex-col leading-tight">
@@ -213,14 +215,7 @@ export default function Navigation({
                 </button>
 
                 {isManagementOpen && (
-                  <div
-                    className="absolute top-full right-0 mt-3 w-52 rounded-xl overflow-hidden shadow-xl"
-                    style={{
-                      background: "rgba(14,26,77,0.98)",
-                      border: "1px solid rgba(201,163,78,0.20)",
-                      backdropFilter: "blur(16px)",
-                    }}
-                  >
+                  <div className="theme-menu-panel absolute top-full right-0 mt-3 w-52 rounded-xl overflow-hidden shadow-xl">
                     <div className="p-2">
                       {managementItems.map((item) => (
                         <button
@@ -229,10 +224,10 @@ export default function Navigation({
                             go(item.view);
                             setIsManagementOpen(false);
                           }}
-                          className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                          className={`theme-menu-item w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
                             currentView === item.view
                               ? "bg-royal-blue/40 text-lsc-gold"
-                              : "text-white/80 hover:text-white hover:bg-white/5"
+                              : "text-secondary hover:text-primary hover:bg-surface-soft"
                           }`}
                         >
                           {item.label}
@@ -266,12 +261,24 @@ export default function Navigation({
             {!isLoggedIn && (
               <button
                 onClick={() => go("admin-login")}
-                className="flex items-center gap-1.5 text-sm text-silver-gray hover:text-lsc-gold transition-colors"
+                className="btn-primary px-4 py-2 text-xs"
               >
                 <Shield className="w-4 h-4" />
-                <span>Admin</span>
+                <span>Admin access</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="theme-toggle"
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              aria-pressed={theme === "dark"}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+              <span>{theme === "dark" ? "Dark mode" : "Light mode"}</span>
+            </button>
           </div>
 
           {/* Mobile Actions */}
@@ -282,6 +289,18 @@ export default function Navigation({
               isLoggedIn={isLoggedIn}
               studentId={studentId}
             />
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="theme-toggle theme-toggle-icon"
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              aria-pressed={theme === "dark"}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+              <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            </button>
 
             {/* Mobile Menu Button */}
             <button
@@ -302,11 +321,7 @@ export default function Navigation({
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
         <div
-          className="md:hidden mx-4 mb-4 rounded-xl overflow-hidden"
-          style={{
-            background: "rgba(14,26,77,0.97)",
-            border: "1px solid rgba(201,163,78,0.20)",
-          }}
+          className="theme-menu-panel md:hidden mx-4 mb-4 rounded-xl overflow-hidden"
         >
           <div className="flex flex-col gap-1 p-3">
             {/* Main Navigation Items */}
@@ -314,10 +329,10 @@ export default function Navigation({
               <button
                 key={item.label}
                 onClick={() => go(item.view)}
-                className={`w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors ${
+                className={`theme-menu-item w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors ${
                   currentView === item.view
                     ? "bg-royal-blue/40 text-lsc-gold"
-                    : "text-white/80 hover:text-white hover:bg-white/5"
+                    : "text-secondary hover:text-primary hover:bg-surface-soft"
                 }`}
               >
                 {item.label}
@@ -329,10 +344,10 @@ export default function Navigation({
               <div className="mt-1">
                 <button
                   onClick={() => setIsManagementOpen((prev) => !prev)}
-                  className={`w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors flex items-center justify-between ${
+                  className={`theme-menu-item w-full text-left px-4 py-3 rounded-lg font-medium text-sm transition-colors flex items-center justify-between ${
                     isManagementView
                       ? "bg-royal-blue/40 text-lsc-gold"
-                      : "text-white/80 hover:text-white hover:bg-white/5"
+                      : "text-secondary hover:text-primary hover:bg-surface-soft"
                   }`}
                 >
                   <span>Management</span>
@@ -347,7 +362,7 @@ export default function Navigation({
                 </button>
 
                 {isManagementOpen && (
-                  <div className="ml-3 mt-1 space-y-1 border-l border-white/10 pl-2">
+                  <div className="ml-3 mt-1 space-y-1 border-l border-subtle pl-2">
                     {managementItems.map((item) => (
                       <button
                         key={item.label}
@@ -355,10 +370,10 @@ export default function Navigation({
                           go(item.view);
                           setIsManagementOpen(false);
                         }}
-                        className={`w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
+                        className={`theme-menu-item w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
                           currentView === item.view
                             ? "bg-royal-blue/30 text-lsc-gold"
-                            : "text-white/70 hover:text-white hover:bg-white/5"
+                            : "text-secondary hover:text-primary hover:bg-surface-soft"
                         }`}
                       >
                         {item.label}
@@ -380,14 +395,25 @@ export default function Navigation({
               </button>
             )}
 
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="theme-toggle w-full justify-center"
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              aria-pressed={theme === "dark"}
+            >
+              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+              <span>Use {theme === "dark" ? "Light" : "Dark"} mode</span>
+            </button>
+
             {/* Mobile Logout */}
             {isLoggedIn && (
               <>
-                <div className="my-2 border-t border-white/10" />
+                <div className="my-2 border-t border-subtle" />
 
                 <button
                   onClick={handleLogout}
-                  className="w-full text-left px-4 py-3 rounded-lg font-medium text-sm text-silver-gray hover:text-red-400 hover:bg-white/5 transition-colors flex items-center gap-2"
+                  className="theme-menu-item w-full text-left px-4 py-3 rounded-lg font-medium text-sm text-silver-gray hover:text-red-400 hover:bg-surface-soft transition-colors flex items-center gap-2"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>Logout</span>

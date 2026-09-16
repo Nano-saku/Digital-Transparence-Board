@@ -11,7 +11,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  Loader2,
   Save,
   Upload,
   Eye,
@@ -45,6 +44,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { formatDate, today, formatPeso } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import AnimatedNetwork from "@/components/ui/animated-network";
@@ -434,7 +434,9 @@ export default function TransparencyBoardSection({
         </div>
 
         {/* Loading State */}
-        {loading && <SectionLoader message="Loading financial data..." />}
+        {loading && (
+          <SectionLoader message="Loading financial data..." variant="dashboard" />
+        )}
 
         {!loading && (
           <>
@@ -583,7 +585,7 @@ export default function TransparencyBoardSection({
                     className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm"
                   >
                     {downloadingReport ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Skeleton className="h-4 w-4 rounded-full" />
                     ) : (
                       <Download className="w-4 h-4" />
                     )}
@@ -719,7 +721,7 @@ export default function TransparencyBoardSection({
                   className="glass-button px-6 py-3 flex items-center gap-2"
                 >
                   {downloadingReport ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Skeleton className="h-5 w-5 rounded-full" />
                   ) : (
                     <Download className="w-5 h-5" />
                   )}
@@ -892,7 +894,7 @@ export default function TransparencyBoardSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Saving...
                   </>
                 ) : (

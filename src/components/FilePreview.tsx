@@ -4,13 +4,13 @@ import {
   AlertCircle,
   ChevronsDown,
   ChevronsUp,
-  Loader2,
   Maximize2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { readSheet } from "read-excel-file/browser";
 import type { StudentRequirementFile } from "@/types";
+import Skeleton from "@/components/Skeleton";
 
 interface FilePreviewProps {
   file: StudentRequirementFile;
@@ -163,7 +163,7 @@ function InteractivePreview({ children, mediaControls = false }: InteractivePrev
 
   return (
     <div className="w-full">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--dssc-border)] bg-white/70 p-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-subtle bg-surface p-2">
         <div className="flex items-center gap-1.5" aria-label="Preview zoom controls">
           <button
             type="button"
@@ -220,7 +220,7 @@ function InteractivePreview({ children, mediaControls = false }: InteractivePrev
       </div>
 
       <div
-        className={`relative w-full overflow-hidden rounded-lg border border-[var(--dssc-border)] bg-slate-100/70 shadow-inner ${
+        className={`relative w-full overflow-hidden rounded-lg border border-subtle bg-surface-secondary shadow-inner ${
           compact ? "h-[28vh] min-h-48 sm:h-[34vh]" : "h-[46vh] min-h-64 sm:h-[52vh]"
         } ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
         onPointerDown={handlePointerDown}
@@ -362,17 +362,18 @@ export default function FilePreview({ file }: FilePreviewProps) {
   if (kind === "text") {
     if (loading) {
       return (
-        <PreviewMessage>
-          <span className="inline-flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading text preview...
-          </span>
-        </PreviewMessage>
+        <div className="h-full w-full space-y-3 rounded-lg bg-surface p-5" role="status" aria-label="Loading text preview">
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
       );
     }
     if (error) return <PreviewMessage>{error}</PreviewMessage>;
     return (
       <InteractivePreview>
-        <pre className="max-h-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white p-5 text-left font-mono text-sm text-dark shadow-sm">
+        <pre className="max-h-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-5 text-left font-mono text-sm text-primary shadow-sm">
           {text}
         </pre>
       </InteractivePreview>
@@ -382,11 +383,13 @@ export default function FilePreview({ file }: FilePreviewProps) {
   if (kind === "office" && isSpreadsheet(file)) {
     if (loading) {
       return (
-        <PreviewMessage>
-          <span className="inline-flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading spreadsheet preview...
-          </span>
-        </PreviewMessage>
+        <div className="h-full w-full overflow-hidden rounded-lg bg-surface" role="status" aria-label="Loading spreadsheet preview">
+          <div className="grid grid-cols-4 gap-px bg-border-subtle p-px">
+            {Array.from({ length: 20 }).map((_, index) => (
+              <Skeleton key={index} className="h-9 rounded-none" />
+            ))}
+          </div>
+        </div>
       );
     }
     if (error || !spreadsheet) {
@@ -394,13 +397,13 @@ export default function FilePreview({ file }: FilePreviewProps) {
     }
     return (
       <InteractivePreview>
-        <div className="max-h-full max-w-full overflow-auto rounded-lg bg-white shadow-sm">
+        <div className="max-h-full max-w-full overflow-auto rounded-lg bg-surface shadow-sm">
           <table className="min-w-full border-collapse text-left text-sm">
             <tbody>
               {spreadsheet.map((row, rowIndex) => (
                 <tr key={rowIndex} className={rowIndex === 0 ? "bg-royal-blue/10 font-semibold" : ""}>
                   {row.map((cell, cellIndex) => (
-                    <td key={cellIndex} className="border border-black/10 px-3 py-2 align-top text-dark">
+                    <td key={cellIndex} className="border border-subtle px-3 py-2 align-top text-primary">
                       {cell === null || cell === undefined ? "" : String(cell)}
                     </td>
                   ))}

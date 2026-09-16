@@ -50,20 +50,20 @@ module.exports = {
         },
         // ── DSSC LSC Santa Cruz — Reimagined palette ──────────────────────
         // Primary
-        'royal-blue':   '#1B2E8C',
-        'deep-navy':    '#0E1A4D',
-        'metallic-blue': '#3A5FE0',
-        'metallic-blue-highlight': '#6E8CFF',
+        'royal-blue':   '#526FF2',
+        'deep-navy':    '#080D22',
+        'metallic-blue': '#6682FF',
+        'metallic-blue-highlight': '#9CACFF',
         // Secondary
-        'off-white':    '#F4F6FC',
+        'off-white':    '#151F3D',
         // Accent
-        'lsc-gold':     '#C9A34E',
-        'silver-gray':  '#B8C1D9',
+        'lsc-gold':     '#D6B05C',
+        'silver-gray':  '#A9B3CD',
         // Status (keep named tokens for badge/alert usage)
-        'status-success': '#2E9E5B',
-        'status-warning': '#D9A441',
-        'status-danger':  '#C74B4B',
-        'status-info':    '#3A5FE0',
+        'status-success': '#54D98B',
+        'status-warning': '#E9BD5C',
+        'status-danger':  '#F17777',
+        'status-info':    '#6682FF',
         // Legacy aliases kept so existing inline Tailwind classes still compile
         red: {
           DEFAULT: '#C74B4B',
@@ -91,14 +91,50 @@ module.exports = {
           800: '#534320',
           900: '#2A2110',
         },
-        dark: '#0E1A4D',
-        'text-secondary': '#4A5580',
+        // Semantic compatibility aliases. Components can keep their existing
+        // class names while the actual values follow the active theme.
+        dark: 'hsl(var(--text-primary-hsl))',
+        'text-secondary': 'hsl(var(--text-secondary-hsl))',
+        'silver-gray': 'hsl(var(--text-muted-hsl))',
+        'text-muted': 'hsl(var(--text-muted-hsl))',
+        'text-primary': 'hsl(var(--text-primary-hsl))',
+        'text-on-primary': 'hsl(var(--text-on-primary-hsl))',
+        'background-secondary': 'var(--background-secondary)',
+        'surface': 'var(--surface)',
+        'surface-secondary': 'var(--surface-secondary)',
+        'surface-soft': 'var(--surface-soft)',
+        'surface-elevated': 'var(--surface-elevated)',
+        'text-inverse': 'var(--text-inverse)',
+        'border-subtle': 'var(--border-subtle)',
+        'border-strong': 'var(--border-strong)',
+        'primary-hover': 'var(--primary-hover)',
+        'primary-active': 'var(--primary-active)',
+        'input-background': 'var(--input-background)',
+        'input-border': 'var(--input-border)',
+        'input-foreground': 'var(--input-foreground)',
+        'input-placeholder': 'var(--input-placeholder)',
+        danger: {
+          DEFAULT: 'var(--danger)',
+          foreground: 'var(--danger-foreground)',
+        },
+        success: {
+          DEFAULT: 'var(--success)',
+          foreground: 'var(--success-foreground)',
+        },
+        warning: {
+          DEFAULT: 'var(--warning)',
+          foreground: 'var(--warning-foreground)',
+        },
+        info: {
+          DEFAULT: 'var(--info)',
+          foreground: 'var(--info-foreground)',
+        },
         // ─────────────────────────────────────────────────────────────────
       },
       fontFamily: {
         // Updated: Poppins for headings / display, Inter for body
-        display: ['Poppins', 'Segoe UI', 'sans-serif'],
-        body: ['Inter', 'Segoe UI', 'sans-serif'],
+        display: ['Space Grotesk', 'Segoe UI', 'sans-serif'],
+        body: ['DM Sans', 'Segoe UI', 'sans-serif'],
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
