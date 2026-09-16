@@ -401,10 +401,6 @@ export default function Navigation({
               </button>
             )}
 
-            <div className="flex justify-center py-2">
-              <ThemeSwitch theme={theme} onToggle={toggleTheme} />
-            </div>
-
             {/* Mobile Logout */}
             {isLoggedIn && (
               <>
