@@ -4,6 +4,7 @@ import { studentsService, eventEvaluationsService } from "@/services/db";
 import { authService, type AuthSession } from "@/services/auth";
 import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
+import { namesMatch } from "@/lib/utils";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
 
 // Public-facing sections load eagerly — most visitors land here first.
@@ -114,7 +115,7 @@ function App() {
 
   // Handle student search - now using database
   const handleSearch = async (name: string, studentId: string) => {
-    const normalizedName = name.trim().toLowerCase();
+    const normalizedName = name.trim();
     const normalizedStudentId = studentId.trim().toLowerCase();
 
     if (!normalizedName || !normalizedStudentId) {
@@ -125,9 +126,10 @@ function App() {
     try {
       setSearching(true);
       const student = await studentsService.getByStudentId(studentId.trim());
+      // Word-order-agnostic: "Juan Dela Cruz" and "Dela Cruz Juan" both
+      // verify against a DB record of "Juan Dela Cruz".
       const isVerified =
-        student !== null &&
-        student.name.trim().toLowerCase() === normalizedName;
+        student !== null && namesMatch(student.name, normalizedName);
 
       if (isVerified) {
         const pendingEvent = await eventEvaluationsService.getPendingGate(

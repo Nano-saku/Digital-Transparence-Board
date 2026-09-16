@@ -33,6 +33,7 @@ import type {
 import { parseStudentQrText } from "@/lib/qr";
 import { toast } from "sonner";
 import { formatDate, formatTime12, compareTime24 } from "@/lib/format";
+import { matchesSearchWords } from "@/lib/utils";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
@@ -616,10 +617,8 @@ export default function AttendanceManagementSection({
     }
 
     if (attendanceSearchTerm) {
-      result = result.filter(
-        (s) =>
-          s.name.toLowerCase().includes(attendanceSearchTerm) ||
-          s.studentId.toLowerCase().includes(attendanceSearchTerm),
+      result = result.filter((s) =>
+        matchesSearchWords(`${s.name} ${s.studentId}`, attendanceSearchTerm),
       );
     }
 

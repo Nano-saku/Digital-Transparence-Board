@@ -1,5 +1,10 @@
 ﻿import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
+import {
+  normalizeStudentName,
+  splitSearchWords,
+  escapeLikePattern,
+} from "../lib/utils";
 import type {
   Student,
   Event,
@@ -207,9 +212,10 @@ export const studentsService = {
 
   async create(student: Omit<Student, "id">): Promise<Student> {
     const id = createRecordId();
+    const normalizedName = normalizeStudentName(student.name);
     const payload = {
       student_id: student.studentId,
-      name: student.name,
+      name: normalizedName,
       program: student.program,
       year_level: student.yearLevel,
       section: student.section,
@@ -220,7 +226,7 @@ export const studentsService = {
       kind: "create",
       recordId: id,
       payload,
-      makeLocal: () => ({ id, ...student }) as Student,
+      makeLocal: () => ({ id, ...student, name: normalizedName }) as Student,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
           .from("students")
@@ -246,15 +252,25 @@ export const studentsService = {
   },
 
   async update(id: string, record: Partial<Student>): Promise<Student> {
+    // Normalize before either the outgoing payload or the optimistic local
+    // merge sees it, so both stay in the canonical Title Case format.
+    const normalizedRecord =
+      record.name !== undefined
+        ? { ...record, name: normalizeStudentName(record.name) }
+        : record;
+
     const updateData: Record<string, unknown> = {};
 
-    if (record.studentId !== undefined)
-      updateData.student_id = record.studentId;
-    if (record.name !== undefined) updateData.name = record.name;
-    if (record.program !== undefined) updateData.program = record.program;
-    if (record.yearLevel !== undefined)
-      updateData.year_level = record.yearLevel;
-    if (record.section !== undefined) updateData.section = record.section;
+    if (normalizedRecord.studentId !== undefined)
+      updateData.student_id = normalizedRecord.studentId;
+    if (normalizedRecord.name !== undefined)
+      updateData.name = normalizedRecord.name;
+    if (normalizedRecord.program !== undefined)
+      updateData.program = normalizedRecord.program;
+    if (normalizedRecord.yearLevel !== undefined)
+      updateData.year_level = normalizedRecord.yearLevel;
+    if (normalizedRecord.section !== undefined)
+      updateData.section = normalizedRecord.section;
 
     const result = await offlineSyncService.mutation<Student>({
       table: "students",
@@ -262,7 +278,7 @@ export const studentsService = {
       recordId: id,
       payload: updateData,
       makeLocal: (current) =>
-        ({ ...(current as Student), ...record, id }) as Student,
+        ({ ...(current as Student), ...normalizedRecord, id }) as Student,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
           .from("students")
@@ -338,17 +354,25 @@ export const studentsService = {
   },
 
   async search(query: string): Promise<Student[]> {
-    const pattern = `%${query}%`;
+    // Word-order-agnostic on name: chaining .ilike("name", ...) once per
+    // word ANDs the conditions (PostgREST semantics), so every typed word
+    // must appear somewhere in the name, in any order - "Cruz Juan" still
+    // finds "Juan Dela Cruz". Student IDs aren't multi-word, so those
+    // still match against the query as a whole.
+    const words = splitSearchWords(query).map(escapeLikePattern);
+    const idPattern = `%${escapeLikePattern(query.trim())}%`;
+
+    let nameQuery = getSupabase().from("students").select("*").order("name");
+    for (const word of words) {
+      nameQuery = nameQuery.ilike("name", `%${word}%`);
+    }
+
     const [byName, byId] = await Promise.all([
+      nameQuery,
       getSupabase()
         .from("students")
         .select("*")
-        .ilike("name", pattern)
-        .order("name"),
-      getSupabase()
-        .from("students")
-        .select("*")
-        .ilike("student_id", pattern)
+        .ilike("student_id", idPattern)
         .order("name"),
     ]);
     if (byName.error) throw byName.error;
@@ -876,16 +900,20 @@ export const contributionsService = {
      * currently loaded page.
      */
     if (normalizedSearch) {
-      const escapedSearch = normalizedSearch
-        .replace(/\\/g, "\\\\")
-        .replace(/%/g, "\\%")
-        .replace(/_/g, "\\_");
+      // Word-order-agnostic on name: chaining .ilike("name", ...) once per
+      // word ANDs the conditions, so every typed word must appear
+      // somewhere in the name, in any order - "Cruz Juan" still finds
+      // "Juan Dela Cruz". Same rule as studentsService.search().
+      const words = splitSearchWords(normalizedSearch).map(escapeLikePattern);
+      const escapedSearch = escapeLikePattern(normalizedSearch);
+
+      let nameQuery = supabase.from("students").select("id");
+      for (const word of words) {
+        nameQuery = nameQuery.ilike("name", `%${word}%`);
+      }
 
       const [nameMatches, idMatches] = await Promise.all([
-        supabase
-          .from("students")
-          .select("id")
-          .ilike("name", `%${escapedSearch}%`),
+        nameQuery,
 
         supabase
           .from("students")

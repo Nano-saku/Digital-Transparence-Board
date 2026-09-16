@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from "react";
+import { matchesSearchWords } from "../lib/utils";
 
 /**
  * Generic search + multi-filter hook that replaces the duplicated
@@ -74,19 +75,20 @@ export function useSearch<T>({
   );
 
   const filtered = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const query = searchTerm.trim();
 
     return items.filter((item) => {
-      // Search match
+      // Search match - every word in the query must appear somewhere
+      // across the search keys, in any order (see matchesSearchWords).
       if (query) {
-        const matches = searchKeys.some((key) => {
-          const value =
-            typeof key === "function" ? key(item) : (item[key] as unknown);
-          return String(value ?? "")
-            .toLowerCase()
-            .includes(query);
-        });
-        if (!matches) return false;
+        const haystack = searchKeys
+          .map((key) =>
+            typeof key === "function" ? key(item) : (item[key] as unknown),
+          )
+          .map((value) => String(value ?? ""))
+          .join(" ");
+
+        if (!matchesSearchWords(haystack, query)) return false;
       }
 
       // Filter matches
