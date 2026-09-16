@@ -23,6 +23,32 @@ type ManagementNavItem = {
   view: ViewState;
 };
 
+interface ThemeSwitchProps {
+  theme: "light" | "dark";
+  onToggle: () => void;
+}
+
+function ThemeSwitch({ theme, onToggle }: ThemeSwitchProps) {
+  const isDark = theme === "dark";
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="theme-toggle"
+      aria-label={`${isDark ? "Dark" : "Light"} mode enabled. Switch to ${isDark ? "light" : "dark"} mode`}
+      aria-pressed={isDark}
+      title={`Currently ${isDark ? "dark" : "light"} mode. Click to switch to ${isDark ? "light" : "dark"} mode.`}
+    >
+      <span className={`theme-toggle-track ${isDark ? "theme-toggle-track-dark" : ""}`}>
+        <span className="theme-toggle-thumb">
+          {isDark ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 const PUBLIC_NAV_ITEMS: NavItem[] = [
   { label: "Records", view: "landing" },
   { label: "Transparency", view: "transparency" },
@@ -268,17 +294,7 @@ export default function Navigation({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="theme-toggle"
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              aria-pressed={theme === "dark"}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            >
-              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-              <span>{theme === "dark" ? "Dark mode" : "Light mode"}</span>
-            </button>
+            <ThemeSwitch theme={theme} onToggle={toggleTheme} />
           </div>
 
           {/* Mobile Actions */}
@@ -290,17 +306,7 @@ export default function Navigation({
               studentId={studentId}
             />
 
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="theme-toggle theme-toggle-icon"
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              aria-pressed={theme === "dark"}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            >
-              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-              <span className="sr-only">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
-            </button>
+            <ThemeSwitch theme={theme} onToggle={toggleTheme} />
 
             {/* Mobile Menu Button */}
             <button
@@ -395,16 +401,9 @@ export default function Navigation({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="theme-toggle w-full justify-center"
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              aria-pressed={theme === "dark"}
-            >
-              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-              <span>Use {theme === "dark" ? "Light" : "Dark"} mode</span>
-            </button>
+            <div className="flex justify-center py-2">
+              <ThemeSwitch theme={theme} onToggle={toggleTheme} />
+            </div>
 
             {/* Mobile Logout */}
             {isLoggedIn && (
