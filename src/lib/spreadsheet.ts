@@ -38,8 +38,8 @@ function dedupeHeaders(headers: string[]): string[] {
  * can read them back out.
  */
 export function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-  if (lines.length < 2) return [];
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) return [];
 
   const parseLine = (line: string): string[] => {
     const out: string[] = [];
@@ -71,10 +71,15 @@ export function parseCsv(text: string): Record<string, string>[] {
     return out;
   };
 
-  const headers = dedupeHeaders(parseLine(lines[0]).map(normalizeHeader));
+  const headerValues = parseLine(lines[0]);
+  if (headerValues.every((value) => value.trim() === "")) return [];
+
+  const headers = dedupeHeaders(headerValues.map(normalizeHeader));
   const rows: Record<string, string>[] = [];
   for (let i = 1; i < lines.length; i++) {
     const values = parseLine(lines[i]);
+    if (values.every((value) => value.trim() === "")) continue;
+
     const row: Record<string, string> = {};
     headers.forEach((header, index) => {
       row[header] = (values[index] ?? '').trim();
@@ -90,20 +95,30 @@ export function parseCsv(text: string): Record<string, string>[] {
  */
 export function excelRowsToRecords(cells: Row[]): Record<string, string>[] {
   const rows: Record<string, string>[] = [];
-  if (cells.length < 2) return rows;
+  if (cells.length === 0) return rows;
 
-  const headers = dedupeHeaders(cells[0].map(cell => normalizeHeader(String(cell ?? ''))));
+  // The reader returns the complete worksheet matrix, including rows between
+  // the header and the final populated row. Do not use a fixed row count or
+  // stop at the first blank cell: an empty Amount Paid cell is valid input and
+  // must not hide later event/payment columns or later student rows.
+  const headerRow = cells[0];
+  if (!headerRow || headerRow.every((cell) => cell === null || String(cell).trim() === "")) {
+    return rows;
+  }
+
+  const headers = dedupeHeaders(
+    headerRow.map((cell) => normalizeHeader(String(cell ?? ""))),
+  );
   for (let i = 1; i < cells.length; i++) {
     const rowValues = cells[i];
+    if (!rowValues || rowValues.every((cell) => cell === null || String(cell).trim() === "")) {
+      continue;
+    }
+
     const row: Record<string, string> = {};
     headers.forEach((header, index) => {
       const cell = rowValues[index];
-      console.log(
-  `[Excel Import] ${header}:`,
-  cell,
-  typeof cell,
-);
-row[header] = cell === null || cell === undefined ? '' : String(cell).trim();
+      row[header] = cell === null || cell === undefined ? "" : String(cell).trim();
     });
     rows.push(row);
   }
@@ -125,12 +140,18 @@ export function pickField(row: Record<string, string>, ...aliases: string[]): st
 
 /**
  * Parses a user-entered money value like "₱1,500.00", "1,500" or "1500" into
- * a non-negative number. Returns 0 for empty/invalid input.
+ * a non-negative number. Returns null for empty/invalid input so callers can
+ * distinguish an empty spreadsheet cell from a real zero amount.
  */
-export function parseAmount(value: string): number {
-  const cleaned = value.replace(/[^\d.]/g, '');
-  const n = parseFloat(cleaned);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+export function parseAmount(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const cleaned = trimmed.replace(/[₱$,\s]/g, "");
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return null;
+
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) ? amount : null;
 }
 
 /**

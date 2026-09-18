@@ -48,31 +48,18 @@ export function useSpreadsheetImport(options: {
       setImporting(true);
       let rows: Record<string, string>[];
 
-if (isCsv) {
-  rows = parseCsv(await file.text());
-} else {
-  const sheets = await readXlsxFile(file);
+      if (isCsv) {
+        rows = parseCsv(await file.text());
+      } else {
+        const sheets = await readXlsxFile(file);
+        // readXlsxFile returns every worksheet and each worksheet's complete
+        // used-range matrix. Convert every sheet without imposing a row limit;
+        // excelRowsToRecords removes only wholly empty rows and always treats
+        // row 1 as the header row.
+        rows = sheets.flatMap((sheet) => excelRowsToRecords(sheet.data));
+      }
 
-  const allRows: Record<string, string>[] = [];
-
-  for (const sheet of sheets) {
-    const sheetRows = sheet.data;
-
-    if (!sheetRows || sheetRows.length < 2) {
-      continue;
-    }
-
-    const records = excelRowsToRecords(sheetRows);
-
-    if (records.length > 0) {
-      allRows.push(...records);
-    }
-  }
-
-  rows = allRows;
-}
-
-await onRows(rows);
+      await onRows(rows);
     } catch (error) {
       console.error(`Error importing ${isCsv ? "CSV" : "Excel"} file:`, error);
       toast.error(`Failed to import ${isCsv ? "CSV" : "Excel"} file`);
