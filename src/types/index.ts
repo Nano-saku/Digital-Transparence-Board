@@ -42,6 +42,8 @@ export interface Event {
   id: string;
   name: string;
   allocationAmount: number;
+  /** Whether this event is informational/non-conducting and should not use attendance tracking. */
+  isNonConducting?: boolean;
   date?: string;
   /** Last day a student's contribution counts as on-time. Empty string = no deadline set. */
   contributionDeadline?: string;
