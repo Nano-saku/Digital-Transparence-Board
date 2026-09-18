@@ -4,5 +4,5 @@
 node_modules
 dist
 .next
-schema.sql
 prod-*.sql
+backup.txt

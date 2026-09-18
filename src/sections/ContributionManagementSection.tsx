@@ -231,8 +231,8 @@ export default function ContributionManagementSection({
     () => [...students].sort((a, b) => a.name.localeCompare(b.name)),
     [students],
   );
-  const sortedEvents = useMemo(
-    () => [...events].sort((a, b) => a.name.localeCompare(b.name)),
+  const contributionEvents = useMemo(
+    () => events.filter((event) => event.allocationAmount > 0),
     [events],
   );
 
@@ -361,7 +361,9 @@ export default function ContributionManagementSection({
       event.id,
     );
     const requiredAmount =
-      options.requiredAmount ?? contribution?.requiredAmount ?? event.allocationAmount;
+      options.requiredAmount ??
+      contribution?.requiredAmount ??
+      event.allocationAmount;
 
     if (!contribution) {
       try {
@@ -413,7 +415,10 @@ export default function ContributionManagementSection({
     let receiptNumber: string | undefined;
     const paymentAmountChanged =
       !existingPayment || existingPayment.amount !== updatedAmountPaid;
-    if (canIssueReceipts && (paymentAmountChanged || !existingPayment.receiptUrl)) {
+    if (
+      canIssueReceipts &&
+      (paymentAmountChanged || !existingPayment.receiptUrl)
+    ) {
       try {
         receiptNumber = await officialReceiptNumber();
         receiptUrl = await autoCreateReceipt({
@@ -793,10 +798,7 @@ export default function ContributionManagementSection({
       }
 
       // Combine all reasons rows may have been skipped.
-      const totalSkipped =
-        unmatchedStudent +
-        unmatchedEvent +
-        invalidAmount;
+      const totalSkipped = unmatchedStudent + unmatchedEvent + invalidAmount;
 
       const parts = [`${successfulImports} contribution(s) imported`];
       if (importFailures > 0) {
@@ -1002,7 +1004,7 @@ export default function ContributionManagementSection({
           disabled={loading}
         >
           <option value="">All Events</option>
-          {sortedEvents.map((event) => (
+          {contributionEvents.map((event) => (
             <option key={event.id} value={event.id}>
               {event.name}
             </option>
@@ -1192,7 +1194,7 @@ export default function ContributionManagementSection({
                 disabled={saving}
               >
                 <option value="">Select event...</option>
-                {sortedEvents.map((event) => (
+                {contributionEvents.map((event) => (
                   <option key={event.id} value={event.id}>
                     {event.name}
                   </option>
@@ -1364,7 +1366,7 @@ export default function ContributionManagementSection({
                 disabled={saving}
               >
                 <option value="">Select event...</option>
-                {sortedEvents.map((event) => (
+                {contributionEvents.map((event) => (
                   <option key={event.id} value={event.id}>
                     {event.name}
                   </option>

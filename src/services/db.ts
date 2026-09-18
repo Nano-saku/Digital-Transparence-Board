@@ -141,6 +141,7 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     id: item.id as string,
     name: item.name as string,
     allocationAmount: item.allocation_amount as number,
+    isNonConducting: Boolean(item.is_non_conducting),
     date: (item.date as string | null) ?? undefined,
     contributionDeadline:
       (item.contribution_deadline as string | null) || undefined,
@@ -421,6 +422,7 @@ export const eventsService = {
     const payload = {
       name: event.name,
       allocation_amount: event.allocationAmount,
+      is_non_conducting: event.isNonConducting ?? false,
       date: event.date,
       contribution_deadline: event.contributionDeadline ?? "",
       evaluation_active: event.evaluationActive ?? false,
@@ -464,6 +466,10 @@ export const eventsService = {
     if (event.name !== undefined) updateData.name = event.name;
     if (event.allocationAmount !== undefined)
       updateData.allocation_amount = event.allocationAmount;
+
+    if (event.isNonConducting !== undefined)
+      updateData.is_non_conducting = event.isNonConducting;
+
     if (event.schedules !== undefined) {
       updateData.schedules = event.schedules;
     }
@@ -960,6 +966,7 @@ export const contributionsService = {
     let query = supabase
       .from("contributions")
       .select("*", { count: "exact" })
+      .gt("required_amount", 0)
       .order("id", { ascending: false });
 
     /*
@@ -1116,23 +1123,25 @@ export const contributionsService = {
     if (error) throw error;
 
     return (
-      data?.map((item: {
-        id: string;
-        student_id: string;
-        event_id: string;
-        event_name: string;
-        required_amount: number;
-        amount_paid: number;
-        remaining_balance: number;
-      }) => ({
-        id: item.id,
-        studentId: item.student_id,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        requiredAmount: item.required_amount,
-        amountPaid: item.amount_paid,
-        remainingBalance: item.remaining_balance,
-      })) || []
+      data?.map(
+        (item: {
+          id: string;
+          student_id: string;
+          event_id: string;
+          event_name: string;
+          required_amount: number;
+          amount_paid: number;
+          remaining_balance: number;
+        }) => ({
+          id: item.id,
+          studentId: item.student_id,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          requiredAmount: item.required_amount,
+          amountPaid: item.amount_paid,
+          remainingBalance: item.remaining_balance,
+        }),
+      ) || []
     );
   },
 

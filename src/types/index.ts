@@ -42,6 +42,10 @@ export interface Event {
   id: string;
   name: string;
   allocationAmount: number;
+
+  /** When true, this event is excluded from Attendance Management. */
+  isNonConducting?: boolean;
+
   date?: string;
   /** Last day a student's contribution counts as on-time. Empty string = no deadline set. */
   contributionDeadline?: string;

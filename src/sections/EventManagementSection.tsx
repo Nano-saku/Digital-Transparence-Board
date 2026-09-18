@@ -94,12 +94,14 @@ export default function EventManagementSection({
   const [eventForm, setEventForm] = useState<{
     name: string;
     allocationAmount: number;
+    isNonConducting: boolean;
     date: string;
     contributionDeadline: string;
     schedules: EventSchedule[];
   }>({
     name: "",
     allocationAmount: 0,
+    isNonConducting: false,
     date: "",
     contributionDeadline: "",
     schedules: [],
@@ -226,6 +228,7 @@ export default function EventManagementSection({
     setEventForm({
       name: "",
       allocationAmount: 0,
+      isNonConducting: false,
       date: "",
       contributionDeadline: "",
       schedules: [],
@@ -242,6 +245,7 @@ export default function EventManagementSection({
       name: event.name,
       allocationAmount: event.allocationAmount,
       date: event.date && event.date !== "TBD" ? event.date : "",
+      isNonConducting: event.isNonConducting ?? false,
       contributionDeadline: event.contributionDeadline ?? "",
       schedules: event.schedules ?? [],
     });
@@ -257,6 +261,7 @@ export default function EventManagementSection({
       const newEvent = await eventsService.create({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
+        isNonConducting: eventForm.isNonConducting,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -268,6 +273,7 @@ export default function EventManagementSection({
       setEventForm({
         name: "",
         allocationAmount: 0,
+        isNonConducting: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -293,6 +299,7 @@ export default function EventManagementSection({
       const updated = await eventsService.update(editingEvent.id, {
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
+        isNonConducting: eventForm.isNonConducting,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -306,6 +313,7 @@ export default function EventManagementSection({
       setEventForm({
         name: "",
         allocationAmount: 0,
+        isNonConducting: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -568,7 +576,11 @@ export default function EventManagementSection({
 
                         {/* Date */}
                         <td className="text-text-secondary whitespace-nowrap">
-                          {event.date && event.date !== "TBD" ? (
+                          {event.isNonConducting ? (
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
+                              N/A
+                            </span>
+                          ) : event.date && event.date !== "TBD" ? (
                             <div className="flex items-center gap-2">
                               <span>{formatDate(event.date)}</span>
 
@@ -620,7 +632,7 @@ export default function EventManagementSection({
                             </div>
                           ) : (
                             <span className="text-text-secondary/60">
-                              No deadline
+                              Deadline not set
                             </span>
                           )}
                         </td>
@@ -765,65 +777,106 @@ export default function EventManagementSection({
               />
             </div>
 
-            {/* Date */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-dark">
-                  Date
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextValue = !eventDateTbd;
-
-                    setEventDateTbd(nextValue);
-
-                    if (nextValue) {
-                      setEventForm({
-                        ...eventForm,
-                        date: "",
-                      });
-                    }
-                  }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    eventDateTbd ? "bg-red" : "bg-gray-300"
-                  }`}
-                  aria-label="Toggle date TBD"
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      eventDateTbd ? "translate-x-6" : "translate-x-1"
-                    }`}
-                  />
-                </button>
+            {/* Event Type */}
+            <div className="flex items-center justify-between rounded-xl border border-border bg-surface-soft/50 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-dark">
+                  Non-conducting event
+                </p>
+                <p className="text-xs text-text-secondary">
+                  No date or attendance required
+                </p>
               </div>
 
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-text-secondary">
-                  Mark date as To Be Determined
-                </span>
-
-                {eventDateTbd && (
-                  <span className="text-xs font-semibold text-red">TBD</span>
-                )}
-              </div>
-
-              <input
-                type="date"
-                value={eventForm.date}
-                onChange={(e) =>
-                  setEventForm({
-                    ...eventForm,
-                    date: e.target.value,
-                  })
+              <button
+                type="button"
+                role="switch"
+                aria-checked={eventForm.isNonConducting}
+                aria-label="Toggle non-conducting event"
+                onClick={() =>
+                  setEventForm((prev) => ({
+                    ...prev,
+                    isNonConducting: !prev.isNonConducting,
+                    ...(!prev.isNonConducting
+                      ? { date: "", schedules: [] }
+                      : {}),
+                  }))
                 }
-                disabled={eventDateTbd}
-                className={`glass-input w-full px-4 py-2 ${
-                  eventDateTbd ? "opacity-50 cursor-not-allowed" : ""
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  eventForm.isNonConducting ? "bg-red" : "bg-gray-300"
                 }`}
-              />
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                    eventForm.isNonConducting
+                      ? "translate-x-4.5"
+                      : "translate-x-0.5"
+                  }`}
+                />
+              </button>
             </div>
+
+            {/* Date */}
+            {!eventForm.isNonConducting && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-dark">
+                    Date
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextValue = !eventDateTbd;
+
+                      setEventDateTbd(nextValue);
+
+                      if (nextValue) {
+                        setEventForm((prev) => ({
+                          ...prev,
+                          date: "",
+                        }));
+                      }
+                    }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                      eventDateTbd ? "bg-red" : "bg-gray-300"
+                    }`}
+                    aria-label="Toggle date TBD"
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        eventDateTbd ? "translate-x-4.5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-text-secondary">
+                    Mark date as To Be Determined
+                  </span>
+
+                  {eventDateTbd && (
+                    <span className="text-xs font-semibold text-red">TBD</span>
+                  )}
+                </div>
+
+                <input
+                  type="date"
+                  value={eventForm.date}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      date: e.target.value,
+                    }))
+                  }
+                  disabled={eventDateTbd}
+                  className={`glass-input w-full px-4 py-2 ${
+                    eventDateTbd ? "opacity-50 cursor-not-allowed" : ""
+                  }`}
+                />
+              </div>
+            )}
 
             {/* Contribution deadline */}
             <div>
@@ -850,130 +903,132 @@ export default function EventManagementSection({
             </div>
 
             {/* Attendance Schedule */}
-            <div className="rounded-xl border border-white/50 bg-white/30 p-4 space-y-4">
-              <div>
-                <p className="text-sm font-semibold text-dark">
-                  Attendance Schedule
-                </p>
+            {!eventForm.isNonConducting && (
+              <div className="rounded-xl border border-white/50 bg-white/30 p-4 space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-dark">
+                    Attendance Schedule
+                  </p>
 
-                <p className="text-xs text-text-secondary mt-1">
-                  Add only the sessions required for this event.
-                </p>
-              </div>
-
-              <div className="flex gap-2">
-                <select
-                  value={scheduleToAdd}
-                  onChange={(e) =>
-                    setScheduleToAdd(e.target.value as EventSession | "")
-                  }
-                  className="glass-input flex-1 px-3 py-2"
-                >
-                  <option value="">Select time of day</option>
-                  <option value="morning">☀ Morning</option>
-                  <option value="afternoon">🌤 Afternoon</option>
-                  <option value="evening">🌙 Evening</option>
-                </select>
-
-                <button
-                  type="button"
-                  onClick={addSchedule}
-                  disabled={!scheduleToAdd}
-                  className="btn-primary px-4 py-2 flex items-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add
-                </button>
-              </div>
-
-              {eventForm.schedules.map((schedule) => (
-                <div
-                  key={schedule.period}
-                  className="rounded-lg border border-white/50 bg-white/40 p-3 space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-dark capitalize">
-                      {schedule.period === "morning" && "☀ Morning"}
-                      {schedule.period === "afternoon" && "🌤 Afternoon"}
-                      {schedule.period === "evening" && "🌙 Evening"}
-                    </p>
-
-                    <button
-                      type="button"
-                      onClick={() => removeSchedule(schedule.period)}
-                      className="text-xs text-red hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  {/* TIME IN */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
-                      <input
-                        type="checkbox"
-                        checked={schedule.timeInEnabled}
-                        onChange={(e) =>
-                          updateSchedule(schedule.period, {
-                            timeInEnabled: e.target.checked,
-                            timeIn: e.target.checked ? schedule.timeIn : "",
-                          })
-                        }
-                      />
-                      Enable Time In
-                    </label>
-
-                    {schedule.timeInEnabled && (
-                      <TimeInput12
-                        value={schedule.timeIn ?? ""}
-                        onChange={(value) =>
-                          updateSchedule(schedule.period, {
-                            timeIn: value,
-                          })
-                        }
-                        ariaLabel={`${schedule.period} time in`}
-                      />
-                    )}
-                  </div>
-
-                  {/* TIME OUT */}
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
-                      <input
-                        type="checkbox"
-                        checked={schedule.timeOutEnabled}
-                        onChange={(e) =>
-                          updateSchedule(schedule.period, {
-                            timeOutEnabled: e.target.checked,
-                            timeOut: e.target.checked ? schedule.timeOut : "",
-                          })
-                        }
-                      />
-                      Enable Time Out
-                    </label>
-
-                    {schedule.timeOutEnabled && (
-                      <TimeInput12
-                        value={schedule.timeOut ?? ""}
-                        onChange={(value) =>
-                          updateSchedule(schedule.period, {
-                            timeOut: value,
-                          })
-                        }
-                        ariaLabel={`${schedule.period} time out`}
-                      />
-                    )}
-                  </div>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Add only the sessions required for this event.
+                  </p>
                 </div>
-              ))}
 
-              {eventForm.schedules.length === 0 && (
-                <div className="text-center py-4 text-sm text-text-secondary">
-                  No attendance schedules added. This event will not require
-                  scheduled attendance.
+                <div className="flex gap-2">
+                  <select
+                    value={scheduleToAdd}
+                    onChange={(e) =>
+                      setScheduleToAdd(e.target.value as EventSession | "")
+                    }
+                    className="glass-input flex-1 px-3 py-2"
+                  >
+                    <option value="">Select time of day</option>
+                    <option value="morning">☀ Morning</option>
+                    <option value="afternoon">🌤 Afternoon</option>
+                    <option value="evening">🌙 Evening</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={addSchedule}
+                    disabled={!scheduleToAdd}
+                    className="btn-primary px-4 py-2 flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {eventForm.schedules.map((schedule) => (
+                  <div
+                    key={schedule.period}
+                    className="rounded-lg border border-white/50 bg-white/40 p-3 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-dark capitalize">
+                        {schedule.period === "morning" && "☀ Morning"}
+                        {schedule.period === "afternoon" && "🌤 Afternoon"}
+                        {schedule.period === "evening" && "🌙 Evening"}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => removeSchedule(schedule.period)}
+                        className="text-xs text-red hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    {/* TIME IN */}
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
+                        <input
+                          type="checkbox"
+                          checked={schedule.timeInEnabled}
+                          onChange={(e) =>
+                            updateSchedule(schedule.period, {
+                              timeInEnabled: e.target.checked,
+                              timeIn: e.target.checked ? schedule.timeIn : "",
+                            })
+                          }
+                        />
+                        Enable Time In
+                      </label>
+
+                      {schedule.timeInEnabled && (
+                        <TimeInput12
+                          value={schedule.timeIn ?? ""}
+                          onChange={(value) =>
+                            updateSchedule(schedule.period, {
+                              timeIn: value,
+                            })
+                          }
+                          ariaLabel={`${schedule.period} time in`}
+                        />
+                      )}
+                    </div>
+
+                    {/* TIME OUT */}
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
+                        <input
+                          type="checkbox"
+                          checked={schedule.timeOutEnabled}
+                          onChange={(e) =>
+                            updateSchedule(schedule.period, {
+                              timeOutEnabled: e.target.checked,
+                              timeOut: e.target.checked ? schedule.timeOut : "",
+                            })
+                          }
+                        />
+                        Enable Time Out
+                      </label>
+
+                      {schedule.timeOutEnabled && (
+                        <TimeInput12
+                          value={schedule.timeOut ?? ""}
+                          onChange={(value) =>
+                            updateSchedule(schedule.period, {
+                              timeOut: value,
+                            })
+                          }
+                          ariaLabel={`${schedule.period} time out`}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {eventForm.schedules.length === 0 && (
+                  <div className="text-center py-4 text-sm text-text-secondary">
+                    No attendance schedules added. This event will not require
+                    scheduled attendance.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Allocation Amount */}
             <div>
@@ -1039,7 +1094,9 @@ export default function EventManagementSection({
                 disabled={
                   saving ||
                   !eventForm.name ||
-                  (!eventDateTbd && !eventForm.date)
+                  (!eventForm.isNonConducting &&
+                    !eventDateTbd &&
+                    !eventForm.date)
                 }
               >
                 {saving ? (

@@ -54,6 +54,10 @@ export default function AttendanceManagementSection({
   role,
 }: AttendanceManagementSectionProps) {
   const [events, setEvents] = useState<Event[]>([]);
+  const attendanceEvents = useMemo(
+    () => events.filter((event) => !event.isNonConducting),
+    [events],
+  );
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
@@ -546,7 +550,9 @@ export default function AttendanceManagementSection({
       String(completedDate.getMonth() + 1).padStart(2, "0"),
       String(completedDate.getDate()).padStart(2, "0"),
     ].join("-");
-    const completedEvents = events.filter((e) => e.date === completedDateISO);
+    const completedEvents = events.filter(
+      (e) => !e.isNonConducting && e.date === completedDateISO,
+    );
     if (completedEvents.length === 0) return;
 
     try {
@@ -689,6 +695,7 @@ export default function AttendanceManagementSection({
     const totalPopulation = registeredStudentIds.size;
 
     return [...events]
+      .filter((event) => !event.isNonConducting)
       .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
       .map((event) => {
         const attendeeIds = new Set(
@@ -796,7 +803,7 @@ export default function AttendanceManagementSection({
                 className="glass-input w-full px-4 py-3 text-sm"
               >
                 <option value="">Choose an event</option>
-                {events.map((e) => (
+                {attendanceEvents.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name}
                   </option>
