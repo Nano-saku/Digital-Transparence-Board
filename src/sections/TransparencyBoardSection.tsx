@@ -27,6 +27,7 @@ import {
   transactionsService,
   financialReportingService,
   eventsService,
+  studentsService,
 } from "@/services/db";
 import {
   downloadBlob,
@@ -84,6 +85,7 @@ export default function TransparencyBoardSection({
   );
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [studentCount, setStudentCount] = useState(0);
 
   // Transaction ledger CRUD state (admin mode only)
   const [showTransactionModal, setShowTransactionModal] = useState(false);
@@ -123,15 +125,18 @@ export default function TransparencyBoardSection({
   const loadData = async () => {
     try {
       setLoading(true);
-      const [report, transactionsData, eventsData] = await Promise.all([
-        financialReportingService.getReport(),
-        transactionsService.getAll(),
-        eventsService.getAll(),
-      ]);
+      const [report, transactionsData, eventsData, studentsData] =
+        await Promise.all([
+          financialReportingService.getReport(),
+          transactionsService.getAll(),
+          eventsService.getAll(),
+          studentsService.getAll(),
+        ]);
       setFinancialSummary(report.summary);
       setEventAllocations(report.eventAllocations);
       setTransactions(transactionsData);
       setEvents(eventsData);
+      setStudentCount(studentsData.length);
     } catch (error) {
       console.error("Error loading transparency data:", error);
       toast.error("Failed to load financial data");
@@ -139,6 +144,9 @@ export default function TransparencyBoardSection({
       setLoading(false);
     }
   };
+
+  const expectedCollection = (allocationAmount: number) =>
+    (Number(allocationAmount) || 0) * studentCount;
 
   useSectionEntrance(sectionRef, [
     // Headline entrance
@@ -214,8 +222,10 @@ export default function TransparencyBoardSection({
           (a) => `<tr>
               <td>${escaped(a.eventName)}</td>
               <td class="right">${formatPeso(a.allocationAmount)}</td>
+              <td class="right">${formatPeso(expectedCollection(a.allocationAmount))}</td>
               <td class="right">${formatPeso(a.totalCollected)}</td>
               <td class="right">${formatPeso(a.totalSpent)}</td>
+              <td class="right">${formatPeso(a.remainingBalance)}</td>
             </tr>`,
         )
         .join("");
@@ -272,8 +282,8 @@ export default function TransparencyBoardSection({
 
   <h2>Event Allocations</h2>
   <table>
-    <thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead>
-    <tbody>${allocationRows || '<tr><td colspan="5">No allocations recorded.</td></tr>'}</tbody>
+    <thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Expected Collection</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead>
+    <tbody>${allocationRows || '<tr><td colspan="6">No allocations recorded.</td></tr>'}</tbody>
   </table>
 
   <h2>Transaction Ledger</h2>
@@ -519,6 +529,7 @@ export default function TransparencyBoardSection({
                       <tr>
                         <th>Event</th>
                         <th>Allocation</th>
+                        <th>Expected Collection</th>
                         <th>Collected</th>
                         <th>Spent</th>
                         <th>Balance</th>
@@ -532,6 +543,11 @@ export default function TransparencyBoardSection({
                           </td>
                           <td className="text-text-secondary">
                             {formatPeso(allocation.allocationAmount)}
+                          </td>
+                          <td className="text-text-secondary">
+                            {formatPeso(
+                              expectedCollection(allocation.allocationAmount),
+                            )}
                           </td>
                           <td className="text-green-600">
                             {formatPeso(allocation.totalCollected)}
