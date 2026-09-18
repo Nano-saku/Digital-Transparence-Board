@@ -593,6 +593,18 @@ export const eventEvaluationsService = {
 // ============================================
 // ATTENDANCE SERVICE
 // ============================================
+type AttendanceRow = {
+  id: string;
+  student_id: string;
+  event_id: string;
+  event_name: string;
+  date: string;
+  status: AttendanceRecord["status"];
+  session?: "morning" | "afternoon" | "evening" | null;
+  time_in?: string | null;
+  time_out?: string | null;
+};
+
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
     return cachedRead<AttendanceRecord>("attendance", async () => {
@@ -603,7 +615,7 @@ export const attendanceService = {
 
       if (error) throw error;
       return (
-        data?.map((item) => ({
+        data?.map((item: AttendanceRow) => ({
           id: item.id,
           studentId: item.student_id,
           eventId: item.event_id,
@@ -632,7 +644,7 @@ export const attendanceService = {
       if (error) throw error;
 
       return (
-        data?.map((item) => ({
+        data?.map((item: AttendanceRow) => ({
           id: item.id,
           studentId: item.student_id,
           eventId: item.event_id,
@@ -671,7 +683,7 @@ export const attendanceService = {
       if (error) throw error;
 
       return (
-        data?.map((item) => ({
+        data?.map((item: AttendanceRow) => ({
           id: item.id,
           studentId: item.student_id,
           eventId: item.event_id,
@@ -1104,7 +1116,15 @@ export const contributionsService = {
     if (error) throw error;
 
     return (
-      data?.map((item) => ({
+      data?.map((item: {
+        id: string;
+        student_id: string;
+        event_id: string;
+        event_name: string;
+        required_amount: number;
+        amount_paid: number;
+        remaining_balance: number;
+      }) => ({
         id: item.id,
         studentId: item.student_id,
         eventId: item.event_id,
@@ -1341,6 +1361,42 @@ export const paymentsService = {
     );
   },
 
+  /**
+   * Return the payment currently representing a student's total for one event.
+   * Older databases may contain more than one legacy row, so the newest row is
+   * selected instead of using maybeSingle() without a limit.
+   */
+  async getByStudentAndEvent(
+    studentId: string,
+    eventId: string,
+  ): Promise<PaymentRecord | null> {
+    const { data, error } = await getSupabase()
+      .from("payments")
+      .select("*")
+      .eq("student_id", studentId)
+      .eq("event_id", eventId)
+      .order("date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      studentId: data.student_id,
+      studentName: data.student_name,
+      eventId: data.event_id,
+      eventName: data.event_name,
+      contributionId: data.contribution_id ?? "",
+      amount: data.amount,
+      date: data.date,
+      receiptUrl: data.receipt_url || undefined,
+      orNumber: data.or_number || undefined,
+      recordedBy: data.recorded_by,
+    };
+  },
+
   async create(record: Omit<PaymentRecord, "id">): Promise<PaymentRecord> {
     const id = createRecordId();
     const payload = {
@@ -1390,6 +1446,39 @@ export const paymentsService = {
     return result;
   },
 
+  /**
+   * Keep one current payment row per student/event at the application level.
+   * The payments table predates this rule and has no pairwise unique index, so
+   * callers must use this method rather than blindly inserting a second row.
+   * The unique-violation recovery remains useful if a deployed database adds
+   * that constraint later, but it is not relied on by the current schema.
+   */
+  async upsertForStudentAndEvent(
+    record: Omit<PaymentRecord, "id">,
+  ): Promise<PaymentRecord> {
+    const existing = await this.getByStudentAndEvent(
+      record.studentId,
+      record.eventId,
+    );
+
+    if (existing) return this.update(existing.id, record);
+
+    try {
+      return await this.create(record);
+    } catch (error) {
+      // Another browser/import may have inserted the pair after the lookup.
+      // The unique index is authoritative; recover by updating the row it won.
+      if (!isUniqueViolation(error)) throw error;
+
+      const concurrent = await this.getByStudentAndEvent(
+        record.studentId,
+        record.eventId,
+      );
+      if (!concurrent) throw error;
+      return this.update(concurrent.id, record);
+    }
+  },
+
   async update(
     id: string,
     record: Partial<PaymentRecord>,
@@ -1402,6 +1491,8 @@ export const paymentsService = {
     if (record.eventId !== undefined) updateData.event_id = record.eventId;
     if (record.eventName !== undefined)
       updateData.event_name = record.eventName;
+    if (record.contributionId !== undefined)
+      updateData.contribution_id = record.contributionId;
     if (record.amount !== undefined) updateData.amount = record.amount;
     if (record.date !== undefined) updateData.date = record.date;
     if (record.receiptUrl !== undefined)
@@ -1945,7 +2036,7 @@ export const studentRequirementFilesService = {
       .select("student_id")
       .eq("file_id", fileId);
     if (error) throw error;
-    return (data ?? []).map((row) => row.student_id as string);
+    return (data ?? []).map((row: { student_id: string }) => row.student_id);
   },
 
   /**

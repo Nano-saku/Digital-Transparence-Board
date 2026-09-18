@@ -21,11 +21,11 @@ interface SummaryCardProps {
 }
 
 const COLOR_CLASSES: Record<SummaryCardProps["color"], string> = {
-  blue: "bg-blue-100 text-blue-600",
-  green: "bg-green-100 text-green-600",
-  amber: "bg-amber-100 text-amber-600",
-  red: "bg-red-100 text-red-500",
-  purple: "bg-purple-100 text-purple-600",
+  blue: "bg-info/15 text-info",
+  green: "bg-success/15 text-success",
+  amber: "bg-warning/15 text-warning",
+  red: "bg-danger/15 text-danger",
+  purple: "bg-primary/15 text-primary",
 };
 
 export default function SummaryCard({

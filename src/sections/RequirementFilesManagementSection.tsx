@@ -5,7 +5,6 @@ import {
   Edit2,
   Trash2,
   UploadCloud,
-  Loader2,
   FileText,
   Eye,
   EyeOff,
@@ -17,6 +16,7 @@ import {
   Download,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -631,7 +631,7 @@ export default function RequirementFilesManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     {modal?.type === "create" ? "Uploading..." : "Saving..."}
                   </>
                 ) : (
@@ -692,7 +692,7 @@ export default function RequirementFilesManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> Replacing...
+                    <Skeleton className="h-4 w-4 rounded-full" /> Replacing...
                   </>
                 ) : (
                   <>
@@ -796,7 +796,7 @@ export default function RequirementFilesManagementSection({
               >
                 {accessSaving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> Saving...
+                    <Skeleton className="h-4 w-4 rounded-full" /> Saving...
                   </>
                 ) : (
                   "Save"

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
+import Skeleton from '@/components/Skeleton';
 
 interface ResetPasswordSectionProps {
   onSetNewPassword: (newPassword: string) => Promise<void>;
@@ -67,9 +68,9 @@ export default function ResetPasswordSection({ onSetNewPassword }: ResetPassword
         <div ref={cardRef} className="glass-card-strong w-full max-w-sm mx-auto p-6 sm:p-7">
           <div className="text-center mb-6">
             <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center ring-2 ring-lsc-gold/50" style={{ background: 'var(--dssc-off-white)' }}>
-              <KeyRound className="w-6 h-6" style={{ color: 'var(--dssc-deep-navy)' }} />
+              <KeyRound className="w-6 h-6 text-slate-900" />
             </div>
-            <h2 className="font-display font-bold text-2xl mb-1" style={{ color: 'var(--dssc-deep-navy)' }}>
+            <h2 className="font-display font-bold text-2xl mb-1 text-white">
               Set New Password
             </h2>
             <p className="text-text-secondary text-sm">
@@ -80,7 +81,7 @@ export default function ResetPasswordSection({ onSetNewPassword }: ResetPassword
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--dssc-deep-navy)' }}>
+              <label className="block text-sm font-medium mb-1.5 text-slate-200">
                 <span className="flex items-center gap-1.5">
                   <Lock className="w-4 h-4 text-text-secondary" />
                   New Password
@@ -108,7 +109,7 @@ export default function ResetPasswordSection({ onSetNewPassword }: ResetPassword
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--dssc-deep-navy)' }}>
+              <label className="block text-sm font-medium mb-1.5 text-slate-200">
                 <span className="flex items-center gap-1.5">
                   <Lock className="w-4 h-4 text-text-secondary" />
                   Confirm Password
@@ -131,7 +132,7 @@ export default function ResetPasswordSection({ onSetNewPassword }: ResetPassword
               className="btn-primary w-full py-3 justify-center disabled:opacity-70"
             >
               {isLoading ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <Skeleton className="h-5 w-5 rounded-full bg-white/30" />
               ) : (
                 <>
                   <Lock className="w-4 h-4" />

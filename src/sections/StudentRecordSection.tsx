@@ -7,7 +7,6 @@ import {
   Wallet,
   FileText,
   Download,
-  Loader2,
   QrCode,
   ChevronDown,
   Clock,
@@ -64,6 +63,7 @@ import {
 } from "@/lib/contributions";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import Pagination from "@/components/common/Pagination";
@@ -386,7 +386,9 @@ export default function StudentRecordSection({
         </div>
 
         {/* Loading State */}
-        {loading && <SectionLoader message="Loading student records..." />}
+        {loading && (
+          <SectionLoader message="Loading student records..." variant="detail" />
+        )}
 
         {!loading && (
           <>
@@ -607,7 +609,7 @@ export default function StudentRecordSection({
                                       title={`Preview contribution receipt – ${record.eventName}`}
                                     >
                                       {previewingId === record.id ? (
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        <Skeleton className="h-3.5 w-3.5 rounded-full" />
                                       ) : (
                                         <Eye className="w-3.5 h-3.5" />
                                       )}
@@ -625,7 +627,7 @@ export default function StudentRecordSection({
                                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs disabled:opacity-70"
                                         >
                                           {downloadingId === record.id ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <Skeleton className="h-3.5 w-3.5 rounded-full" />
                                           ) : (
                                             <Download className="w-3.5 h-3.5" />
                                           )}
@@ -806,7 +808,7 @@ export default function StudentRecordSection({
                           </>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-2 text-xs text-text-secondary">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <Skeleton className="h-3.5 w-3.5 rounded-full" />
                             Still syncing, check back soon
                           </span>
                         )}

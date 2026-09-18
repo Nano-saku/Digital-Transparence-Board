@@ -1,9 +1,10 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { gsap } from "gsap";
-import { Search, ChevronDown, Eye, Loader2 } from "lucide-react";
+import { Search, ChevronDown, Eye } from "lucide-react";
 import type { Student } from "@/types";
 import { studentsService } from "@/services/db";
 import LSCOfficerCarousel from "@/components/LSCOfficerCarousel";
+import Skeleton from "@/components/Skeleton";
 interface LandingSectionProps {
   onSearch: (name: string, studentId: string) => void;
   onViewTransparency: () => void;
@@ -138,34 +139,50 @@ export default function LandingSection({
             {/* Left Column - Headline */}
             <div ref={headlineRef} className="text-center lg:text-left">
               {/* Eyebrow */}
-              <span className="dssc-tagline block mb-3">
+              <span className="eyebrow block mb-4">
                 One Step Better Than Yesterday.
               </span>
 
               <h1
-                className="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-white leading-tight mb-6"
+                className="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-theme-heading leading-[1.05] mb-6"
                 style={{ letterSpacing: "0.02em" }}
               >
                 <span className="word inline-block">Digital</span>{" "}
                 <span className="word inline-block">Transparency</span>{" "}
                 <span
                   className="word inline-block"
-                  style={{ color: "#C9A34E" }}
+                  style={{ color: "var(--dssc-gold)" }}
                 >
                   Board
                 </span>
               </h1>
-              <p className="text-blue-100 text-lg sm:text-xl max-w-xl mx-auto lg:mx-0 mb-8 leading-relaxed">
+              <p className="text-text-secondary text-lg sm:text-xl max-w-xl mx-auto lg:mx-0 mb-8 leading-relaxed">
                 Track your contributions, attendance, and council finances in
                 real-time. Transparency for a stronger student community.
               </p>
-              <button
-                onClick={onViewTransparency}
-                className="glass-button px-6 py-3"
-              >
-                <Eye className="w-5 h-5" />
-                <span>View Transparency Board</span>
-              </button>
+              <div className="flex flex-wrap justify-center lg:justify-start gap-3">
+                <button onClick={onViewTransparency} className="btn-primary px-6 py-3">
+                  <Eye className="w-5 h-5" />
+                  <span>View transparency board</span>
+                </button>
+                <a href="#lsc-preview" className="glass-button px-6 py-3">
+                  Meet the council
+                </a>
+              </div>
+              <div className="mt-10 flex flex-wrap justify-center lg:justify-start gap-x-8 gap-y-4 border-t border-border pt-6">
+                <div>
+                  <strong className="block font-display text-2xl text-theme-heading">01</strong>
+                  <span className="text-xs uppercase tracking-wider text-text-secondary">Secure access</span>
+                </div>
+                <div>
+                  <strong className="block font-display text-2xl text-theme-heading">24/7</strong>
+                  <span className="text-xs uppercase tracking-wider text-text-secondary">Always available</span>
+                </div>
+                <div>
+                  <strong className="block font-display text-2xl text-theme-heading">LIVE</strong>
+                  <span className="text-xs uppercase tracking-wider text-text-secondary">Council updates</span>
+                </div>
+              </div>
             </div>
 
             {/* Right Column - Search Card */}
@@ -175,10 +192,7 @@ export default function LandingSection({
                 className="h-1 w-16 rounded-full mb-5"
                 style={{ background: "var(--dssc-gold)" }}
               />
-              <h2
-                className="font-display font-bold text-2xl mb-2"
-                style={{ color: "var(--dssc-deep-navy)" }}
-              >
+              <h2 className="font-display font-bold text-2xl mb-2 text-theme-heading">
                 Find Your Records
               </h2>
               <p className="text-text-secondary mb-6 text-sm">
@@ -188,10 +202,7 @@ export default function LandingSection({
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="relative">
-                  <label
-                    className="block text-sm font-medium mb-1.5"
-                    style={{ color: "var(--dssc-deep-navy)" }}
-                  >
+                  <label className="block text-sm font-medium mb-1.5 text-text-primary">
                     Student Name
                   </label>
 
@@ -215,10 +226,10 @@ export default function LandingSection({
 
                   {showSuggestions && (
                     <div className="absolute left-0 right-0 top-full mt-2 z-50">
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
+                      <div className="rounded-xl border border-border bg-popover shadow-2xl overflow-hidden">
                         {searchLoading && (
-                          <div className="px-4 py-3 text-sm text-gray-500 flex items-center gap-2">
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                        <div className="px-4 py-3 text-sm text-text-secondary flex items-center gap-2">
+                            <Skeleton className="h-4 w-4 rounded-full" />
                             Searching students...
                           </div>
                         )}
@@ -236,9 +247,9 @@ export default function LandingSection({
                                   setShowSuggestions(false);
                                   setStudentMatches([]);
                                 }}
-                                className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b last:border-b-0 border-gray-100"
+                                className="w-full text-left px-4 py-3 hover:bg-accent/30 transition-colors border-b last:border-b-0 border-border"
                               >
-                                <div className="font-semibold text-gray-900">
+                                <div className="font-semibold text-text-primary">
                                   {student.name}
                                 </div>
                               </button>
@@ -249,7 +260,7 @@ export default function LandingSection({
                         {!searchLoading &&
                           studentMatches.length === 0 &&
                           name.trim() && (
-                            <div className="px-4 py-3 text-sm text-gray-500">
+                            <div className="px-4 py-3 text-sm text-text-secondary">
                               No students found.
                             </div>
                           )}
@@ -259,10 +270,7 @@ export default function LandingSection({
                 </div>
 
                 <div>
-                  <label
-                    className="block text-sm font-medium mb-1.5"
-                    style={{ color: "var(--dssc-deep-navy)" }}
-                  >
+                  <label className="block text-sm font-medium mb-1.5 text-text-primary">
                     Student ID (verification)
                   </label>
                   <input
@@ -283,7 +291,7 @@ export default function LandingSection({
                 >
                   {searching ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <Skeleton className="h-5 w-5 rounded-full bg-primary/30" />
                       Searching...
                     </>
                   ) : (
@@ -301,8 +309,7 @@ export default function LandingSection({
         {/* Scroll Hint */}
         <div
           ref={scrollHintRef}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-          style={{ color: "rgba(255,255,255,0.60)" }}
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-text-secondary"
         >
           <span className="text-xs tracking-widest uppercase">Scroll down</span>
           <ChevronDown className="w-5 h-5 animate-bounce" />
@@ -315,13 +322,13 @@ export default function LandingSection({
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(58,95,224,0.32),transparent_62%)]" />
         <div className="relative z-10 mx-auto w-full max-w-6xl">
           <div className="mb-10 text-center">
-            <span className="dssc-tagline">
+            <span className="eyebrow">
               Leadership • Service • Commitment
             </span>
             <h2 className="mt-3 font-display text-3xl font-bold text-white sm:text-4xl">
               LSC Preview
             </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-blue-100 sm:text-base">
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-300 sm:text-base">
               Meet the officers dedicated to serving the Local Student Council
               community.
             </p>

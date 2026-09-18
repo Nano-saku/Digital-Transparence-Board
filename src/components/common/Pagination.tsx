@@ -64,7 +64,7 @@ export default function Pagination({
         <button
           onClick={onPrev}
           disabled={page <= 1}
-          className="p-2 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/50 transition-colors"
+          className="p-2 rounded-lg text-text-primary disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-secondary transition-colors"
           title="Previous page"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -74,7 +74,7 @@ export default function Pagination({
           <>
             <button
               onClick={() => onJump?.(1)}
-              className="w-8 h-8 rounded-lg hover:bg-white/50 transition-colors text-xs"
+              className="w-8 h-8 rounded-lg hover:bg-surface-secondary transition-colors text-xs text-text-primary"
             >
               1
             </button>
@@ -90,8 +90,8 @@ export default function Pagination({
             onClick={() => onJump?.(p)}
             className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
               p === page
-                ? "bg-red text-white"
-                : "hover:bg-white/50 text-dark"
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-surface-secondary text-text-primary"
             }`}
           >
             {p}
@@ -105,7 +105,7 @@ export default function Pagination({
             )}
             <button
               onClick={() => onJump?.(totalPages)}
-              className="w-8 h-8 rounded-lg hover:bg-white/50 transition-colors text-xs"
+              className="w-8 h-8 rounded-lg hover:bg-surface-secondary transition-colors text-xs text-text-primary"
             >
               {totalPages}
             </button>
@@ -115,7 +115,7 @@ export default function Pagination({
         <button
           onClick={onNext}
           disabled={page >= totalPages}
-          className="p-2 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/50 transition-colors"
+          className="p-2 rounded-lg text-text-primary disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-secondary transition-colors"
           title="Next page"
         >
           <ChevronRight className="w-4 h-4" />

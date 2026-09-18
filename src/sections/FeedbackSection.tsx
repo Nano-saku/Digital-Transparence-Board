@@ -2,11 +2,12 @@
 import { gsap } from 'gsap';
 import { 
   MessageCircle, AlertTriangle, Lightbulb, 
-  Send, User, IdCard, EyeOff, Shield, CheckCircle, Loader2 
+  Send, User, IdCard, EyeOff, Shield, CheckCircle
 } from 'lucide-react';
 import type { ViewState } from '@/types';
 import { feedbackService } from '@/services/db';
 import { toast } from 'sonner';
+import Skeleton from '@/components/Skeleton';
 interface FeedbackSectionProps {
   defaultTab: ViewState;
 }
@@ -317,7 +318,7 @@ className="w-full btn-primary px-6 py-3 flex items-center justify-center gap-2"
                 >
                   {submitting ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <Skeleton className="h-5 w-5 rounded-full bg-white/30" />
                       Submitting...
                     </>
                   ) : (

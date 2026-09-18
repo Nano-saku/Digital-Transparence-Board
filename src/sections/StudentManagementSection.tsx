@@ -6,12 +6,12 @@ import {
   User,
   FileSpreadsheet,
   Save,
-  Loader2,
   QrCode,
   MoreVertical,
 } from "lucide-react";
 import { getOrdinalSuffix } from "@/lib/format";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -339,7 +339,7 @@ export default function StudentManagementSection({
             title="Import students from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID, Name, Program, Year Level, Section."
           >
             {importing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Skeleton className="h-4 w-4 rounded-full" />
             ) : (
               <FileSpreadsheet className="w-4 h-4" />
             )}
@@ -697,7 +697,7 @@ export default function StudentManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Saving...
                   </>
                 ) : (

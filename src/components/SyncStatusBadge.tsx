@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, CloudOff, Loader2, AlertTriangle } from "lucide-react";
+import { CheckCircle2, CloudOff, AlertTriangle } from "lucide-react";
+import Skeleton from "@/components/Skeleton";
 import { toast } from "sonner";
 import { offlineSyncService, type SyncState } from "@/lib/offlineSync";
 
@@ -87,7 +88,7 @@ export default function SyncStatusBadge() {
 
   if (state === "failed" && failure) {
     return (
-      <div className="fixed bottom-4 right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 rounded-lg bg-red-600/95 px-3 py-3 text-sm text-white shadow-lg">
+      <div className="fixed bottom-4 right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 rounded-2xl border border-danger/40 bg-danger/15 px-3 py-3 text-sm text-primary shadow-2xl backdrop-blur-lg">
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 w-4 h-4 shrink-0" />
           <span>
@@ -95,18 +96,18 @@ export default function SyncStatusBadge() {
             {pending > 1 ? ` (${pending} pending)` : ""}
           </span>
         </div>
-        <p className="break-words text-xs text-red-100/90">{failure.message}</p>
+        <p className="break-words text-xs text-secondary">{failure.message}</p>
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleRetry}
             disabled={retrying}
-            className="rounded bg-white/20 px-2 py-1 text-xs font-medium hover:bg-white/30 disabled:opacity-50"
+            className="rounded-lg bg-danger/20 px-2 py-1 text-xs font-medium transition hover:bg-danger/30 disabled:opacity-50"
           >
             {retrying ? "Retrying..." : "Retry"}
           </button>
           <button
             onClick={handleDiscard}
-            className="rounded bg-white/10 px-2 py-1 text-xs font-medium hover:bg-white/20"
+            className="rounded-lg bg-surface-soft px-2 py-1 text-xs font-medium transition hover:bg-surface-secondary"
           >
             Discard change
           </button>
@@ -117,8 +118,8 @@ export default function SyncStatusBadge() {
 
   if (state === "syncing") {
     return (
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg bg-blue-500/90 px-3 py-2 text-sm text-white shadow-lg">
-        <Loader2 className="w-4 h-4 animate-spin" />
+      <div className="status-pill fixed bottom-4 right-4 z-50 bg-surface-secondary px-3 py-2 text-sm shadow-2xl backdrop-blur-lg">
+        <Skeleton className="h-3 w-3 rounded-full" />
         Syncing {pending} change{pending === 1 ? "" : "s"}...
       </div>
     );
@@ -126,7 +127,7 @@ export default function SyncStatusBadge() {
 
   if (state === "offline" && pending > 0) {
     return (
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg bg-gray-700/90 px-3 py-2 text-sm text-white shadow-lg">
+      <div className="status-pill fixed bottom-4 right-4 z-50 border-subtle bg-surface-secondary px-3 py-2 text-sm text-secondary shadow-2xl backdrop-blur-lg">
         <CloudOff className="w-4 h-4" />
         Offline — {pending} change{pending === 1 ? "" : "s"} will sync when
         you&apos;re back online
@@ -136,7 +137,7 @@ export default function SyncStatusBadge() {
 
   if (showSynced && state === "synced") {
     return (
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg bg-green-500/90 px-3 py-2 text-sm text-white shadow-lg">
+      <div className="status-pill fixed bottom-4 right-4 z-50 px-3 py-2 text-sm shadow-2xl">
         <CheckCircle2 className="w-4 h-4" />
         All changes synced
       </div>

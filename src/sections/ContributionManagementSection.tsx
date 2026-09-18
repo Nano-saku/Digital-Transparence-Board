@@ -6,13 +6,13 @@ import {
   User,
   Calendar,
   Save,
-  Loader2,
   Coins,
   FileText,
   CreditCard,
   DollarSign,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
+import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -69,7 +69,7 @@ interface ContributionForm {
   amountPaid: number;
 }
 
-/** One parsed & matched (student, event) import row waiting to be created. */
+/** One parsed & matched (student, event) import row waiting to be upserted. */
 interface ParsedContributionRow {
   student: Student;
   event: Event;
@@ -333,6 +333,128 @@ export default function ContributionManagementSection({
 
     return null;
   };
+
+  type PaymentImportMode = "add" | "replace";
+
+  /**
+   * Shared payment path for manual recording and spreadsheet imports.
+   *
+   * Manual entry remains additive: entering another installment increases the
+   * current total. Spreadsheet Amount Paid is a snapshot, so importing it
+   * replaces the current total. In both cases there is only one current
+   * payment row for the student/event pair and the contribution is recalculated
+   * from the resulting total.
+   */
+  const savePaymentForStudentEvent = async (options: {
+    student: Student;
+    event: Event;
+    amount: number;
+    requiredAmount?: number;
+    mode: PaymentImportMode;
+    imported?: boolean;
+  }): Promise<boolean> => {
+    const { student, event, amount, mode, imported = false } = options;
+    const canIssueReceipts =
+      role === "admin" || role === "treasurer" || role === "auditor";
+    let contribution = await contributionsService.getByStudentAndEvent(
+      student.id,
+      event.id,
+    );
+    const requiredAmount =
+      options.requiredAmount ?? contribution?.requiredAmount ?? event.allocationAmount;
+
+    if (!contribution) {
+      try {
+        contribution = await contributionsService.create({
+          studentId: student.id,
+          eventId: event.id,
+          eventName: event.name,
+          requiredAmount,
+          amountPaid: 0,
+          remainingBalance: requiredAmount,
+        });
+      } catch (createError) {
+        // The unique student/event index may have been won by another writer.
+        contribution = await contributionsService.getByStudentAndEvent(
+          student.id,
+          event.id,
+        );
+        if (!contribution) throw createError;
+      }
+    }
+
+    const validationError =
+      mode === "add"
+        ? validatePaymentAmount(
+            amount,
+            contribution.requiredAmount,
+            contribution.amountPaid,
+          )
+        : !Number.isFinite(amount) || amount <= 0
+          ? "Payment amount must be greater than zero."
+          : amount > requiredAmount
+            ? `Payment exceeds the required amount of ₱${requiredAmount.toFixed(2)}.`
+            : null;
+
+    if (validationError) throw new Error(validationError);
+
+    const updatedAmountPaid =
+      mode === "add" ? contribution.amountPaid + amount : amount;
+    const updatedRemainingBalance = Math.max(
+      0,
+      requiredAmount - updatedAmountPaid,
+    );
+    const existingPayment = await paymentsService.getByStudentAndEvent(
+      student.id,
+      event.id,
+    );
+
+    let receiptUrl: string | undefined;
+    let receiptNumber: string | undefined;
+    const paymentAmountChanged =
+      !existingPayment || existingPayment.amount !== updatedAmountPaid;
+    if (canIssueReceipts && (paymentAmountChanged || !existingPayment.receiptUrl)) {
+      try {
+        receiptNumber = await officialReceiptNumber();
+        receiptUrl = await autoCreateReceipt({
+          tag: "PAYMENT",
+          receiptNumber,
+          issuedTo: student.name,
+          eventName: event.name,
+          description: `Payment for ${event.name}${imported ? " (imported)" : ""}`,
+          amount: updatedAmountPaid,
+          type: "income",
+          date: today(),
+          recordedBy: staffName || "Council Officer",
+        });
+      } catch (receiptError) {
+        console.warn("Auto receipt generation failed:", receiptError);
+      }
+    }
+
+    await paymentsService.upsertForStudentAndEvent({
+      studentId: student.id,
+      studentName: student.name,
+      eventId: event.id,
+      eventName: event.name,
+      contributionId: contribution.id,
+      amount: updatedAmountPaid,
+      date: today(),
+      recordedBy: staffName || "Council Officer",
+      receiptUrl: receiptUrl ?? existingPayment?.receiptUrl,
+      orNumber: receiptNumber ?? existingPayment?.orNumber,
+    });
+
+    await contributionsService.update(contribution.id, {
+      eventName: event.name,
+      requiredAmount,
+      amountPaid: updatedAmountPaid,
+      remainingBalance: updatedRemainingBalance,
+    });
+
+    return receiptUrl !== undefined;
+  };
+
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -345,89 +467,18 @@ export default function ContributionManagementSection({
         return;
       }
 
-      // Resolve the contribution record first (create it if this student has
-      // no row for the event yet), so the payment can be created already
-      // linked to it via contributionId.
-      let contribution = await contributionsService.getByStudentAndEvent(
-        student.id,
-        event.id,
-      );
-      if (!contribution) {
-        try {
-          contribution = await contributionsService.create({
-            studentId: student.id,
-            eventId: event.id,
-            eventName: event.name,
-            requiredAmount: event.allocationAmount,
-            amountPaid: 0,
-            remainingBalance: event.allocationAmount,
-          });
-        } catch (createError) {
-          // Someone else (another officer, or an in-flight import) may have
-          // just created this student's contribution for this event -- the
-          // database's unique (student_id, event_id) constraint rejected
-          // ours as a duplicate. Use theirs instead of failing the payment.
-          contribution = await contributionsService.getByStudentAndEvent(
-            student.id,
-            event.id,
-          );
-          if (!contribution) throw createError;
-        }
-      }
-      const validationError = validatePaymentAmount(
-        paymentForm.amount,
-        contribution.requiredAmount,
-        contribution.amountPaid,
-      );
-
-      if (validationError) {
-        toast.error(validationError);
-        return;
-      }
-      // An official receipt is generated automatically (as SVG, uploaded to
-      // the "receipts" Storage bucket) and attached to the payment.
-      let receiptUrl: string | undefined;
-      if (role === "admin" || role === "treasurer" || role === "auditor") {
-        try {
-          const orNumber = await officialReceiptNumber();
-          receiptUrl = await autoCreateReceipt({
-            tag: "PAYMENT",
-            receiptNumber: orNumber,
-            issuedTo: student.name,
-            eventName: event.name,
-            description: `Payment for ${event.name}`,
-            amount: paymentForm.amount,
-            type: "income",
-            date: today(),
-            recordedBy: staffName || "Council Officer",
-          });
-          toast.success(
-            "An official receipt was generated and attached automatically.",
-          );
-        } catch (receiptError) {
-          console.warn("Auto receipt generation failed:", receiptError);
-        }
-      }
-
-      await paymentsService.create({
-        studentId: paymentForm.studentId,
-        studentName: student.name,
-        eventId: paymentForm.eventId,
-        eventName: event.name,
-        contributionId: contribution.id,
+      const receiptIssued = await savePaymentForStudentEvent({
+        student,
+        event,
         amount: paymentForm.amount,
-        date: today(),
-        recordedBy: staffName || "Council Officer",
-        receiptUrl,
+        mode: "add",
       });
 
-      await contributionsService.update(contribution.id, {
-        amountPaid: contribution.amountPaid + paymentForm.amount,
-        remainingBalance: Math.max(
-          0,
-          contribution.remainingBalance - paymentForm.amount,
-        ),
-      });
+      if (receiptIssued) {
+        toast.success(
+          "An official receipt was generated and attached automatically.",
+        );
+      }
 
       toast.success("Payment recorded successfully!");
       setShowPaymentModal(false);
@@ -584,31 +635,26 @@ export default function ContributionManagementSection({
       return;
     }
 
-    const canIssueReceipts =
-      role === "admin" || role === "treasurer" || role === "auditor";
-
     let successfulImports = 0;
     let importFailures = 0;
     let receiptsIssued = 0;
-    let receiptFailures = 0;
-    // Caught when the database's unique (student_id, event_id) constraint
-    // rejects a row -- e.g. a second import running at the same time, or a
-    // payment recorded for that student+event mid-import. Distinct from
-    // duplicateCount below, which is rows this import already knew were
-    // duplicates before touching the database.
-    let raceDuplicates = 0;
-
-    // Lookup tables (case-insensitive) so rows can reference the student by
-    // ID or by full name, and the event by name.
-    const studentById = new Map(
-      students.map((s) => [normalizeStudentId(s.studentId).toLowerCase(), s]),
-    );
-
-    const studentByName = new Map(
-      students.map((s) => [s.name.toLowerCase(), s]),
-    );
-
-    const eventByName = new Map(events.map((e) => [e.name.toLowerCase(), e]));
+    // Lookup tables. Student ID is preferred; an unambiguous student name is
+    // also supported for files that identify students by name only.
+    const studentById = new Map<string, Student | null>();
+    for (const student of students) {
+      const key = normalizeStudentId(student.studentId).toLowerCase();
+      studentById.set(key, studentById.has(key) ? null : student);
+    }
+    const studentByName = new Map<string, Student | null>();
+    for (const student of students) {
+      const key = student.name.trim().toLowerCase();
+      studentByName.set(key, studentByName.has(key) ? null : student);
+    }
+    const eventByName = new Map<string, Event | null>();
+    for (const event of events) {
+      const key = event.name.trim().toLowerCase();
+      eventByName.set(key, eventByName.has(key) ? null : event);
+    }
 
     const parsed: ParsedContributionRow[] = [];
 
@@ -627,12 +673,21 @@ export default function ContributionManagementSection({
         "lrn",
         "id",
       );
-
-      const studentName = pickField(row, "name", "fullname", "studentname");
+      const fileStudentName = pickField(
+        row,
+        "student",
+        "name",
+        "fullname",
+        "studentname",
+      );
 
       const student =
-        studentById.get(normalizeStudentId(fileStudentId).toLowerCase()) ??
-        studentByName.get(studentName.toLowerCase());
+        (fileStudentId
+          ? studentById.get(normalizeStudentId(fileStudentId).toLowerCase())
+          : undefined) ??
+        (fileStudentName
+          ? studentByName.get(fileStudentName.toLowerCase())
+          : undefined);
 
       if (!student) {
         unmatchedStudent++;
@@ -653,19 +708,29 @@ export default function ContributionManagementSection({
       }
 
       for (const group of groups) {
-        const event = eventByName.get(group.eventName.toLowerCase());
+        const event = eventByName.get(group.eventName.trim().toLowerCase());
 
         if (!event) {
           unmatchedEvent++;
           continue;
         }
 
-        const requiredAmount = parseAmount(group.requiredAmount);
+        const requiredAmountValue = group.requiredAmount.trim();
+        const requiredAmount = requiredAmountValue
+          ? parseAmount(requiredAmountValue)
+          : event.allocationAmount;
         const amountPaid = parseAmount(group.amountPaid);
 
         // Required amount must be a valid positive amount.
-        if (requiredAmount <= 0) {
+        if (requiredAmount === null || requiredAmount <= 0) {
           invalidAmount++;
+          continue;
+        }
+
+        // Blank cells mean "no update". Do not turn them into zero and do not
+        // overwrite a previously recorded payment with an empty spreadsheet
+        // cell. Zero is also ignored because it is not a payment receipt.
+        if (amountPaid === null || amountPaid === 0) {
           continue;
         }
 
@@ -680,14 +745,6 @@ export default function ContributionManagementSection({
 
           continue;
         }
-
-        // IMPORTANT:
-        // Do NOT skip a contribution just because the current user cannot
-        // issue receipts.
-        //
-        // The contribution and its historical Amount Paid should still be
-        // imported. Receipt/payment creation is handled separately below
-        // and remains restricted by canIssueReceipts.
 
         parsed.push({
           student,
@@ -705,172 +762,41 @@ export default function ContributionManagementSection({
       return;
     }
 
-    // Skip rows that already have a contribution record, or are duplicated
-    // within the file itself.
-    //
-    // `contributions` only holds the current table page (PAGE_SIZE rows), so
-    // checking against it here would miss existing contributions sitting on
-    // any other page and let real duplicates slip into the import on any
-    // dataset bigger than one page. Fetch the complete set once, just for
-    // this check.
-    let allContributions: ContributionRecord[];
-    try {
-      allContributions = await contributionsService.getAll();
-    } catch (error) {
-      console.error("Error loading existing contributions for import:", error);
-      toast.error("Failed to check for existing contribution records");
-      return;
-    }
-
-    const existingKeys = new Set(
-      allContributions.map(
-        (r) => `${r.studentId.toLowerCase()}|${r.eventId.toLowerCase()}`,
-      ),
-    );
-
-    const seen = new Set<string>();
-
-    const deduped = parsed.filter((c) => {
-      const key = `${c.student.id.toLowerCase()}|${c.event.id.toLowerCase()}`;
-
-      if (existingKeys.has(key) || seen.has(key)) {
-        return false;
-      }
-
-      seen.add(key);
-      return true;
-    });
-
-    const duplicateCount = parsed.length - deduped.length;
-
-    if (deduped.length === 0) {
-      toast.info("All rows in the file already have contribution records");
-      return;
-    }
-
     // Pause realtime-triggered reloads during the import.
     isImportingRef.current = true;
 
-    toast.info(`Importing ${deduped.length} contribution(s)...`);
+    toast.info(`Importing ${parsed.length} contribution(s)...`);
 
     try {
-      // Bounded concurrency so a large spreadsheet doesn't fire
-      // hundreds of Supabase requests at once.
-      const CONCURRENCY = 5;
-      let cursor = 0;
-      let receiptQueue = Promise.resolve();
-
-      const getNextReceiptNumber = async () => {
-        const previous = receiptQueue;
-
-        let resolveQueue!: () => void;
-
-        receiptQueue = new Promise<void>((resolve) => {
-          resolveQueue = resolve;
-        });
-
-        await previous;
-
+      // Process the complete dataset in order. Each iteration uses its own
+      // immutable parsed item and waits for all payment, contribution, and
+      // receipt operations to finish before moving to the next item. This is
+      // deliberately not rows.forEach(async ...) or a shared mutable row:
+      // neither can stop the import after the first asynchronous operation or
+      // accidentally save the next student's data under the previous student.
+      for (const item of parsed) {
         try {
-          return await officialReceiptNumber();
-        } finally {
-          resolveQueue();
+          const receiptIssued = await savePaymentForStudentEvent({
+            student: item.student,
+            event: item.event,
+            requiredAmount: item.requiredAmount,
+            amount: item.amountPaid,
+            mode: "replace",
+            imported: true,
+          });
+          successfulImports++;
+          if (receiptIssued) receiptsIssued++;
+        } catch (error) {
+          importFailures++;
+          console.error("Error importing a contribution row:", error);
         }
-      };
-      const worker = async () => {
-        while (cursor < deduped.length) {
-          const item = deduped[cursor++];
-
-          try {
-            const contribution = await contributionsService.create({
-              studentId: item.student.id,
-              eventId: item.event.id,
-              eventName: item.event.name,
-              requiredAmount: item.requiredAmount,
-              amountPaid: item.amountPaid,
-              remainingBalance: Math.max(
-                0,
-                item.requiredAmount - item.amountPaid,
-              ),
-            });
-            successfulImports++;
-            // Only users allowed to issue receipts should generate
-            // official receipts and payment records.
-            //
-            // The contribution itself has already stored Amount Paid,
-            // so users without receipt permission do not lose the
-            // historical payment amount.
-            if (item.amountPaid > 0 && canIssueReceipts) {
-              try {
-                const orNumber = await getNextReceiptNumber();
-
-                const receiptUrl = await autoCreateReceipt({
-                  tag: "PAYMENT",
-                  receiptNumber: orNumber,
-                  issuedTo: item.student.name,
-                  eventName: item.event.name,
-                  description: `Payment for ${item.event.name} (imported)`,
-                  amount: item.amountPaid,
-                  type: "income",
-                  date: today(),
-                  recordedBy: staffName || "Council Officer",
-                });
-
-                await paymentsService.create({
-                  studentId: item.student.id,
-                  studentName: item.student.name,
-                  eventId: item.event.id,
-                  eventName: item.event.name,
-                  contributionId: contribution.id,
-                  amount: item.amountPaid,
-                  date: today(),
-                  recordedBy: staffName || "Council Officer",
-                  receiptUrl,
-                });
-
-                receiptsIssued++;
-              } catch (receiptError) {
-                console.warn(
-                  "Auto receipt generation failed for an imported row:",
-                  receiptError,
-                );
-
-                receiptFailures++;
-              }
-            }
-          } catch (error) {
-            const isDuplicate =
-              error instanceof Error &&
-              error.message.includes(
-                "already has a contribution record for this event",
-              );
-
-            if (isDuplicate) {
-              raceDuplicates++;
-            } else {
-              importFailures++;
-              console.error("Error importing a contribution row:", error);
-            }
-          }
-        }
-      };
-
-      await Promise.all(
-        Array.from(
-          {
-            length: Math.min(CONCURRENCY, deduped.length),
-          },
-          worker,
-        ),
-      );
+      }
 
       // Combine all reasons rows may have been skipped.
       const totalSkipped =
         unmatchedStudent +
         unmatchedEvent +
-        invalidAmount +
-        duplicateCount +
-        raceDuplicates;
+        invalidAmount;
 
       const parts = [`${successfulImports} contribution(s) imported`];
       if (importFailures > 0) {
@@ -883,10 +809,6 @@ export default function ContributionManagementSection({
 
       if (totalSkipped > 0) {
         parts.push(`${totalSkipped} skipped`);
-      }
-
-      if (receiptFailures > 0) {
-        parts.push(`${receiptFailures} receipt(s) failed`);
       }
 
       toast.success(parts.join(", "));
@@ -921,7 +843,7 @@ export default function ContributionManagementSection({
             title="Import contribution records from a CSV (.csv) or Excel (.xlsx) file. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid — repeat that trio for each additional event (as in the official Student Body tracking sheet). A receipt is generated automatically for every imported row with a payment."
           >
             {importing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Skeleton className="h-4 w-4 rounded-full" />
             ) : (
               <FileText className="w-4 h-4" />
             )}
@@ -1348,7 +1270,7 @@ export default function ContributionManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Saving...
                   </>
                 ) : (
@@ -1526,7 +1448,7 @@ export default function ContributionManagementSection({
               >
                 {saving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Skeleton className="h-4 w-4 rounded-full" />
                     Recording...
                   </>
                 ) : (
