@@ -36,7 +36,18 @@ export interface EventSchedule {
   timeIn?: string;
   timeOut?: string;
 }
-
+export interface AuditLog {
+  id: string;
+  actorUserId?: string;
+  actorName: string;
+  actorRole: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  description: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
 // Event Types
 export interface Event {
   id: string;

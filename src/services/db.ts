@@ -18,13 +18,111 @@ import type {
   BoardMember,
   StudentRequirementFile,
   EventEvaluation,
+  AuditLog,
 } from "../types";
 
 // Operational tables use TEXT primary keys so they remain compatible with the
 // former Firestore document-id format. PostgreSQL does not generate a value for
 // a TEXT primary key, therefore every client-created row must receive one.
 const createRecordId = (): string => crypto.randomUUID();
+// ============================================
+// AUDIT LOG SERVICE
+// ============================================
 
+const mapAuditLog = (item: Record<string, unknown>): AuditLog => ({
+  id: item.id as string,
+  actorUserId: (item.actor_user_id as string | null) ?? undefined,
+  actorName: item.actor_name as string,
+  actorRole: item.actor_role as string,
+  action: item.action as string,
+  entityType: item.entity_type as string,
+  entityId: (item.entity_id as string | null) ?? undefined,
+  description: item.description as string,
+  metadata: (item.metadata as Record<string, unknown>) ?? {},
+  createdAt: item.created_at as string,
+});
+
+export const auditLogsService = {
+  /**
+   * Create one audit entry.
+   *
+   * Audit logs are intentionally NOT sent through offlineSyncService.
+   * An audit entry represents an action that actually reached the database.
+   * If the original operation is queued offline, its audit entry should be
+   * created when the queued operation successfully replays online.
+   */
+  async create(input: {
+    actorUserId?: string;
+    actorName: string;
+    actorRole: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    description: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<AuditLog> {
+    const id = createRecordId();
+
+    const payload = {
+      id,
+      actor_user_id: input.actorUserId ?? null,
+      actor_name: input.actorName,
+      actor_role: input.actorRole,
+      action: input.action,
+      entity_type: input.entityType,
+      entity_id: input.entityId ?? null,
+      description: input.description,
+      metadata: input.metadata ?? {},
+    };
+
+    const { data, error } = await getSupabase()
+      .from("audit_logs")
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return mapAuditLog(data);
+  },
+
+  async getRecent(limit = 8): Promise<AuditLog[]> {
+    const { data, error } = await getSupabase()
+      .from("audit_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    return (data ?? []).map(mapAuditLog);
+  },
+
+  async getPage(
+    page: number,
+    pageSize: number,
+  ): Promise<{ data: AuditLog[]; total: number }> {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await getSupabase()
+      .from("audit_logs")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return {
+      data: (data ?? []).map(mapAuditLog),
+      total: count ?? 0,
+    };
+  },
+
+  subscribe(onChange: () => void): () => void {
+    return subscribeToTables(["audit_logs"], onChange, "audit-logs-live");
+  },
+};
 // The set of tables offlineSyncService knows how to cache/queue, pulled from
 // its own method signature so this file doesn't need a second copy of that
 // union type to stay in sync with.
@@ -43,7 +141,82 @@ function isUniqueViolation(error: unknown): boolean {
     (error as { code?: string }).code === "23505"
   );
 }
+// ============================================
+// AUDIT CONTEXT
+// ============================================
 
+type AuditContext = {
+  actorUserId?: string;
+  actorName: string;
+  actorRole: string;
+};
+
+let cachedAuditContext: { userId: string; context: AuditContext } | null = null;
+
+async function getAuditContext(): Promise<AuditContext> {
+  const supabase = getSupabase();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return {
+      actorName: "Unknown User",
+      actorRole: "unknown",
+    };
+  }
+
+  if (cachedAuditContext?.userId === user.id) {
+    return cachedAuditContext.context;
+  }
+
+  const { data: roleRecord, error: roleError } = await supabase
+    .from("user_roles")
+    .select("role, name")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (roleError) {
+    console.warn("Could not load audit actor role:", roleError);
+  }
+
+  const context: AuditContext = {
+    actorUserId: user.id,
+    actorName:
+      (roleRecord?.name as string | null) ||
+      user.user_metadata?.name ||
+      user.email ||
+      "Unknown User",
+    actorRole: (roleRecord?.role as string | null) || "unknown",
+  };
+
+  cachedAuditContext = {
+    userId: user.id,
+    context,
+  };
+
+  return context;
+}
+async function buildAudit(
+  action: string,
+  entityType: string,
+  description: string,
+  entityId?: string,
+  metadata?: Record<string, unknown>,
+) {
+  const actor = await getAuditContext();
+
+  return {
+    ...actor,
+    action,
+    entityType,
+    entityId,
+    description,
+    metadata,
+  };
+}
 // Shared "online-first, cache-fallback" read pattern used by every getAll().
 async function cachedRead<T>(
   table: OfflineTable,
@@ -227,6 +400,19 @@ export const studentsService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "STUDENT_CREATED",
+        "student",
+        `Created student ${normalizedName} (${student.studentId}).`,
+        id,
+        {
+          studentId: student.studentId,
+          name: normalizedName,
+          program: student.program,
+          yearLevel: student.yearLevel,
+          section: student.section,
+        },
+      ),
       makeLocal: () => ({ id, ...student, name: normalizedName }) as Student,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -278,6 +464,15 @@ export const studentsService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "STUDENT_UPDATED",
+        "student",
+        `Updated student record ${id}.`,
+        id,
+        {
+          changes: normalizedRecord,
+        },
+      ),
       makeLocal: (current) =>
         ({ ...(current as Student), ...normalizedRecord, id }) as Student,
       executeOnline: async () => {
@@ -311,6 +506,12 @@ export const studentsService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "STUDENT_DELETED",
+        "student",
+        `Deleted student record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("students")

@@ -48,6 +48,17 @@ interface QueuedMutation {
   createdAt: number;
   attempts: number;
   lastError?: string;
+
+  audit?: {
+    actorUserId?: string;
+    actorName: string;
+    actorRole: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    description: string;
+    metadata?: Record<string, unknown>;
+  };
 }
 
 interface OfflineDatabase extends IDBDatabase {
@@ -324,6 +335,16 @@ class OfflineSyncService {
     fileStorage?: { bucket: string; path: string; blob: Blob };
     makeLocal?: (current: T | undefined) => T;
     executeOnline: () => Promise<T>;
+    audit?: {
+      actorUserId?: string;
+      actorName: string;
+      actorRole: string;
+      action: string;
+      entityType: string;
+      entityId?: string;
+      description: string;
+      metadata?: Record<string, unknown>;
+    };
   }): Promise<T | undefined> {
     const queueOffline = async (): Promise<T | undefined> => {
       const local = await this.mutateCache<T>(
@@ -339,6 +360,7 @@ class OfflineSyncService {
           kind: params.kind,
           recordId: params.recordId,
           payload: params.payload,
+          audit: params.audit,
         },
         params.fileStorage,
       );
@@ -347,16 +369,30 @@ class OfflineSyncService {
       return local;
     };
 
-    if (!this.isEnabled()) return params.executeOnline();
+    if (!this.isEnabled()) {
+      const result = await params.executeOnline();
+
+      if (params.audit) {
+        await this.writeAuditLog(params.audit, params.recordId);
+      }
+
+      return result;
+    }
     if (this.isOffline()) return queueOffline();
     try {
       const result = await params.executeOnline();
+
       await this.mutateCache<T>(
         params.table,
         params.kind,
         params.recordId,
         () => result,
       );
+
+      if (params.audit) {
+        await this.writeAuditLog(params.audit, params.recordId);
+      }
+
       return result;
     } catch (error) {
       if (!networkFailure(error)) throw error;
@@ -487,7 +523,31 @@ class OfflineSyncService {
     transaction.objectStore("uploads").delete(key);
     await transactionDone(transaction);
   }
+  private async writeAuditLog(
+    audit: NonNullable<QueuedMutation["audit"]>,
+    fallbackEntityId?: string,
+  ): Promise<void> {
+    const payload = {
+      id: crypto.randomUUID(),
+      actor_user_id: audit.actorUserId ?? null,
+      actor_name: audit.actorName,
+      actor_role: audit.actorRole,
+      action: audit.action,
+      entity_type: audit.entityType,
+      entity_id: audit.entityId ?? fallbackEntityId ?? null,
+      description: audit.description,
+      metadata: audit.metadata ?? {},
+    };
 
+    const { error } = await getSupabase().from("audit_logs").insert(payload);
+
+    if (error) {
+      console.error(
+        "Mutation succeeded, but audit log creation failed:",
+        error,
+      );
+    }
+  }
   private async replay(mutation: QueuedMutation): Promise<void> {
     // student_requirement_files rows point at a file in Supabase Storage. When
     // the create/replace was queued offline the blob was parked in the uploads
@@ -532,6 +592,9 @@ class OfflineSyncService {
     }
     if (error)
       throw new Error(error.message ?? "Supabase synchronization failed");
+    if (mutation.audit) {
+      await this.writeAuditLog(mutation.audit, mutation.recordId);
+    }
   }
 
   async sync(): Promise<void> {
