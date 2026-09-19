@@ -46,6 +46,13 @@ import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import TimeInput12 from "@/features/events/TimeInput12";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface EventManagementSectionProps {
   onBack: () => void;
@@ -641,74 +648,68 @@ export default function EventManagementSection({
                         {/* Actions */}
                         <td>
                           {canManageEvents && (
-                            <div className="relative flex justify-center">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setOpenActionMenu(
-                                    openActionMenu === event.id
-                                      ? null
-                                      : event.id,
-                                  )
-                                }
-                                className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-black/5 transition-colors"
-                                title="Event actions"
-                                aria-label={`Actions for ${event.name}`}
+                            <DropdownMenu
+                              open={openActionMenu === event.id}
+                              onOpenChange={(open) =>
+                                setOpenActionMenu(open ? event.id : null)
+                              }
+                            >
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-soft hover:text-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                  title="Event actions"
+                                  aria-label={`Actions for ${event.name}`}
+                                >
+                                  <MoreVertical className="h-5 w-5" />
+                                </button>
+                              </DropdownMenuTrigger>
+
+                              <DropdownMenuContent
+                                align="end"
+                                sideOffset={6}
+                                className="w-48 max-w-[calc(100vw-2rem)] rounded-xl border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
                               >
-                                <MoreVertical className="w-5 h-5 text-text-secondary" />
-                              </button>
+                                <DropdownMenuItem
+                                  onSelect={() => handleOpenEditEvent(event)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
 
-                              {openActionMenu === event.id && (
-                                <div className="absolute right-0 top-10 z-30 w-36 rounded-xl border border-gray-200 bg-white shadow-lg overflow-hidden">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenActionMenu(null);
-                                      handleOpenEditEvent(event);
-                                    }}
-                                    className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                    Edit
-                                  </button>
-
-                                  {event.evaluationActive ? (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleStopEvaluationRollout(event)
-                                      }
-                                      className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
-                                    >
-                                      <UserCheck className="w-4 h-4" />
-                                      Turn off evaluation
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleOpenEvaluationRollout(event)
-                                      }
-                                      className="w-full px-4 py-2.5 text-left text-sm text-dark hover:bg-gray-50 flex items-center gap-2"
-                                    >
-                                      <UserCheck className="w-4 h-4" />
-                                      Roll out evaluation
-                                    </button>
-                                  )}
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleOpenDeleteConfirm(event)
+                                {event.evaluationActive ? (
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      handleStopEvaluationRollout(event)
                                     }
-                                    className="w-full px-4 py-2.5 text-left text-sm text-red hover:bg-red/5 flex items-center gap-2"
                                   >
-                                    <Trash2 className="w-4 h-4" />
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                                    <UserCheck className="h-4 w-4" />
+                                    Turn off evaluation
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      handleOpenEvaluationRollout(event)
+                                    }
+                                  >
+                                    <UserCheck className="h-4 w-4" />
+                                    Roll out evaluation
+                                  </DropdownMenuItem>
+                                )}
+
+                                <DropdownMenuSeparator />
+
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onSelect={() =>
+                                    handleOpenDeleteConfirm(event)
+                                  }
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           )}
                         </td>
                       </tr>
