@@ -226,4 +226,5 @@ export type ViewState =
   | "transaction-management"
   | "feedback-management"
   | "report-management"
-  | "requirement-files-management";
+  | "requirement-files-management"
+  | "system-logs";

@@ -97,6 +97,10 @@ function buildAdminNavItems(role: UserRole | null): {
           },
         ]
       : []),
+
+    ...(role === "admin"
+      ? [{ label: "System Logs", view: "system-logs" as ViewState }]
+      : []),
   ];
 
   const main: NavItem[] = [

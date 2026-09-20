@@ -47,6 +47,7 @@ const FeedbackManagementSection = lazy(
 const ReportManagementSection = lazy(
   () => import("@/sections/ReportManagementSection"),
 );
+const SystemLogsSection = lazy(() => import("@/sections/SystemLogsSection"));
 const AttendanceManagementSection = lazy(
   () => import("@/sections/AttendanceManagementSection"),
 );
@@ -224,6 +225,8 @@ function App() {
       case "student-management":
         return role === "admin" || role === "secretary";
       case "requirement-files-management":
+        return role === "admin";
+      case "system-logs":
         return role === "admin";
       case "contribution-management":
         return role === "admin" || role === "treasurer" || role === "auditor";
@@ -456,6 +459,13 @@ function App() {
           <ReportManagementSection
             onBack={() => navigateTo("admin-dashboard")}
           />
+        ) : (
+          renderAdminLogin()
+        );
+
+      case "system-logs":
+        return canAccess(currentView) ? (
+          <SystemLogsSection onBack={() => navigateTo("admin-dashboard")} />
         ) : (
           renderAdminLogin()
         );
