@@ -1518,7 +1518,41 @@ export const contributionsService = {
 // ============================================
 // PAYMENTS SERVICE
 // ============================================
+const toCurrencyCents = (amount: number): number =>
+  Math.round((amount + Number.EPSILON) * 100);
+
+const hasCurrencyPrecision = (amount: number): boolean =>
+  Math.abs(amount * 100 - Math.round(amount * 100)) < 1e-8;
+
+const requiredPaymentAmountError = (
+  amount: number,
+  requiredAmount: number,
+): string | null => {
+  if (
+    !Number.isFinite(amount) ||
+    !Number.isFinite(requiredAmount) ||
+    requiredAmount <= 0 ||
+    amount <= 0 ||
+    !hasCurrencyPrecision(amount) ||
+    toCurrencyCents(amount) !== toCurrencyCents(requiredAmount)
+  ) {
+    const formattedRequiredAmount = Number.isInteger(requiredAmount)
+      ? requiredAmount.toString()
+      : requiredAmount.toFixed(2);
+
+    return `Invalid payment amount. The required payment for this event is ₱${formattedRequiredAmount}. Please enter the exact amount.`;
+  }
+
+  return null;
+};
+
 export const paymentsService = {
+  /** Validate the exact amount required for a standard event payment. */
+  assertRequiredPaymentAmount(amount: number, requiredAmount: number): void {
+    const validationError = requiredPaymentAmountError(amount, requiredAmount);
+    if (validationError) throw new Error(validationError);
+  },
+
   async getAll(): Promise<PaymentRecord[]> {
     return cachedRead<PaymentRecord>("payments", async () => {
       const { data, error } = await getSupabase()
@@ -1687,6 +1721,24 @@ export const paymentsService = {
       if (!concurrent) throw error;
       return this.update(concurrent.id, record);
     }
+  },
+
+  /**
+   * Record a standard required payment. Unlike additive installment/import
+   * operations, this path only accepts the event's exact required amount.
+   * Keeping this check here prevents callers from bypassing the UI validation.
+   */
+  async upsertRequiredPayment(
+    record: Omit<PaymentRecord, "id">,
+    requiredAmount: number,
+  ): Promise<PaymentRecord> {
+    const validationError = requiredPaymentAmountError(
+      record.amount,
+      requiredAmount,
+    );
+    if (validationError) throw new Error(validationError);
+
+    return this.upsertForStudentAndEvent(record);
   },
 
   async update(

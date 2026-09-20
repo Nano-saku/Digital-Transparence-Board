@@ -9,7 +9,6 @@ import {
   Coins,
   FileText,
   CreditCard,
-  DollarSign,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
@@ -334,16 +333,16 @@ export default function ContributionManagementSection({
     return null;
   };
 
-  type PaymentImportMode = "add" | "replace";
+  type PaymentImportMode = "add" | "replace" | "required";
 
   /**
    * Shared payment path for manual recording and spreadsheet imports.
    *
-   * Manual entry remains additive: entering another installment increases the
-   * current total. Spreadsheet Amount Paid is a snapshot, so importing it
-   * replaces the current total. In both cases there is only one current
-   * payment row for the student/event pair and the contribution is recalculated
-   * from the resulting total.
+   * Manual installment entry remains additive, while spreadsheet Amount Paid is
+   * a snapshot that replaces the current total. The standard required-payment
+   * path validates and records the event's exact required amount. In all cases
+   * there is one current payment row and the contribution is recalculated from
+   * the resulting total.
    */
   const savePaymentForStudentEvent = async (options: {
     student: Student;
@@ -353,7 +352,13 @@ export default function ContributionManagementSection({
     mode: PaymentImportMode;
     imported?: boolean;
   }): Promise<boolean> => {
-    const { student, event, amount, mode, imported = false } = options;
+    const {
+      student,
+      event,
+      amount,
+      mode,
+      imported = false,
+    } = options;
     const canIssueReceipts =
       role === "admin" || role === "treasurer" || role === "auditor";
     let contribution = await contributionsService.getByStudentAndEvent(
@@ -364,6 +369,12 @@ export default function ContributionManagementSection({
       options.requiredAmount ??
       contribution?.requiredAmount ??
       event.allocationAmount;
+
+    if (mode === "required") {
+      // Validate before creating a contribution, receipt, or payment so an
+      // invalid standard payment cannot leave behind a partial side effect.
+      paymentsService.assertRequiredPaymentAmount(amount, requiredAmount);
+    }
 
     if (!contribution) {
       try {
@@ -392,9 +403,9 @@ export default function ContributionManagementSection({
             contribution.requiredAmount,
             contribution.amountPaid,
           )
-        : !Number.isFinite(amount) || amount <= 0
+        : mode === "replace" && (!Number.isFinite(amount) || amount <= 0)
           ? "Payment amount must be greater than zero."
-          : amount > requiredAmount
+          : mode === "replace" && amount > requiredAmount
             ? `Payment exceeds the required amount of ₱${requiredAmount.toFixed(2)}.`
             : null;
 
@@ -437,7 +448,7 @@ export default function ContributionManagementSection({
       }
     }
 
-    await paymentsService.upsertForStudentAndEvent({
+    const paymentRecord = {
       studentId: student.id,
       studentName: student.name,
       eventId: event.id,
@@ -448,7 +459,13 @@ export default function ContributionManagementSection({
       recordedBy: staffName || "Council Officer",
       receiptUrl: receiptUrl ?? existingPayment?.receiptUrl,
       orNumber: receiptNumber ?? existingPayment?.orNumber,
-    });
+    };
+
+    if (mode === "required") {
+      await paymentsService.upsertRequiredPayment(paymentRecord, requiredAmount);
+    } else {
+      await paymentsService.upsertForStudentAndEvent(paymentRecord);
+    }
 
     await contributionsService.update(contribution.id, {
       eventName: event.name,
@@ -476,7 +493,7 @@ export default function ContributionManagementSection({
         student,
         event,
         amount: paymentForm.amount,
-        mode: "add",
+        mode: "required",
       });
 
       if (receiptIssued) {
@@ -494,7 +511,9 @@ export default function ContributionManagementSection({
       await loadData();
     } catch (error) {
       console.error("Error recording payment:", error);
-      toast.error("Failed to record payment");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to record payment",
+      );
     } finally {
       setSaving(false);
     }
@@ -1379,7 +1398,7 @@ export default function ContributionManagementSection({
                 Amount (₱)
               </label>
               <div className="relative">
-                <DollarSign className="w-4 h-4 text-text-secondary absolute left-3 top-1/2 -translate-y-1/2" />
+                <span className="text-text-secondary absolute left-3 top-1/2 -translate-y-1/2">₱</span>
                 <input
                   type="number"
                   min={0}
