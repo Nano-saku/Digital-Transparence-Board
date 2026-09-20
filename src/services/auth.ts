@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 import { getSupabase } from "@/lib/supabase";
+import { auditLogsService } from "@/services/db";
 import type { UserRole } from "@/types";
 
 // ------------------------------------------------------------------
@@ -164,6 +165,22 @@ export const authService = {
     };
 
     saveCachedAuthSession(authSession);
+
+    try {
+      await auditLogsService.create({
+        actorUserId: data.user.id,
+        actorName: authSession.displayName,
+        actorRole: authSession.role,
+        action: "OFFICER_SIGNED_IN",
+        entityType: "authentication",
+        entityId: data.user.id,
+        description: `${authSession.displayName} signed in successfully.`,
+        metadata: { email: data.user.email ?? undefined },
+      });
+    } catch (auditError) {
+      // Login must remain usable if the audit table is temporarily unavailable.
+      console.warn("Could not record officer login audit:", auditError);
+    }
 
     return authSession;
   },

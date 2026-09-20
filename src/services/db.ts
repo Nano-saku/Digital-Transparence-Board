@@ -101,15 +101,28 @@ export const auditLogsService = {
   async getPage(
     page: number,
     pageSize: number,
+    options?: {
+      entityTypes?: readonly string[];
+      actorRoles?: readonly string[];
+    },
   ): Promise<{ data: AuditLog[]; total: number }> {
     const from = page * pageSize;
     const to = from + pageSize - 1;
 
-    const { data, error, count } = await getSupabase()
+    let query = getSupabase()
       .from("audit_logs")
       .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .range(from, to);
+      .order("created_at", { ascending: false });
+
+    if (options?.entityTypes?.length) {
+      query = query.in("entity_type", [...options.entityTypes]);
+    }
+
+    if (options?.actorRoles?.length) {
+      query = query.in("actor_role", [...options.actorRoles]);
+    }
+
+    const { data, error, count } = await query.range(from, to);
 
     if (error) throw error;
 
@@ -644,6 +657,13 @@ export const eventsService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "EVENT_CREATED",
+        "event",
+        `Created event ${event.name}.`,
+        id,
+        { name: event.name, allocationAmount: event.allocationAmount },
+      ),
       makeLocal: () => ({ id, ...event }) as Event,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -701,6 +721,13 @@ export const eventsService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "EVENT_UPDATED",
+        "event",
+        `Updated event record ${id}.`,
+        id,
+        { changes: event },
+      ),
       makeLocal: (current) =>
         ({ ...(current as Event), ...event, id }) as Event,
       executeOnline: async () => {
@@ -727,6 +754,12 @@ export const eventsService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "EVENT_DELETED",
+        "event",
+        `Deleted event record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("events")
@@ -936,6 +969,13 @@ export const attendanceService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "ATTENDANCE_CREATED",
+        "attendance",
+        `Recorded attendance for student ${record.studentId} at ${record.eventName}.`,
+        id,
+        { studentId: record.studentId, eventId: record.eventId, status: record.status },
+      ),
       makeLocal: () => ({ id, ...record }) as AttendanceRecord,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -987,6 +1027,13 @@ export const attendanceService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "ATTENDANCE_UPDATED",
+        "attendance",
+        `Updated attendance record ${id}.`,
+        id,
+        { changes: record },
+      ),
       makeLocal: (current) =>
         ({
           ...(current as AttendanceRecord),
@@ -1029,6 +1076,12 @@ export const attendanceService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "ATTENDANCE_DELETED",
+        "attendance",
+        `Deleted attendance record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("attendance")
@@ -1400,6 +1453,13 @@ export const contributionsService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "CONTRIBUTION_CREATED",
+        "contribution",
+        `Created contribution for student ${record.studentId} at ${record.eventName}.`,
+        id,
+        { studentId: record.studentId, eventId: record.eventId, amountPaid: record.amountPaid },
+      ),
       makeLocal: () => ({ id, ...record }) as ContributionRecord,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -1467,6 +1527,13 @@ export const contributionsService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "CONTRIBUTION_UPDATED",
+        "contribution",
+        `Updated contribution record ${id}.`,
+        id,
+        { changes: record },
+      ),
       makeLocal: (current) =>
         ({
           ...(current as ContributionRecord),
@@ -1506,6 +1573,12 @@ export const contributionsService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "CONTRIBUTION_DELETED",
+        "contribution",
+        `Deleted contribution record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("contributions")
@@ -1580,6 +1653,49 @@ export const paymentsService = {
         })) || []
       );
     });
+  },
+
+  /**
+   * Read the existing payment rows used by Contribution Management.
+   * Contribution Logs is a derived view of this source table; it does not
+   * create a second log row or depend on a notification/audit side effect.
+   */
+  async getPage(
+    page: number,
+    pageSize: number,
+  ): Promise<{ data: PaymentRecord[]; total: number }> {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error, count } = await getSupabase()
+      .from("payments")
+      .select("*", { count: "exact" })
+      .order("date", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return {
+      data:
+        data?.map((item) => ({
+          id: item.id,
+          studentId: item.student_id,
+          studentName: item.student_name,
+          eventId: item.event_id,
+          eventName: item.event_name,
+          contributionId: item.contribution_id,
+          amount: item.amount,
+          date: item.date,
+          receiptUrl: item.receipt_url || undefined,
+          orNumber: item.or_number || undefined,
+          recordedBy: item.recorded_by,
+        })) || [],
+      total: count ?? 0,
+    };
+  },
+
+  subscribe(onChange: () => void): () => void {
+    return subscribeToTables(["payments"], onChange, "payment-logs-live");
   },
 
   async getByStudentId(studentId: string): Promise<PaymentRecord[]> {
@@ -1664,6 +1780,13 @@ export const paymentsService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "PAYMENT_CREATED",
+        "payment",
+        `Recorded payment for ${record.studentName} at ${record.eventName}.`,
+        id,
+        { studentId: record.studentId, eventId: record.eventId, amount: record.amount },
+      ),
       makeLocal: () => ({ id, ...record }) as PaymentRecord,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -1771,6 +1894,13 @@ export const paymentsService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "PAYMENT_UPDATED",
+        "payment",
+        `Updated payment record ${id}.`,
+        id,
+        { changes: record },
+      ),
       makeLocal: (current) =>
         ({ ...(current as PaymentRecord), ...record, id }) as PaymentRecord,
       executeOnline: async () => {
@@ -1823,6 +1953,14 @@ export const paymentsService = {
 
     if (contributionError) throw contributionError;
 
+    const audit = await buildAudit(
+      "PAYMENT_DELETED",
+      "payment",
+      `Deleted payments for contribution ${id}.`,
+      id,
+      { studentId: contribution.student_id, eventId: contribution.event_id },
+    );
+
     // Delete related payments
     const { error: paymentError } = await supabase
       .from("payments")
@@ -1839,6 +1977,8 @@ export const paymentsService = {
       .eq("id", id);
 
     if (contributionDeleteError) throw contributionDeleteError;
+
+    await auditLogsService.create(audit);
   },
 };
 
@@ -1888,6 +2028,13 @@ export const transactionsService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "TRANSACTION_CREATED",
+        "transaction",
+        `Created ${record.type} transaction: ${record.description}.`,
+        id,
+        { amount: record.amount, type: record.type, eventId: record.eventId },
+      ),
       makeLocal: () => ({ id, ...record }) as Transaction,
       executeOnline: async () => {
         const { data, error } = await getSupabase()
@@ -1935,6 +2082,13 @@ export const transactionsService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "TRANSACTION_UPDATED",
+        "transaction",
+        `Updated transaction record ${id}.`,
+        id,
+        { changes: record },
+      ),
       makeLocal: (current) =>
         ({ ...(current as Transaction), ...record, id }) as Transaction,
       executeOnline: async () => {
@@ -1970,6 +2124,12 @@ export const transactionsService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "TRANSACTION_DELETED",
+        "transaction",
+        `Deleted transaction record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("transactions")
@@ -2077,6 +2237,13 @@ export const feedbackService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "FEEDBACK_UPDATED",
+        "feedback",
+        `Updated feedback record ${id}.`,
+        id,
+        { changes: item },
+      ),
       makeLocal: (current) =>
         ({ ...(current as FeedbackItem), ...item, id }) as FeedbackItem,
       executeOnline: async () => {
@@ -2112,6 +2279,12 @@ export const feedbackService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "FEEDBACK_DELETED",
+        "feedback",
+        `Deleted feedback record ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("feedback")
@@ -2132,6 +2305,13 @@ export const feedbackService = {
       kind: "update",
       recordId: id,
       payload: { status },
+      audit: await buildAudit(
+        "FEEDBACK_STATUS_UPDATED",
+        "feedback",
+        `Updated feedback status for record ${id} to ${status}.`,
+        id,
+        { status },
+      ),
       executeOnline: async () => {
         const { error } = await getSupabase()
           .from("feedback")
@@ -2379,6 +2559,13 @@ export const studentRequirementFilesService = {
       kind: "create",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "REQUIREMENT_FILE_CREATED",
+        "requirement_file",
+        `Uploaded requirement file ${input.fileName}.`,
+        id,
+        { title: input.title, fileName: input.fileName },
+      ),
       fileStorage: {
         bucket: "student-requirements",
         path,
@@ -2459,6 +2646,13 @@ export const studentRequirementFilesService = {
       kind: "update",
       recordId: id,
       payload: updateData,
+      audit: await buildAudit(
+        "REQUIREMENT_FILE_UPDATED",
+        "requirement_file",
+        `Updated requirement file ${id}.`,
+        id,
+        { changes: input },
+      ),
       makeLocal: (current) =>
         ({
           ...(current as StudentRequirementFile),
@@ -2504,6 +2698,13 @@ export const studentRequirementFilesService = {
       kind: "update",
       recordId: id,
       payload,
+      audit: await buildAudit(
+        "REQUIREMENT_FILE_REPLACED",
+        "requirement_file",
+        `Replaced requirement file ${id} with ${fileName}.`,
+        id,
+        { fileName },
+      ),
       fileStorage: {
         bucket: "student-requirements",
         path,
@@ -2575,6 +2776,12 @@ export const studentRequirementFilesService = {
       kind: "delete",
       recordId: id,
       payload: {},
+      audit: await buildAudit(
+        "REQUIREMENT_FILE_DELETED",
+        "requirement_file",
+        `Deleted requirement file ${id}.`,
+        id,
+      ),
       executeOnline: async () => {
         const { data: current } = await getSupabase()
           .from("student_requirement_files")
