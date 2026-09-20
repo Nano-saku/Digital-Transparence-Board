@@ -96,13 +96,13 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
               required data privacy notice at the bottom. Download the complete pass as PNG or SVG.
             </p>
 
-            <div className="sticky bottom-0 z-10 -mx-1 border-t border-[var(--dssc-border)] bg-[var(--dssc-off-white)] px-1 pb-1 pt-3 shadow-[0_-8px_16px_rgba(244,246,252,0.95)]">
+            <div className="student-qr-actions sticky bottom-0 z-10 -mx-1 border-t px-1 pb-1 pt-3">
               <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={handleDownloadPng}
                   disabled={downloading || !passSrc}
-                  className="min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-primary min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {downloading ? (
                     <Skeleton className="h-4 w-4 rounded-full" />
@@ -115,7 +115,7 @@ export default function StudentQrModal({ student, onClose }: StudentQrModalProps
                   type="button"
                   onClick={handleDownloadSvg}
                   disabled={downloading}
-                  className="min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-primary min-h-11 flex-1 px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {downloading ? (
                     <Skeleton className="h-4 w-4 rounded-full" />

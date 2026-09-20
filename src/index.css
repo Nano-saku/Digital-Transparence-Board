@@ -57,7 +57,7 @@
     --grad-seal-metallic: radial-gradient(circle at 75% 20%, rgba(102, 130, 255, 0.3), transparent 32%), linear-gradient(135deg, #080d22 0%, #0e1734 55%, #172457 100%);
     --grad-card-accent: linear-gradient(90deg, #526ff2 0%, #9cacff 100%); --grad-btn-primary: linear-gradient(135deg, #526ff2 0%, #7c91ff 100%);
     --status-success: #54d98b; --status-warning: #e9bd5c; --status-danger: #f17777;
-    --glass-bg: rgba(16, 24, 49, 0.86); --glass-border: rgba(166, 180, 226, 0.24); --glass-shadow: 0 24px 70px rgba(0, 0, 0, 0.26);
+    --glass-bg: rgba(16, 24, 49, 0.86); --glass-border: rgba(166, 180, 226, 0.24); --glass-shadow: 0 24px 70px rgba(0, 0, 0, 0.26); --student-qr-actions-shadow: 0 -8px 16px rgba(4, 8, 22, 0.82);
   }
   [data-theme="light"] {
     color-scheme: light;
@@ -101,7 +101,7 @@
     --control-border: rgba(55, 79, 126, 0.35); --focus-ring: #8a6200;
     --grad-seal-metallic: radial-gradient(circle at 75% 20%, rgba(82, 111, 242, 0.18), transparent 32%), linear-gradient(135deg, #e9f0ff 0%, #f8fbff 55%, #dbe7ff 100%);
     --grad-card-accent: linear-gradient(90deg, #3154d8 0%, #6682ff 100%); --grad-btn-primary: linear-gradient(135deg, #3154d8 0%, #526ff2 100%);
-    --glass-bg: rgba(255, 255, 255, 0.94); --glass-border: rgba(55, 79, 126, 0.22); --glass-shadow: 0 24px 70px rgba(36, 65, 122, 0.16);
+    --glass-bg: rgba(255, 255, 255, 0.94); --glass-border: rgba(55, 79, 126, 0.22); --glass-shadow: 0 24px 70px rgba(36, 65, 122, 0.16); --student-qr-actions-shadow: 0 -8px 16px rgba(244, 246, 252, 0.95);
   }
   * { @apply border-border; }
   html { scroll-behavior: smooth; }
@@ -144,6 +144,7 @@
   .btn-primary { background: var(--grad-btn-primary); border: 1px solid var(--dssc-metallic-highlight); color: var(--text-on-primary); box-shadow: 0 10px 25px rgba(82, 111, 242, 0.22); }
   .btn-primary:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 15px 32px rgba(82, 111, 242, 0.34); }
   .btn-primary:disabled, .glass-button:disabled { opacity: 0.52; cursor: not-allowed; transform: none; box-shadow: none; }
+  .student-qr-actions { background: var(--surface-raised); border-color: var(--border-subtle); box-shadow: var(--student-qr-actions-shadow); }
   .glass-table { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--glass-border); border-radius: 1rem; background: var(--surface); }
   .glass-table th { background: var(--surface-soft); color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
   .glass-table td, .glass-table th { padding: 0.85rem 1rem; text-align: left; }
