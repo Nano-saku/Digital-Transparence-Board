@@ -1041,9 +1041,9 @@ export default function ContributionManagementSection({
           disabled={loading}
         >
           <option value="">All Statuses</option>
-          <option value="Unpaid">Unpaid</option>
-          <option value="Partial Payment">Partial Payment</option>
-          <option value="Fully Paid">Fully Paid</option>
+          <option value="unpaid">Unpaid</option>
+          <option value="partial">Partial Payment</option>
+          <option value="paid">Fully Paid</option>
         </select>
       </div>
 

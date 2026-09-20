@@ -1229,7 +1229,10 @@ export const contributionsService = {
         break;
 
       case "paid":
-        query = query.lte("remaining_balance", 0);
+        // Match contributionStatus(): a fully paid contribution must have an
+        // actual payment and no remaining balance. Keeping this predicate in
+        // the same query as the event filter scopes the status to that event.
+        query = query.gt("amount_paid", 0).lte("remaining_balance", 0);
         break;
 
       default:
