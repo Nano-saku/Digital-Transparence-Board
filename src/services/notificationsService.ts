@@ -59,6 +59,7 @@ async function getForOfficer(limit = 50): Promise<AppNotification[]> {
   const { data, error } = await getSupabase()
     .from("notifications")
     .select("*")
+    .neq("type", "payment")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -70,6 +71,7 @@ async function getUnreadCountForOfficer(): Promise<number> {
   const { count, error } = await getSupabase()
     .from("notifications")
     .select("id", { count: "exact", head: true })
+    .neq("type", "payment")
     .is("read_at", null);
 
   if (error) throw error;
@@ -102,7 +104,10 @@ function subscribeOfficer(onInsert: (n: AppNotification) => void): () => void {
   channel.on(
     "postgres_changes",
     { event: "INSERT", schema: "public", table: "notifications" },
-    (payload) => onInsert(fromRow(payload.new as NotificationRow)),
+    (payload) => {
+      const row = payload.new as NotificationRow;
+      if (row.type !== "payment") onInsert(fromRow(row));
+    },
   );
 
   channel.subscribe();
@@ -127,6 +132,7 @@ async function getForStudent(
     .or(
       `recipient_kind.eq.all_students,and(recipient_kind.eq.student,recipient_student_id.eq.${studentId})`,
     )
+    .neq("type", "payment")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -147,9 +153,10 @@ function subscribeStudent(
     (payload) => {
       const row = payload.new as NotificationRow;
       const relevant =
-        row.recipient_kind === "all_students" ||
-        (row.recipient_kind === "student" &&
-          row.recipient_student_id === studentId);
+        row.type !== "payment" &&
+        (row.recipient_kind === "all_students" ||
+          (row.recipient_kind === "student" &&
+            row.recipient_student_id === studentId));
       if (relevant) onInsert(fromRow(row));
     },
   );
@@ -172,6 +179,7 @@ async function getPublicBroadcasts(limit = 20): Promise<AppNotification[]> {
     .from("notifications")
     .select("*")
     .eq("recipient_kind", "all_students")
+    .neq("type", "payment")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -190,7 +198,9 @@ function subscribePublicBroadcasts(
     { event: "INSERT", schema: "public", table: "notifications" },
     (payload) => {
       const row = payload.new as NotificationRow;
-      if (row.recipient_kind === "all_students") onInsert(fromRow(row));
+      if (row.type !== "payment" && row.recipient_kind === "all_students") {
+        onInsert(fromRow(row));
+      }
     },
   );
 

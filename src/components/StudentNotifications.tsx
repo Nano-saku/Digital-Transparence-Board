@@ -11,8 +11,9 @@ interface StudentNotificationsProps {
 }
 
 /**
- * Alerts relevant to one student's record — payment confirmations,
- * newly published requirement files, upcoming contribution deadlines.
+ * Alerts relevant to one student's record — newly published requirement
+ * files and upcoming contribution deadlines. Payment activity remains in
+ * Contribution Logs rather than the Notifications area.
  * There's no student login, so this is just a live view of public rows,
  * not a personal inbox: nothing here is confidential (the same data is
  * already visible on the record page itself).
