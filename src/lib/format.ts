@@ -21,6 +21,33 @@ export function formatDate(dateString: string | Date): string {
 }
 
 /**
+ * Formats an authoritative ISO/PostgreSQL timestamp in Philippine Time.
+ *
+ * The timezone is deliberately explicit so log timestamps do not change when
+ * an officer views the application from a device configured for another zone.
+ */
+export function formatPhilippineDateTime(value?: string | null): string {
+  if (!value) return "—";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+
+  return `${part("month")} ${part("day")}, ${part("year")} • ${part("hour")}:${part("minute")} ${part("dayPeriod")}`;
+}
+
+/**
  * Formats a peso amount the way the rest of the app displays money, e.g.
  * `1500 -> "₱1,500"`. Use this instead of inline `₱{n.toLocaleString()}`.
  */

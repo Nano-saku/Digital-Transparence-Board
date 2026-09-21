@@ -7,6 +7,7 @@ import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
 import Pagination from "@/components/common/Pagination";
 import SectionLoader from "@/components/SectionLoader";
+import { formatPhilippineDateTime } from "@/lib/format";
 
 interface SystemLogsSectionProps {
   onBack: () => void;
@@ -31,15 +32,6 @@ function officerRoleFromName(name: string): string {
     ["board member", "Board Member"],
   ].find(([key]) => normalized.includes(key));
   return role?.[1] ?? "Officer";
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
 }
 
 function formatLabel(value: string): string {
@@ -93,7 +85,7 @@ function LogsTable({
                 {log.entityType ? formatLabel(log.entityType) : "—"}
               </td>
               <td className="whitespace-nowrap text-text-secondary">
-                {formatDateTime(log.createdAt)}
+                {formatPhilippineDateTime(log.createdAt)}
               </td>
             </tr>
           ))}
@@ -141,7 +133,7 @@ function PaymentLogsTable({ logs }: { logs: PaymentRecord[] }) {
                 {payment.recordedBy ? officerRoleFromName(payment.recordedBy) : "—"}
               </td>
               <td className="whitespace-nowrap text-text-secondary">
-                {formatDateTime(payment.date)}
+                {formatPhilippineDateTime(payment.recordedAt)}
               </td>
               <td className="text-text-secondary">{payment.orNumber || payment.id}</td>
             </tr>

@@ -246,7 +246,28 @@ export const authService = {
     return null;
   },
 
-  async signOut(): Promise<void> {
+  async signOut(session?: AuthSession): Promise<void> {
+    if (session) {
+      try {
+        // Write this before signing out while the authenticated session still
+        // exists. The database supplies created_at, so the timestamp is the
+        // actual successful logout operation rather than a page-load/view time.
+        await auditLogsService.create({
+          actorUserId: session.user.id,
+          actorName: session.displayName,
+          actorRole: session.role,
+          action: "OFFICER_SIGNED_OUT",
+          entityType: "authentication",
+          entityId: session.user.id,
+          description: `${session.displayName} signed out.`,
+          metadata: { email: session.user.email ?? undefined },
+        });
+      } catch (auditError) {
+        // Logout must still complete if audit storage is temporarily unavailable.
+        console.warn("Could not record officer logout audit:", auditError);
+      }
+    }
+
     clearCachedAuthSession();
     await getSupabase().auth.signOut();
   },

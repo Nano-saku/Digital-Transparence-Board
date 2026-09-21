@@ -559,6 +559,22 @@ $$;
 ALTER FUNCTION public.is_staff() OWNER TO postgres;
 
 --
+-- Name: set_payment_recorded_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.set_payment_recorded_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.recorded_at := now();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_payment_recorded_at() OWNER TO postgres;
+
+--
 -- Name: notify_on_deadline_change(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1054,11 +1070,32 @@ CREATE TABLE public.payments (
     receipt_url text,
     or_number text,
     recorded_by text DEFAULT ''::text NOT NULL,
-    contribution_id text
+    contribution_id text,
+    recorded_at timestamp with time zone
 );
 
 
 ALTER TABLE public.payments OWNER TO postgres;
+
+--
+-- Name: audit_logs; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.audit_logs (
+    id text NOT NULL,
+    actor_user_id uuid,
+    actor_name text NOT NULL,
+    actor_role text NOT NULL,
+    action text NOT NULL,
+    entity_type text NOT NULL,
+    entity_id text,
+    description text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.audit_logs OWNER TO postgres;
 
 --
 -- Name: push_subscriptions; Type: TABLE; Schema: public; Owner: postgres
@@ -1394,6 +1431,27 @@ CREATE UNIQUE INDEX idx_payments_or_number_unique ON public.payments USING btree
 
 
 --
+-- Name: idx_payments_recorded_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_payments_recorded_at ON public.payments USING btree (recorded_at DESC);
+
+
+--
+-- Name: idx_audit_logs_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_logs_created_at ON public.audit_logs USING btree (created_at DESC);
+
+
+--
+-- Name: idx_audit_logs_entity_type; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_audit_logs_entity_type ON public.audit_logs USING btree (entity_type);
+
+
+--
 -- Name: idx_payments_student_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -1433,6 +1491,13 @@ CREATE INDEX idx_transactions_event_id ON public.transactions USING btree (event
 --
 
 CREATE TRIGGER payments_assign_or_number BEFORE INSERT ON public.payments FOR EACH ROW EXECUTE FUNCTION public.assign_payment_or_number();
+
+
+--
+-- Name: payments payments_set_recorded_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER payments_set_recorded_at BEFORE INSERT OR UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION public.set_payment_recorded_at();
 
 
 --
@@ -1570,6 +1635,22 @@ ALTER TABLE ONLY public.payments
 
 ALTER TABLE ONLY public.payments
     ADD CONSTRAINT payments_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE;
+
+
+--
+-- Name: audit_logs audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_logs
+    ADD CONSTRAINT audit_logs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: audit_logs audit_logs_actor_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.audit_logs
+    ADD CONSTRAINT audit_logs_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 
 
 --
@@ -1867,6 +1948,25 @@ ALTER TABLE public.or_sequence ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: audit_logs audit_logs_read_admin; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY audit_logs_read_admin ON public.audit_logs FOR SELECT TO authenticated USING (public.has_role('admin'::text));
+
+
+--
+-- Name: audit_logs audit_logs_insert_staff; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY audit_logs_insert_staff ON public.audit_logs FOR INSERT TO authenticated WITH CHECK (public.is_staff());
 
 --
 -- Name: payments payments_read_public; Type: POLICY; Schema: public; Owner: postgres

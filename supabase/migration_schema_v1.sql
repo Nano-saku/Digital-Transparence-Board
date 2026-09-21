@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS public.payments (
     date         TEXT NOT NULL DEFAULT '',
     receipt_url  TEXT,
     or_number    TEXT,
-    recorded_by  TEXT NOT NULL DEFAULT ''
+    recorded_by  TEXT NOT NULL DEFAULT '',
+    recorded_at  TIMESTAMPTZ
 );
 
 -- payments.contribution_id + the OR-number auto-assign trigger below both
@@ -99,6 +100,43 @@ CREATE TABLE IF NOT EXISTS public.payments (
 -- missing them.
 ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS contribution_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_payments_contribution_id ON public.payments (contribution_id);
+CREATE INDEX IF NOT EXISTS idx_payments_recorded_at ON public.payments (recorded_at DESC);
+
+-- Database-owned payment operation timestamp. The legacy `date` column is a
+-- business date and intentionally remains unchanged.
+DROP TRIGGER IF EXISTS payments_set_recorded_at ON public.payments;
+DROP FUNCTION IF EXISTS public.set_payment_recorded_at();
+
+CREATE FUNCTION public.set_payment_recorded_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.recorded_at := now();
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER payments_set_recorded_at
+    BEFORE INSERT OR UPDATE ON public.payments
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_payment_recorded_at();
+
+-- Officer/system activity. created_at is the source of truth for display.
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id             TEXT PRIMARY KEY,
+    actor_user_id  UUID REFERENCES auth.users (id) ON DELETE SET NULL,
+    actor_name     TEXT NOT NULL,
+    actor_role     TEXT NOT NULL,
+    action         TEXT NOT NULL,
+    entity_type    TEXT NOT NULL,
+    entity_id      TEXT,
+    description    TEXT NOT NULL,
+    metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON public.audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_type ON public.audit_logs (entity_type);
 
 -- OR Sequence
 CREATE TABLE IF NOT EXISTS public.or_sequence (

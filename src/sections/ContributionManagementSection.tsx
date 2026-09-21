@@ -38,7 +38,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { formatDate, formatPeso, today } from "@/lib/format";
+import {
+  formatPhilippineDateTime,
+  formatPeso,
+  today,
+} from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
 import {
@@ -945,7 +949,7 @@ export default function ContributionManagementSection({
                         </p>
 
                         <p className="text-xs text-text-secondary/70">
-                          {formatDate(payment.date)}
+                          {formatPhilippineDateTime(payment.recordedAt)}
                         </p>
                       </div>
 

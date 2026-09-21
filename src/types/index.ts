@@ -133,6 +133,8 @@ export interface PaymentRecord {
   contributionId: string;
   amount: number;
   date: string;
+  /** Database timestamp of the successful payment insert/update. */
+  recordedAt?: string;
   receiptUrl?: string;
   /** Official Receipt (OR) number, e.g. "OR-2026-000001". Assigned only when
    *  the student's contribution for the event is fully paid. */

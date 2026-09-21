@@ -80,6 +80,7 @@ function App() {
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
+  const logoutInProgressRef = useRef(false);
 
   const mainRef = useRef<HTMLDivElement>(null);
 
@@ -207,10 +208,15 @@ function App() {
 
   // Reset admin state on logout
   const handleLogout = async () => {
+    if (logoutInProgressRef.current) return;
+    logoutInProgressRef.current = true;
+
     try {
-      await authService.signOut();
+      await authService.signOut(auth ?? undefined);
     } catch (error) {
       console.error("Error signing out:", error);
+    } finally {
+      logoutInProgressRef.current = false;
     }
     setAuth(null);
     offlineSyncService.configure(null, null);

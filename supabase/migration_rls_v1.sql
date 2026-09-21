@@ -26,7 +26,7 @@ BEGIN
         AND tablename IN (
             'students', 'events', 'board_members', 'attendance',
             'contributions', 'payments', 'transactions', 'feedback',
-            'user_roles',
+            'user_roles', 'audit_logs',
             'student_requirement_files', 'student_requirement_file_access'
         )
     LOOP
@@ -151,6 +151,16 @@ DROP POLICY IF EXISTS "payments_write_staff" ON public.payments;
 CREATE POLICY "payments_write_staff" ON payments FOR ALL TO authenticated
     USING (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'))
     WITH CHECK (public.has_role('admin') OR public.has_role('treasurer') OR public.has_role('auditor'));
+
+-- Audit records are readable only by admins, but every authenticated officer
+-- may insert the post-success activity record.
+DROP POLICY IF EXISTS "audit_logs_read_admin" ON public.audit_logs;
+CREATE POLICY "audit_logs_read_admin" ON audit_logs FOR SELECT TO authenticated
+    USING (public.has_role('admin'));
+
+DROP POLICY IF EXISTS "audit_logs_insert_staff" ON public.audit_logs;
+CREATE POLICY "audit_logs_insert_staff" ON audit_logs FOR INSERT TO authenticated
+    WITH CHECK (public.is_staff());
 
 -- Transactions: admin + treasurer + auditor
 DROP POLICY IF EXISTS "transactions_write_staff" ON public.transactions;

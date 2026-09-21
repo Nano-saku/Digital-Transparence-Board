@@ -16,6 +16,7 @@ export default function AdminLoginSection({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const submitInProgressRef = useRef(false);
 
   const sectionRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -34,11 +35,13 @@ export default function AdminLoginSection({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading || submitInProgressRef.current) return;
     if (!email.trim() || !password) {
       toast.error("Please enter your email and password");
       return;
     }
     try {
+      submitInProgressRef.current = true;
       setIsLoading(true);
       // onLogin resolves after a successful sign-in; the app then shows the
       // dashboard. Any failure throws and is surfaced here.
@@ -50,6 +53,7 @@ export default function AdminLoginSection({
           : "Login failed. Please try again.",
       );
     } finally {
+      submitInProgressRef.current = false;
       setIsLoading(false);
     }
   };

@@ -42,6 +42,21 @@ const mapAuditLog = (item: Record<string, unknown>): AuditLog => ({
   createdAt: item.created_at as string,
 });
 
+const mapPayment = (item: Record<string, unknown>): PaymentRecord => ({
+  id: item.id as string,
+  studentId: item.student_id as string,
+  studentName: item.student_name as string,
+  eventId: item.event_id as string,
+  eventName: item.event_name as string,
+  contributionId: (item.contribution_id as string | null) ?? "",
+  amount: item.amount as number,
+  date: item.date as string,
+  recordedAt: (item.recorded_at as string | null) ?? undefined,
+  receiptUrl: (item.receipt_url as string | null) || undefined,
+  orNumber: (item.or_number as string | null) || undefined,
+  recordedBy: item.recorded_by as string,
+});
+
 export const auditLogsService = {
   /**
    * Create one audit entry.
@@ -851,7 +866,8 @@ export const attendanceService = {
       const { data, error } = await getSupabase()
         .from("attendance")
         .select("*")
-        .order("date", { ascending: false });
+        .order("date", { ascending: false })
+        .order("id", { ascending: false });
 
       if (error) throw error;
       return (
@@ -1634,23 +1650,12 @@ export const paymentsService = {
       const { data, error } = await getSupabase()
         .from("payments")
         .select("*")
-        .order("date", { ascending: false });
+        .order("recorded_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false });
 
       if (error) throw error;
       return (
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          studentName: item.student_name,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          contributionId: item.contribution_id,
-          amount: item.amount,
-          date: item.date,
-          receiptUrl: item.receipt_url || undefined,
-          orNumber: item.or_number || undefined,
-          recordedBy: item.recorded_by,
-        })) || []
+        data?.map(mapPayment) || []
       );
     });
   },
@@ -1669,7 +1674,7 @@ export const paymentsService = {
     const { data, error, count } = await getSupabase()
       .from("payments")
       .select("*", { count: "exact" })
-      .order("date", { ascending: false })
+      .order("recorded_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
       .range(from, to);
 
@@ -1677,19 +1682,7 @@ export const paymentsService = {
 
     return {
       data:
-        data?.map((item) => ({
-          id: item.id,
-          studentId: item.student_id,
-          studentName: item.student_name,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          contributionId: item.contribution_id,
-          amount: item.amount,
-          date: item.date,
-          receiptUrl: item.receipt_url || undefined,
-          orNumber: item.or_number || undefined,
-          recordedBy: item.recorded_by,
-        })) || [],
+        data?.map(mapPayment) || [],
       total: count ?? 0,
     };
   },
@@ -1703,24 +1696,12 @@ export const paymentsService = {
       .from("payments")
       .select("*")
       .eq("student_id", studentId)
-      .order("date", { ascending: false });
+      .order("recorded_at", { ascending: false, nullsFirst: false });
 
     if (error) throw error;
 
     return (
-      data?.map((item) => ({
-        id: item.id,
-        studentId: item.student_id,
-        studentName: item.student_name,
-        eventId: item.event_id,
-        eventName: item.event_name,
-        contributionId: item.contribution_id ?? "",
-        amount: item.amount,
-        date: item.date,
-        receiptUrl: item.receipt_url ?? undefined,
-        orNumber: item.or_number ?? undefined,
-        recordedBy: item.recorded_by,
-      })) || []
+      data?.map(mapPayment) || []
     );
   },
 
@@ -1738,26 +1719,14 @@ export const paymentsService = {
       .select("*")
       .eq("student_id", studentId)
       .eq("event_id", eventId)
-      .order("date", { ascending: false })
+      .order("recorded_at", { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle();
 
     if (error) throw error;
     if (!data) return null;
 
-    return {
-      id: data.id,
-      studentId: data.student_id,
-      studentName: data.student_name,
-      eventId: data.event_id,
-      eventName: data.event_name,
-      contributionId: data.contribution_id ?? "",
-      amount: data.amount,
-      date: data.date,
-      receiptUrl: data.receipt_url || undefined,
-      orNumber: data.or_number || undefined,
-      recordedBy: data.recorded_by,
-    };
+    return mapPayment(data);
   },
 
   async create(record: Omit<PaymentRecord, "id">): Promise<PaymentRecord> {
@@ -1805,6 +1774,7 @@ export const paymentsService = {
           contributionId: data.contribution_id || undefined,
           amount: data.amount,
           date: data.date,
+          recordedAt: data.recorded_at ?? undefined,
           receiptUrl: data.receipt_url || undefined,
           orNumber: data.or_number || undefined,
           recordedBy: data.recorded_by,
@@ -1921,6 +1891,7 @@ export const paymentsService = {
           contributionId: data.contribution_id,
           amount: data.amount,
           date: data.date,
+          recordedAt: data.recorded_at ?? undefined,
           receiptUrl: data.receipt_url || undefined,
           orNumber: data.or_number || undefined,
           recordedBy: data.recorded_by,
