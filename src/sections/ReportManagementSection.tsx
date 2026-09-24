@@ -32,6 +32,7 @@ import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionLayout from "@/components/common/SectionLayout";
+import Pagination from "@/components/common/Pagination";
 import SummaryCard from "@/components/common/SummaryCard";
 import { toast } from "sonner";
 
@@ -52,6 +53,7 @@ interface ReportRow {
 
 type ContributionReportStatus = "" | "unpaid" | "partial" | "paid";
 type ReportType = "attendance" | "contribution";
+const CONTRIBUTION_REPORT_PAGE_SIZE = 30;
 
 interface ContributionReportRow {
   studentName: string;
@@ -102,6 +104,7 @@ export default function ReportManagementSection({
   const [selectedSection, setSelectedSection] = useState("");
   const [selectedContributionStatus, setSelectedContributionStatus] =
     useState<ContributionReportStatus>("");
+  const [contributionReportPage, setContributionReportPage] = useState(1);
 
   // Load data
   const loadData = useCallback(async () => {
@@ -374,6 +377,41 @@ export default function ReportManagementSection({
     selectedYear,
     students,
   ]);
+
+  const contributionReportTotalPages = Math.max(
+    1,
+    Math.ceil(contributionReportRows.length / CONTRIBUTION_REPORT_PAGE_SIZE),
+  );
+  const currentContributionReportPage = Math.min(
+    contributionReportPage,
+    contributionReportTotalPages,
+  );
+  const contributionReportPageStartIndex =
+    (currentContributionReportPage - 1) * CONTRIBUTION_REPORT_PAGE_SIZE;
+  const paginatedContributionReportRows = useMemo(
+    () =>
+      contributionReportRows.slice(
+        contributionReportPageStartIndex,
+        contributionReportPageStartIndex + CONTRIBUTION_REPORT_PAGE_SIZE,
+      ),
+    [contributionReportPageStartIndex, contributionReportRows],
+  );
+
+  useEffect(() => {
+    setContributionReportPage(1);
+  }, [
+    selectedContributionStatus,
+    selectedCourse,
+    selectedEventId,
+    selectedSection,
+    selectedYear,
+  ]);
+
+  useEffect(() => {
+    setContributionReportPage((page) =>
+      Math.min(page, contributionReportTotalPages),
+    );
+  }, [contributionReportTotalPages]);
 
   const activeReportLoading =
     reportType === "attendance" ? loading : contributionLoading;
@@ -766,7 +804,7 @@ export default function ReportManagementSection({
                         </tr>
                       </thead>
                       <tbody>
-                        {contributionReportRows.map((row) => (
+                        {paginatedContributionReportRows.map((row) => (
                           <tr key={`${row.studentId}-${row.eventId}`}>
                             <td className="font-medium text-dark">{row.studentName}</td>
                             <td className="text-center text-text-secondary">
@@ -793,6 +831,27 @@ export default function ReportManagementSection({
                     </table>
                   </div>
                 )}
+                <Pagination
+                  page={currentContributionReportPage}
+                  totalPages={contributionReportTotalPages}
+                  totalItems={contributionReportRows.length}
+                  startIndex={contributionReportPageStartIndex}
+                  endIndex={
+                    contributionReportPageStartIndex +
+                    paginatedContributionReportRows.length
+                  }
+                  onPrev={() =>
+                    setContributionReportPage((page) =>
+                      Math.max(1, page - 1),
+                    )
+                  }
+                  onNext={() =>
+                    setContributionReportPage((page) =>
+                      Math.min(contributionReportTotalPages, page + 1),
+                    )
+                  }
+                  onJump={setContributionReportPage}
+                />
               </div>
             )}
           </>
