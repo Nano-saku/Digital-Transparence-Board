@@ -12,9 +12,21 @@ import {
   eventsService,
   studentsService,
   attendanceService,
+  contributionsService,
 } from "@/services/db";
-import type { Event, Student, AttendanceRecord } from "@/types";
-import { compareTime24, formatTime12, getOrdinalSuffix } from "@/lib/format";
+import type {
+  Event,
+  Student,
+  AttendanceRecord,
+  ContributionRecord,
+} from "@/types";
+import {
+  compareTime24,
+  formatPeso,
+  formatTime12,
+  getOrdinalSuffix,
+} from "@/lib/format";
+import { contributionStatus } from "@/lib/contributions";
 import { downloadBlob } from "@/lib/receipts";
 import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
@@ -38,6 +50,24 @@ interface ReportRow {
   timeOut: string;
 }
 
+type ContributionReportStatus = "" | "unpaid" | "partial" | "paid";
+type ReportType = "attendance" | "contribution";
+
+interface ContributionReportRow {
+  studentName: string;
+  studentId: string;
+  eventId: string;
+  yearLevel: number;
+  course: string;
+  section: string;
+  eventName: string;
+  requiredAmount: number;
+  amountPaid: number;
+  remainingBalance: number;
+  status: "Unpaid" | "Partial Payment" | "Fully Paid";
+  statusValue: Exclude<ContributionReportStatus, "">;
+}
+
 /** Converts a Blob to a base64 data URI. */
 function blobToDataUri(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -59,12 +89,19 @@ export default function ReportManagementSection({
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
+  const [contributionRecords, setContributionRecords] = useState<
+    ContributionRecord[]
+  >([]);
+  const [contributionLoading, setContributionLoading] = useState(true);
 
   // Filters
+  const [reportType, setReportType] = useState<ReportType>("attendance");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
   const [selectedCourse, setSelectedCourse] = useState("");
   const [selectedSection, setSelectedSection] = useState("");
+  const [selectedContributionStatus, setSelectedContributionStatus] =
+    useState<ContributionReportStatus>("");
 
   // Load data
   const loadData = useCallback(async () => {
@@ -89,6 +126,25 @@ export default function ReportManagementSection({
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Contribution report data is loaded independently so a contribution-data
+  // issue cannot prevent the existing attendance report from rendering.
+  const loadContributionData = useCallback(async () => {
+    try {
+      setContributionLoading(true);
+      const data = await contributionsService.getAll();
+      setContributionRecords(data);
+    } catch (error) {
+      console.error("Error loading contribution report data:", error);
+      toast.error("Failed to load contribution report data");
+    } finally {
+      setContributionLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadContributionData();
+  }, [loadContributionData]);
 
   // Derive unique filter options from student data
   const yearOptions = useMemo(() => {
@@ -230,6 +286,98 @@ export default function ReportManagementSection({
       ? (((totalPresent + totalLate) / totalStudents) * 100).toFixed(1)
       : "0.0";
 
+  const contributionEvents = useMemo(
+    () => events.filter((event) => event.allocationAmount > 0),
+    [events],
+  );
+
+  const contributionReportRows = useMemo<ContributionReportRow[]>(() => {
+    const studentById = new Map(students.map((student) => [student.id, student]));
+    const contributionByStudentAndEvent = new Map(
+      contributionRecords.map((record) => [
+        `${record.studentId}:${record.eventId}`,
+        record,
+      ]),
+    );
+    const rows: ContributionReportRow[] = [];
+
+    // Include every persisted record first, including records for events that
+    // are no longer in the event catalog.
+    for (const record of contributionRecords) {
+      const student = studentById.get(record.studentId);
+      if (!student || record.requiredAmount <= 0) continue;
+
+      const status = contributionStatus(record);
+      rows.push({
+        studentName: student.name,
+        studentId: student.studentId,
+        eventId: record.eventId,
+        yearLevel: student.yearLevel,
+        course: student.program,
+        section: student.section,
+        eventName: record.eventName,
+        requiredAmount: record.requiredAmount,
+        amountPaid: record.amountPaid,
+        remainingBalance: record.remainingBalance,
+        status: status.label as ContributionReportRow["status"],
+        statusValue:
+          status.label === "Unpaid"
+            ? "unpaid"
+            : status.label === "Partial Payment"
+              ? "partial"
+              : "paid",
+      });
+    }
+
+    // A missing contribution row represents no payment yet. Add those rows so
+    // the Unpaid filter reports students who have not made any payment.
+    for (const student of students) {
+      for (const event of contributionEvents) {
+        const key = `${student.id}:${event.id}`;
+        if (contributionByStudentAndEvent.has(key)) continue;
+
+        rows.push({
+          studentName: student.name,
+          studentId: student.studentId,
+          eventId: event.id,
+          yearLevel: student.yearLevel,
+          course: student.program,
+          section: student.section,
+          eventName: event.name,
+          requiredAmount: event.allocationAmount,
+          amountPaid: 0,
+          remainingBalance: event.allocationAmount,
+          status: "Unpaid",
+          statusValue: "unpaid",
+        });
+      }
+    }
+
+    return rows
+      .filter(
+        (row) =>
+          (!selectedEventId || row.eventId === selectedEventId) &&
+          (!selectedYear || row.yearLevel === Number(selectedYear)) &&
+          (!selectedCourse || row.course === selectedCourse) &&
+          (!selectedSection || row.section === selectedSection) &&
+          (!selectedContributionStatus ||
+            row.statusValue === selectedContributionStatus),
+      )
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
+  }, [
+    contributionEvents,
+    contributionRecords,
+    selectedContributionStatus,
+    selectedCourse,
+    selectedEventId,
+    selectedSection,
+    selectedYear,
+    students,
+  ]);
+
+  const activeReportLoading =
+    reportType === "attendance" ? loading : contributionLoading;
+
   // Self-contained printable HTML generation.
   const generatePrintableReport = async () => {
     if (!selectedEvent) return;
@@ -294,7 +442,6 @@ export default function ReportManagementSection({
         new Blob([html], { type: "text/html;charset=utf-8" }),
         `attendance-report-${safeName}-${selectedYear}yr-${selectedCourse}-${selectedSection}.html`,
       );
-
       toast.success(
         "Report downloaded. Open it in a browser and use Print → Save as PDF to export.",
       );
@@ -306,16 +453,110 @@ export default function ReportManagementSection({
     }
   };
 
+  const generatePrintableContributionReport = async () => {
+    if (contributionReportRows.length === 0) return;
+    try {
+      setGenerating(true);
+
+      const [lscLogoResp, dsscLogoResp] = await Promise.all([
+        fetch("/lsc-logo.jpg"),
+        fetch("/DSSC-logo.png"),
+      ]);
+      const [lscBlob, dsscBlob] = await Promise.all([
+        lscLogoResp.blob(),
+        dsscLogoResp.blob(),
+      ]);
+      const [lscDataUri, dsscDataUri] = await Promise.all([
+        blobToDataUri(lscBlob),
+        blobToDataUri(dsscBlob),
+      ]);
+
+      const esc = (v: string) =>
+        String(v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+
+      const tableRows = contributionReportRows
+        .map(
+          (row, idx) =>
+            `<tr class="${idx % 2 === 0 ? "even" : "odd"}">
+              <td>${esc(row.studentName)}</td>
+              <td class="center">${row.yearLevel}${getOrdinalSuffix(row.yearLevel)}</td>
+              <td class="center">${esc(row.course)}</td>
+              <td class="center">${esc(row.section)}</td>
+              <td>${esc(row.eventName)}</td>
+              <td class="amount">${formatPeso(row.requiredAmount)}</td>
+              <td class="amount">${formatPeso(row.amountPaid)}</td>
+              <td class="amount">${formatPeso(row.remainingBalance)}</td>
+              <td class="center"><span class="s-${row.statusValue}">${row.status}</span></td>
+            </tr>`,
+        )
+        .join("");
+
+      const html = buildContributionReportHtml({
+        lscDataUri,
+        dsscDataUri,
+        eventFilter: selectedEventId
+          ? selectedEvent?.name ?? "Selected event"
+          : "All contribution events",
+        yearFilter: selectedYear
+          ? `${selectedYear}${getOrdinalSuffix(Number(selectedYear))} Year`
+          : "All year levels",
+        courseFilter: selectedCourse || "All courses",
+        sectionFilter: selectedSection || "All sections",
+        statusFilter:
+          selectedContributionStatus === ""
+            ? "All payment statuses"
+            : selectedContributionStatus === "paid"
+              ? "Fully Paid"
+              : selectedContributionStatus === "partial"
+                ? "Partial Payment"
+                : "Unpaid",
+        tableRows,
+      });
+
+      const safeName = (selectedEvent?.name ?? "all-events")
+        .replace(/\s+/g, "-")
+        .toLowerCase();
+      downloadBlob(
+        new Blob([html], { type: "text/html;charset=utf-8" }),
+        `contribution-report-${safeName}.html`,
+      );
+      toast.success(
+        "Contribution report downloaded. Open it in a browser and use Print → Save as PDF to export.",
+      );
+    } catch (error) {
+      console.error("Error generating contribution report:", error);
+      toast.error("Failed to generate contribution report");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <SectionLayout
-      title="Attendance Reports"
-      subtitle="Generate official attendance reports with filters and printable download"
+      title={reportType === "attendance" ? "Attendance Reports" : "Contribution Reports"}
+      subtitle={
+        reportType === "attendance"
+          ? "Generate official attendance reports with filters and printable download"
+          : "View student contribution records by payment status"
+      }
       onBack={onBack}
     >
 
-        {loading && <SectionLoader message="Loading report data..." />}
+        {activeReportLoading && (
+          <SectionLoader
+            message={
+              reportType === "attendance"
+                ? "Loading report data..."
+                : "Loading contribution report..."
+            }
+          />
+        )}
 
-        {!loading && (
+        {!activeReportLoading && (
           <>
             {/* Filters */}
             <div className="glass-card p-5 lg:p-6 mb-6">
@@ -325,7 +566,18 @@ export default function ReportManagementSection({
                 </div>
                 <h3 className="font-display font-semibold text-lg text-dark">Report Filters</h3>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-dark mb-1.5">Report Type</label>
+                  <select
+                    value={reportType}
+                    onChange={(e) => setReportType(e.target.value as ReportType)}
+                    className="glass-input w-full px-4 py-2.5 text-sm"
+                  >
+                    <option value="attendance">Attendance Report</option>
+                    <option value="contribution">Contribution Report</option>
+                  </select>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-dark mb-1.5">Event</label>
                   <select value={selectedEventId} onChange={(e) => setSelectedEventId(e.target.value)} className="glass-input w-full px-4 py-2.5 text-sm">
@@ -354,10 +606,30 @@ export default function ReportManagementSection({
                     {sectionOptions.map((s) => (<option key={s} value={s}>{s}</option>))}
                   </select>
                 </div>
+                {reportType === "contribution" && (
+                  <div>
+                    <label className="block text-sm font-medium text-dark mb-1.5">Payment Status</label>
+                    <select
+                      value={selectedContributionStatus}
+                      onChange={(e) =>
+                        setSelectedContributionStatus(
+                          e.target.value as ContributionReportStatus,
+                        )
+                      }
+                      className="glass-input w-full px-4 py-2.5 text-sm"
+                      disabled={contributionLoading}
+                    >
+                      <option value="">All statuses</option>
+                      <option value="paid">Fully Paid</option>
+                      <option value="partial">Partial Payment</option>
+                      <option value="unpaid">Unpaid</option>
+                    </select>
+                  </div>
+                )}
               </div>
             </div>
 
-            {filtersComplete && reportRows.length > 0 && (
+            {reportType === "attendance" && filtersComplete && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
                 <SummaryCard icon={Users} color="blue" value={totalStudents} label="Total Students" />
                 <SummaryCard icon={CheckCircle} color="green" value={totalPresent} label="Present" />
@@ -373,7 +645,7 @@ export default function ReportManagementSection({
               </div>
             )}
 
-            {filtersComplete && (
+            {reportType === "attendance" && filtersComplete && (
               <div className="glass-card p-5 lg:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                   <div className="flex items-center gap-3">
@@ -435,12 +707,92 @@ export default function ReportManagementSection({
               </div>
             )}
 
-            {!filtersComplete && (
-              <div className="glass-card p-12 text-center">
-                <FileText className="w-12 h-12 mx-auto mb-3 opacity-40 text-text-secondary" />
-                <p className="text-text-secondary">
-                  Select an <strong>Event</strong>, <strong>Year</strong>, <strong>Course</strong>, and <strong>Section</strong> above to generate an attendance report.
-                </p>
+            {reportType === "contribution" && (
+              <div className="glass-card p-5 lg:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-display font-semibold text-lg text-dark">
+                        Contribution Report
+                      </h3>
+                      <p className="text-xs text-text-secondary">
+                        Contribution records matching the selected filters
+                      </p>
+                    </div>
+                  </div>
+                  {contributionReportRows.length > 0 && (
+                    <button
+                      onClick={generatePrintableContributionReport}
+                      disabled={generating}
+                      className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm self-start"
+                    >
+                      {generating ? (
+                        <>
+                          <Skeleton className="h-4 w-4 rounded-full" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4" />
+                          Download Printable Report
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+                {contributionReportRows.length === 0 ? (
+                  <SectionEmptyState
+                    message="No contribution records found for the selected filters."
+                    icon={Users}
+                    compact
+                  />
+                ) : (
+                  <div className="overflow-x-auto -mx-5 lg:-mx-6 px-5 lg:px-6">
+                    <table className="glass-table w-full text-sm">
+                      <thead>
+                        <tr>
+                          <th className="text-left">Student</th>
+                          <th className="text-center">Year</th>
+                          <th className="text-center">Course</th>
+                          <th className="text-center">Section</th>
+                          <th className="text-left">Event</th>
+                          <th className="text-right">Required</th>
+                          <th className="text-right">Paid</th>
+                          <th className="text-right">Balance</th>
+                          <th className="text-center">Payment Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {contributionReportRows.map((row) => (
+                          <tr key={`${row.studentId}-${row.eventId}`}>
+                            <td className="font-medium text-dark">{row.studentName}</td>
+                            <td className="text-center text-text-secondary">
+                              {row.yearLevel}{getOrdinalSuffix(row.yearLevel)}
+                            </td>
+                            <td className="text-center text-text-secondary">{row.course}</td>
+                            <td className="text-center text-text-secondary">{row.section}</td>
+                            <td className="text-text-secondary">{row.eventName}</td>
+                            <td className="text-right text-text-secondary">
+                              {formatPeso(row.requiredAmount)}
+                            </td>
+                            <td className="text-right text-text-secondary">
+                              {formatPeso(row.amountPaid)}
+                            </td>
+                            <td className="text-right text-text-secondary">
+                              {formatPeso(row.remainingBalance)}
+                            </td>
+                            <td className="text-center">
+                              <ContributionStatusBadge status={row.status} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -463,6 +815,25 @@ function StatusBadge({ status }: { status: ReportRow["status"] }) {
   );
 }
 
+function ContributionStatusBadge({
+  status,
+}: {
+  status: ContributionReportRow["status"];
+}) {
+  const className =
+    status === "Fully Paid"
+      ? "bg-green-100 text-green-600"
+      : status === "Partial Payment"
+        ? "bg-amber-100 text-amber-700"
+        : "bg-red-100 text-red-500";
+
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${className}`}>
+      {status}
+    </span>
+  );
+}
+
 interface PrintableReport {
   lscDataUri: string;
   dsscDataUri: string;
@@ -475,6 +846,17 @@ interface PrintableReport {
   totalLate: number;
   totalAbsent: number;
   attendancePercentage: string;
+  tableRows: string;
+}
+
+interface PrintableContributionReport {
+  lscDataUri: string;
+  dsscDataUri: string;
+  eventFilter: string;
+  yearFilter: string;
+  courseFilter: string;
+  sectionFilter: string;
+  statusFilter: string;
   tableRows: string;
 }
 
@@ -498,6 +880,30 @@ function buildReportHtml(report: PrintableReport): string {
   <section class="metadata"><div><span class="label">Event:</span>${report.eventName}</div><div><span class="label">Year Level:</span>${report.yearLabel}</div><div><span class="label">Course:</span>${report.course}</div><div><span class="label">Section:</span>${report.section}</div></section>
   <section class="summary"><div class="card"><div class="number">${report.totalStudents}</div><div class="caption">Total Students</div></div><div class="card"><div class="number present">${report.totalPresent}</div><div class="caption">Total Present</div></div><div class="card"><div class="number late">${report.totalLate}</div><div class="caption">Total Late</div></div><div class="card"><div class="number absent">${report.totalAbsent}</div><div class="caption">Total Absent</div></div><div class="card"><div class="number percent">${report.attendancePercentage}%</div><div class="caption">Attendance</div></div></section>
   <table><thead><tr><th>Student</th><th class="center">Year</th><th class="center">Course</th><th class="center">Section</th><th class="center">Status</th><th>Event</th><th class="center">Time In</th><th class="center">Time Out</th></tr></thead><tbody>${report.tableRows}</tbody></table>
+  <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
+</body></html>`;
+}
+
+/** Self-contained landscape document for browser Print → Save as PDF. */
+function buildContributionReportHtml(
+  report: PrintableContributionReport,
+): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>Student Contribution Report</title>
+<style>
+  @page{size:landscape;margin:12mm 10mm}
+  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
+  .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
+  .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
+  table{width:100%;border-collapse:collapse;font-size:11px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.amount{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
+  .s-paid{background:#d1fae5;color:#047857}.s-partial{background:#fef3c7;color:#b45309}.s-unpaid{background:#fee2e2;color:#b91c1c}.s-paid,.s-partial,.s-unpaid{padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
+  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:0}}
+</style></head><body>
+  <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Contribution Report</h1><div class="sub">Official Contribution Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
+  <section class="metadata"><div><span class="label">Event:</span>${report.eventFilter}</div><div><span class="label">Year Level:</span>${report.yearFilter}</div><div><span class="label">Course:</span>${report.courseFilter}</div><div><span class="label">Section:</span>${report.sectionFilter}</div><div><span class="label">Payment Status:</span>${report.statusFilter}</div></section>
+  <table><thead><tr><th>Student</th><th class="center">Year</th><th class="center">Course</th><th class="center">Section</th><th>Event</th><th class="amount">Required</th><th class="amount">Paid</th><th class="amount">Balance</th><th class="center">Payment Status</th></tr></thead><tbody>${report.tableRows}</tbody></table>
   <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
 </body></html>`;
 }
