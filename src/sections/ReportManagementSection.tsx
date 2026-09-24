@@ -396,6 +396,15 @@ export default function ReportManagementSection({
       ),
     [contributionReportPageStartIndex, contributionReportRows],
   );
+  const shouldPaginateContributionReport = !(
+    selectedContributionStatus ||
+    selectedCourse ||
+    selectedSection ||
+    selectedYear
+  );
+  const visibleContributionReportRows = shouldPaginateContributionReport
+    ? paginatedContributionReportRows
+    : contributionReportRows;
 
   useEffect(() => {
     setContributionReportPage(1);
@@ -804,7 +813,7 @@ export default function ReportManagementSection({
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedContributionReportRows.map((row) => (
+                        {visibleContributionReportRows.map((row) => (
                           <tr key={`${row.studentId}-${row.eventId}`}>
                             <td className="font-medium text-dark">{row.studentName}</td>
                             <td className="text-center text-text-secondary">
@@ -831,27 +840,29 @@ export default function ReportManagementSection({
                     </table>
                   </div>
                 )}
-                <Pagination
-                  page={currentContributionReportPage}
-                  totalPages={contributionReportTotalPages}
-                  totalItems={contributionReportRows.length}
-                  startIndex={contributionReportPageStartIndex}
-                  endIndex={
-                    contributionReportPageStartIndex +
-                    paginatedContributionReportRows.length
-                  }
-                  onPrev={() =>
-                    setContributionReportPage((page) =>
-                      Math.max(1, page - 1),
-                    )
-                  }
-                  onNext={() =>
-                    setContributionReportPage((page) =>
-                      Math.min(contributionReportTotalPages, page + 1),
-                    )
-                  }
-                  onJump={setContributionReportPage}
-                />
+                {shouldPaginateContributionReport && (
+                  <Pagination
+                    page={currentContributionReportPage}
+                    totalPages={contributionReportTotalPages}
+                    totalItems={contributionReportRows.length}
+                    startIndex={contributionReportPageStartIndex}
+                    endIndex={
+                      contributionReportPageStartIndex +
+                      paginatedContributionReportRows.length
+                    }
+                    onPrev={() =>
+                      setContributionReportPage((page) =>
+                        Math.max(1, page - 1),
+                      )
+                    }
+                    onNext={() =>
+                      setContributionReportPage((page) =>
+                        Math.min(contributionReportTotalPages, page + 1),
+                      )
+                    }
+                    onJump={setContributionReportPage}
+                  />
+                )}
               </div>
             )}
           </>

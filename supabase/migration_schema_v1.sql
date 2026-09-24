@@ -600,11 +600,13 @@ expected AS (
         COALESCE(
             SUM(
                 GREATEST(COALESCE(e.allocation_amount, 0), 0)
-            ) * COUNT(s.id),
+            ),
             0
+        ) * (
+            SELECT COUNT(*)
+            FROM public.students
         ) AS total_expected
     FROM public.events e
-    CROSS JOIN public.students s
 )
 
 SELECT jsonb_build_object(
