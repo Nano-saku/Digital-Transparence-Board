@@ -197,10 +197,9 @@ export default function AdminLoginSection({
 
           {/* Contact note */}
           <div
-            className="admin-login-note mt-3 p-3 rounded-xl text-center md:col-span-2"
-            style={{ background: "var(--dssc-off-white)" }}
+            className="admin-login-note theme-surface-secondary mt-3 p-3 rounded-xl text-center md:col-span-2"
           >
-            <p className="text-xs text-text-secondary">
+            <p className="text-xs text-secondary">
               Don't have an account? Ask the Student Council Administrator to
               create one for you.
             </p>

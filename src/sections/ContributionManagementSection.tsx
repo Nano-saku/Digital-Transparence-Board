@@ -1073,6 +1073,12 @@ export default function ContributionManagementSection({
               <tbody>
                 {paginatedRecords.map((record) => {
                   const status = contributionStatus(record);
+                  const statusBadgeClass =
+                    status.label === "Unpaid"
+                      ? "bg-status-danger/15 text-status-danger border-status-danger/40"
+                      : status.label === "Partial Payment"
+                        ? "bg-status-warning/15 text-status-warning border-status-warning/40"
+                        : "bg-status-success/15 text-status-success border-status-success/40";
                   return (
                     <tr key={record.id} className="group">
                       <td>
@@ -1107,8 +1113,12 @@ export default function ContributionManagementSection({
                       <td className="text-right text-text-secondary">
                         {formatPeso(record.remainingBalance)}
                       </td>
-                      <td className={`font-medium ${status.className}`}>
-                        {status.label}
+                      <td>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${statusBadgeClass}`}
+                        >
+                          {status.label}
+                        </span>
                       </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">

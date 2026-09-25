@@ -76,7 +76,7 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
                 <img src="/lsc-logo.jpg" alt="Local Student Council logo"
                   className="w-10 h-10 rounded-xl object-cover ring-2 ring-lsc-gold/40" />
                 <div>
-                  <span className="font-display font-bold text-white text-base block tracking-wide">DSSC — LSC</span>
+                  <span className="font-display font-bold text-theme-heading text-base block tracking-wide">DSSC — LSC</span>
                   <span className="text-silver-gray text-[0.65rem] tracking-widest uppercase">Santa Cruz</span>
                 </div>
               </div>
@@ -90,7 +90,7 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
                 <span>Secure & Transparent</span>
               </div>
               <div className="mt-6">
-                <h4 className="font-display font-semibold text-white mb-2">Developers</h4>
+                <h4 className="font-display font-semibold text-theme-heading mb-2">Developers</h4>
                 <ul className="space-y-1 text-sm text-silver-gray">
                   <li>Mark Louise Eyas - Back-end</li>
                   <li>Justine Renz Capapas - UI/UX Front-end</li>
@@ -101,13 +101,13 @@ export default function FooterSection({ onNavigate }: FooterSectionProps) {
 
             {/* Quick Links */}
             <div>
-              <h4 className="font-display font-semibold text-white mb-4">Quick Links</h4>
+              <h4 className="font-display font-semibold text-theme-heading mb-4">Quick Links</h4>
               <ul className="space-y-2">
                 {quickLinks.map((link) => (
                   <li key={link.label}>
                     <button
-onClick={() => onNavigate(link.view)}
-                      className="inline-flex items-center text-sm text-silver-gray gap-2 hover:text-white transition-colors"
+                        onClick={() => onNavigate(link.view)}
+                      className="inline-flex items-center text-sm text-silver-gray gap-2 hover:text-primary transition-colors"
                     >
                       <link.icon className="w-4 h-4" />
                       <span>{link.label}</span>
@@ -119,7 +119,7 @@ onClick={() => onNavigate(link.view)}
 
             {/* Contact */}
             <div>
-              <h4 className="font-display font-semibold text-white mb-4">Contact Us</h4>
+              <h4 className="font-display font-semibold text-theme-heading mb-4">Contact Us</h4>
               <ul className="space-y-3">
                 {contactInfo.map((item, index) => (
                   <li key={index} className="flex items-start gap-2 text-sm text-silver-gray">
@@ -132,42 +132,42 @@ onClick={() => onNavigate(link.view)}
 
             {/* Office Hours */}
             <div>
-              <h4 className="font-display font-semibold text-white mb-4">Office Hours</h4>
+              <h4 className="font-display font-semibold text-theme-heading mb-4">Office Hours</h4>
               <ul className="space-y-2 text-sm text-text-secondary">
                 <li className="flex justify-between">
                   <span>Monday - Friday</span>
-                  <span className="font-medium text-white">8:00 AM - 5:00 PM</span>
+                  <span className="font-medium text-theme-heading">8:00 AM - 5:00 PM</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Saturday</span>
-                  <span className="font-medium text-white">Closed</span>
+                  <span className="font-medium text-theme-heading">Closed</span>
                 </li>
                 <li className="flex justify-between">
                   <span>Sunday</span>
-                  <span className="font-medium text-white">Closed</span>
+                  <span className="font-medium text-theme-heading">Closed</span>
                 </li>
               </ul>
-              <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10">
+              <div className="mt-4 p-3 rounded-xl bg-surface-soft border border-subtle">
                 <p className="text-xs text-text-secondary">
-                  <span className="font-medium text-white">Data Privacy Notice:</span> All data is handled in compliance with the Data Privacy Act of 2012 (RA 10173).
+                  <span className="font-medium text-theme-heading">Data Privacy Notice:</span> All data is handled in compliance with the Data Privacy Act of 2012 (RA 10173).
                 </p>
               </div>
             </div>
           </div>
 
           {/* Bottom Bar */}
-          <div className="mt-8 pt-6 border-t border-white/50 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="mt-8 pt-6 border-t border-strong flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-sm text-silver-gray text-center sm:text-left">
               © 2026 Student Council. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
-              <button className="text-sm text-silver-gray hover:text-white transition-colors">
+              <button className="text-sm text-silver-gray hover:text-primary transition-colors">
                 Privacy Policy
               </button>
-              <button className="text-sm text-silver-gray hover:text-white transition-colors">
+              <button className="text-sm text-silver-gray hover:text-primary transition-colors">
                 Terms of Service
               </button>
-              <button className="inline-flex items-center gap-1 text-sm text-silver-gray hover:text-white transition-colors">
+              <button className="inline-flex items-center gap-1 text-sm text-silver-gray hover:text-primary transition-colors">
                 <ExternalLink className="w-3 h-3" />
                 Help Center
               </button>

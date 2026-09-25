@@ -71,9 +71,9 @@ export default function ForgotPasswordSection({
           {sent ? (
             <div className="text-center">
               <div className="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center ring-2 ring-lsc-gold/50" style={{ background: 'var(--dssc-off-white)' }}>
-                <ShieldCheck className="w-6 h-6 text-slate-900" />
+                <ShieldCheck className="w-6 h-6 text-theme-heading" />
               </div>
-              <h2 className="font-display font-bold text-2xl mb-2 text-white">
+              <h2 className="font-display font-bold text-2xl mb-2 text-theme-heading">
                 Check your email
               </h2>
               <p className="text-text-secondary text-sm mb-6">
@@ -83,7 +83,7 @@ export default function ForgotPasswordSection({
               <button
                 type="button"
                 onClick={onBack}
-                className="btn-secondary w-full py-3 justify-center"
+                className="theme-surface-secondary w-full rounded-lg border border-strong py-3 justify-center text-theme-heading transition-colors hover:bg-surface-soft hover:text-primary"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>Back to sign in</span>
@@ -97,7 +97,7 @@ export default function ForgotPasswordSection({
                   alt="LSC Seal"
                   className="w-14 h-14 rounded-full object-cover mx-auto mb-3 ring-2 ring-lsc-gold/50"
                 />
-                <h2 className="font-display font-bold text-2xl mb-1 text-white">
+                <h2 className="font-display font-bold text-2xl mb-1 text-theme-heading">
                   Reset Password
                 </h2>
                 <p className="text-text-secondary text-sm">
@@ -108,7 +108,7 @@ export default function ForgotPasswordSection({
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1.5 text-slate-200">
+                  <label className="block text-sm font-medium mb-1.5 text-theme-heading">
                     <span className="flex items-center gap-1.5">
                       <Mail className="w-4 h-4 text-text-secondary" />
                       Email
@@ -140,7 +140,7 @@ export default function ForgotPasswordSection({
                 <button
                   type="button"
                   onClick={onBack}
-                  className="w-full text-center text-sm font-medium text-text-secondary hover:text-deep-navy transition-colors flex items-center justify-center gap-1.5"
+                  className="w-full text-center text-sm font-medium text-secondary hover:text-primary transition-colors flex items-center justify-center gap-1.5"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   Back to sign in

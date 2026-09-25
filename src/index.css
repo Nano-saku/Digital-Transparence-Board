@@ -233,7 +233,6 @@
 [data-theme="light"] .admin-login-card { background: linear-gradient(145deg, rgba(255, 255, 255, 0.97), rgba(239, 245, 255, 0.97)); border-color: rgba(55, 79, 126, 0.2); box-shadow: 0 30px 80px rgba(36, 65, 122, 0.18), inset 0 1px 0 #fff; }
 [data-theme="light"] .admin-login-card .glass-input { background: rgba(255, 255, 255, 0.9); border-color: rgba(55, 79, 126, 0.28); color: #14244b; }
 [data-theme="light"] .admin-login-card .glass-input:focus { background: #fff; }
-[data-theme="light"] .admin-login-card .admin-login-note { background: #eaf1ff !important; }
 [data-theme="light"] .admin-login-card .text-text-secondary { color: #52617d; }
 [data-theme="light"] .admin-login-card .text-slate-200 { color: #1d3264; }
 
