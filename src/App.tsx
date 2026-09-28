@@ -5,6 +5,11 @@ import { authService, type AuthSession } from "@/services/auth";
 import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
 import { namesMatch } from "@/lib/utils";
+import {
+  saveViewSession,
+  loadViewSession,
+  clearViewSession,
+} from "./lib/Sessionkeeper";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
 import Skeleton from "@/components/Skeleton";
 
@@ -58,9 +63,59 @@ const ROLE_LABEL: Record<UserRole, string> = {
   auditor: "Auditor",
   "board-member": "Board Member",
 };
+
+// Views only reachable once signed in as an officer — the set the session
+// keeper is allowed to restore someone into after a reload.
+const ADMIN_VIEWS: ViewState[] = [
+  "admin-dashboard",
+  "student-management",
+  "requirement-files-management",
+  "event-management",
+  "payment-management",
+  "contribution-management",
+  "attendance-management",
+  "transaction-management",
+  "feedback-management",
+  "report-management",
+  "system-logs",
+];
+
+// Pure version of the in-component `canAccess` check below, usable from
+// the session-restore effect before `auth`/`role` state has settled.
+function canRoleAccess(view: ViewState, role: UserRole | null): boolean {
+  if (!role) return false;
+  switch (view) {
+    case "student-management":
+      return role === "admin" || role === "secretary";
+    case "requirement-files-management":
+      return role === "admin";
+    case "system-logs":
+      return role === "admin";
+    case "contribution-management":
+      return role === "admin" || role === "treasurer" || role === "auditor";
+    case "payment-management":
+    case "transaction-management":
+      return role === "admin" || role === "treasurer" || role === "auditor";
+    case "attendance-management":
+      return role === "admin" || role === "secretary";
+    case "report-management":
+      return role === "admin" || role === "secretary";
+    case "event-management":
+      return true;
+    case "feedback-management":
+    case "admin-dashboard":
+      return true;
+    default:
+      return true;
+  }
+}
 const SectionFallback = () => (
   <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-    <div className="w-full max-w-3xl space-y-5 px-6" role="status" aria-label="Loading section">
+    <div
+      className="w-full max-w-3xl space-y-5 px-6"
+      role="status"
+      aria-label="Loading section"
+    >
       <Skeleton className="h-8 w-56" />
       <Skeleton className="h-4 w-80 max-w-full" />
       <div className="grid gap-4 sm:grid-cols-3">
@@ -95,15 +150,57 @@ function App() {
     offlineSyncService.configure(auth?.user.id ?? null, auth?.role ?? null);
   }, [auth]);
 
-  // Restore the persisted Supabase session after a reload.
+  // Restore the persisted Supabase session after a reload, and reopen
+  // whichever admin section or verified student record was showing before
+  // the reload (see lib/sessionKeeper.ts).
   useEffect(() => {
+    const persisted = loadViewSession();
+
     authService
       .restoreSession()
-      .then((session) => {
+      .then(async (session) => {
         setAuth(session);
-        setCurrentView((prev) =>
-          session && prev === "admin-login" ? "admin-dashboard" : prev,
-        );
+
+        if (persisted && ADMIN_VIEWS.includes(persisted.view)) {
+          if (session && canRoleAccess(persisted.view, session.role)) {
+            setCurrentView(persisted.view);
+          } else if (session) {
+            // Signed in, but this role can no longer open that section
+            // (e.g. role changed) — land on the dashboard instead.
+            setCurrentView("admin-dashboard");
+          } else {
+            // No Supabase session came back — the officer was actually
+            // signed out (expired/revoked) since the tab was left open.
+            clearViewSession();
+          }
+          return;
+        }
+
+        if (
+          persisted?.studentId &&
+          (persisted.view === "student-record" ||
+            persisted.view === "evaluation-required")
+        ) {
+          try {
+            const student = await studentsService.getByStudentId(
+              persisted.studentId,
+            );
+            if (student) {
+              const pendingEvent = await eventEvaluationsService.getPendingGate(
+                student.studentId,
+              );
+              setSelectedStudent(student);
+              setPendingEvaluationEvent(pendingEvent);
+              setCurrentView(
+                pendingEvent ? "evaluation-required" : "student-record",
+              );
+            } else {
+              clearViewSession();
+            }
+          } catch (error) {
+            console.warn("Could not restore student session:", error);
+          }
+        }
       })
       .catch((error) => console.error("Failed to restore session:", error))
       .finally(() => setAuthReady(true));
@@ -149,9 +246,17 @@ function App() {
           setSelectedStudent(student);
           setPendingEvaluationEvent(pendingEvent);
           setCurrentView("evaluation-required");
+          saveViewSession({
+            view: "evaluation-required",
+            studentId: student.studentId,
+          });
         } else {
           setSelectedStudent(student);
           setCurrentView("student-record");
+          saveViewSession({
+            view: "student-record",
+            studentId: student.studentId,
+          });
         }
       } else {
         toast.error("Student Name and Student ID do not match.");
@@ -204,6 +309,12 @@ function App() {
   const navigateTo = (view: ViewState) => {
     setCurrentView(view);
     window.scrollTo({ top: 0, behavior: "smooth" });
+
+    if (ADMIN_VIEWS.includes(view)) {
+      saveViewSession({ view });
+    } else if (view === "landing") {
+      clearViewSession();
+    }
   };
 
   // Reset admin state on logout
@@ -221,44 +332,23 @@ function App() {
     setAuth(null);
     offlineSyncService.configure(null, null);
     setCurrentView("landing");
+    clearViewSession();
     toast.info("You have been logged out");
   };
 
   // Which admin views each role may open.
-  const canAccess = (view: ViewState): boolean => {
-    if (!role) return false;
-    switch (view) {
-      case "student-management":
-        return role === "admin" || role === "secretary";
-      case "requirement-files-management":
-        return role === "admin";
-      case "system-logs":
-        return role === "admin";
-      case "contribution-management":
-        return role === "admin" || role === "treasurer" || role === "auditor";
-      case "payment-management":
-      case "transaction-management":
-        return role === "admin" || role === "treasurer" || role === "auditor";
-      case "attendance-management":
-        return role === "admin" || role === "secretary";
-      case "report-management":
-        return role === "admin" || role === "secretary";
-      case "event-management":
-        return true; // any staff member may view the event schedule
-      case "feedback-management":
-      case "admin-dashboard":
-        return true;
-      default:
-        return true;
-    }
-  };
+  const canAccess = (view: ViewState): boolean => canRoleAccess(view, role);
 
   // Render current view
   const renderView = () => {
     if (!authReady) {
       return (
         <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-          <div className="w-full max-w-3xl space-y-5 px-6" role="status" aria-label="Loading application">
+          <div
+            className="w-full max-w-3xl space-y-5 px-6"
+            role="status"
+            aria-label="Loading application"
+          >
             <Skeleton className="h-8 w-56" />
             <Skeleton className="h-4 w-80 max-w-full" />
             <div className="grid gap-4 sm:grid-cols-3">
