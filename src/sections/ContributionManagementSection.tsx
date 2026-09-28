@@ -27,6 +27,7 @@ import {
 import type {
   ContributionRecord,
   PaymentRecord,
+  PaymentItem,
   Student,
   Event,
   UserRole,
@@ -375,9 +376,16 @@ export default function ContributionManagementSection({
       event.allocationAmount;
 
     if (mode === "required") {
-      // Validate before creating a contribution, receipt, or payment so an
-      // invalid standard payment cannot leave behind a partial side effect.
-      paymentsService.assertRequiredPaymentAmount(amount, requiredAmount);
+      // Allow partial payments on the standard payment form — no hard block.
+      // Basic sanity checks only (positive, finite, not exceeding required).
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Payment amount must be greater than zero.");
+      }
+      if (amount > requiredAmount) {
+        throw new Error(
+          `Payment exceeds the required amount of ₱${requiredAmount.toFixed(2)}.`,
+        );
+      }
     }
 
     if (!contribution) {
@@ -426,16 +434,30 @@ export default function ContributionManagementSection({
       event.id,
     );
 
+    // ── Determine payment status for this installment ───────────────────────
+    const installmentStatus: PaymentItem["status"] =
+      updatedRemainingBalance <= 0 ? "Fully Paid" : "Partial";
+
+    // ── Build the cumulative payment history ────────────────────────────────
+    // We append the current installment to whatever history already exists.
+    const priorItems: PaymentItem[] = existingPayment?.paymentItems ?? [];
+    const newItem: PaymentItem = {
+      amount,
+      date: today(),
+      status: installmentStatus,
+    };
+    const cumulativeItems: PaymentItem[] = [...priorItems, newItem];
+
+    // ── Receipt: reuse existing OR number; only mint a new one on the very
+    //   first payment (or if the existing row somehow has no OR number).
     let receiptUrl: string | undefined;
     let receiptNumber: string | undefined;
-    const paymentAmountChanged =
-      !existingPayment || existingPayment.amount !== updatedAmountPaid;
-    if (
-      canIssueReceipts &&
-      (paymentAmountChanged || !existingPayment.receiptUrl)
-    ) {
+    const existingOrNumber = existingPayment?.orNumber;
+
+    if (canIssueReceipts) {
       try {
-        receiptNumber = await officialReceiptNumber();
+        // Preserve the existing OR number — never issue a second one.
+        receiptNumber = existingOrNumber ?? (await officialReceiptNumber());
         receiptUrl = await autoCreateReceipt({
           tag: "PAYMENT",
           receiptNumber,
@@ -446,6 +468,12 @@ export default function ContributionManagementSection({
           type: "income",
           date: today(),
           recordedBy: staffName || "Council Officer",
+          // Contribution-summary fields (for the receipt header)
+          requiredAmount,
+          remainingBalance: updatedRemainingBalance,
+          statusLabel: installmentStatus,
+          // Full installment history (renders the payment history table)
+          paymentItems: cumulativeItems,
         });
       } catch (receiptError) {
         console.warn("Auto receipt generation failed:", receiptError);
@@ -463,6 +491,7 @@ export default function ContributionManagementSection({
       recordedBy: staffName || "Council Officer",
       receiptUrl: receiptUrl ?? existingPayment?.receiptUrl,
       orNumber: receiptNumber ?? existingPayment?.orNumber,
+      paymentItems: cumulativeItems,
     };
 
     if (mode === "required") {
@@ -497,7 +526,7 @@ export default function ContributionManagementSection({
         student,
         event,
         amount: paymentForm.amount,
-        mode: "required",
+        mode: "add",
       });
 
       if (receiptIssued) {

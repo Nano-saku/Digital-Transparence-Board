@@ -143,6 +143,12 @@ export interface ReceiptDetails {
   remainingBalance?: number;
   /** Contribution-record receipts only: status label (Unpaid / Partial / Fully Paid). */
   statusLabel?: string;
+  /**
+   * Cumulative payment history for contribution receipts. When present, the
+   * receipt renders a full payment history table instead of a single amount
+   * row. Each entry represents one installment payment.
+   */
+  paymentItems?: Array<{ amount: number; date: string; status: string }>;
 }
 
 const xml = (s: string): string =>
@@ -209,35 +215,143 @@ export function buildReceiptSvg(details: ReceiptDetails, logos?: ReceiptLogoData
   const tag = details.tag ? xml(details.tag) : typeLabel;
 
   const isContribution = details.requiredAmount !== undefined;
-  const rows = [
+  const hasHistory = isContribution && Array.isArray(details.paymentItems) && details.paymentItems.length > 0;
+
+  // ── Static header rows (Received From, Event) ─────────────────────────────
+  const headerRows: [string, string][] = [
     ["RECEIVED FROM / PAID TO", xml(details.issuedTo) || "—"],
     ["EVENT / PURPOSE", xml(details.eventName || details.description || "—")],
     ...(details.description && details.eventName
-      ? [["DETAILS", xml(details.description)] as const]
-      : []),
-    ...(isContribution
-      ? [
-          ["REQUIRED AMOUNT", `₱${formatAmount(details.requiredAmount ?? 0)}`],
-          ["AMOUNT PAID", `₱${formatAmount(details.amount)}`],
-          ["REMAINING BALANCE", `₱${formatAmount(details.remainingBalance ?? 0)}`],
-          ["STATUS", xml(details.statusLabel || "—")],
-        ]
+      ? [["DETAILS", xml(details.description)] as [string, string]]
       : []),
   ];
 
+  // ── Layout constants ───────────────────────────────────────────────────────
+  const ROWS_START = 352;  // y of the first detail label
+  const ROW_PITCH  = 64;   // vertical space per label/value pair
+
+  // ── When payment history is present render the cumulative history receipt ──
+  if (hasHistory) {
+    const items = details.paymentItems!;
+
+    const headerRowsSvg = headerRows
+      .map(([label, value], index) => {
+        const ry = ROWS_START + index * ROW_PITCH;
+        return `<text x="60" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="bold" fill="#111827">${value}</text>`;
+      })
+      .join("\n    ");
+
+    // Contribution summary rows beneath the header rows
+    const summaryStartY = ROWS_START + headerRows.length * ROW_PITCH + 16;
+    const summaryRows: [string, string, string][] = [
+      ["REQUIRED AMOUNT",   `\u20B1${formatAmount(details.requiredAmount ?? 0)}`, "#111827"],
+      ["TOTAL AMOUNT PAID", `\u20B1${formatAmount(details.amount)}`,              "#111827"],
+      ["REMAINING BALANCE", `\u20B1${formatAmount(details.remainingBalance ?? 0)}`,
+        (details.remainingBalance ?? 0) > 0 ? "#dc2626" : "#16a34a"],
+      ["OVERALL STATUS", xml(details.statusLabel || "—"),
+        details.statusLabel === "Fully Paid" ? "#16a34a" : "#d97706"],
+    ];
+    const summaryRowsSvg = summaryRows
+      .map(([label, value, color], index) => {
+        const ry = summaryStartY + index * ROW_PITCH;
+        return `<text x="60" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="bold" fill="${color}">${value}</text>`;
+      })
+      .join("\n    ");
+
+    // Payment history table
+    const historyStartY = summaryStartY + summaryRows.length * ROW_PITCH + 20;
+    const tableHeaderY  = historyStartY + 22;
+    const COL_NUM    = 60;
+    const COL_AMOUNT = 130;
+    const COL_DATE   = 300;
+    const COL_STATUS = 440;
+    const HIST_ROW_H = 28;
+
+    const historyHeaderSvg = [
+      `<text x="${COL_NUM}" y="${historyStartY}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">PAYMENT HISTORY</text>`,
+      `<rect x="52" y="${tableHeaderY - 14}" width="496" height="20" rx="3" fill="#e2e8f0"/>`,
+      `<text x="${COL_NUM}"    y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">#</text>`,
+      `<text x="${COL_AMOUNT}" y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">AMOUNT</text>`,
+      `<text x="${COL_DATE}"   y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">DATE</text>`,
+      `<text x="${COL_STATUS}" y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">STATUS</text>`,
+    ].join("\n    ");
+
+    const historyRowsSvg = items
+      .map((item, i) => {
+        const ry  = tableHeaderY + (i + 1) * HIST_ROW_H;
+        const bg  = i % 2 === 0 ? "#f8fafc" : "#ffffff";
+        const sc  = item.status === "Fully Paid" ? "#16a34a" : "#d97706";
+        return [
+          `<rect x="52" y="${ry - 16}" width="496" height="${HIST_ROW_H}" fill="${bg}"/>`,
+          `<text x="${COL_NUM}"    y="${ry}" font-family="monospace" font-size="12" fill="#374151">${i + 1}</text>`,
+          `<text x="${COL_AMOUNT}" y="${ry}" font-family="monospace" font-size="12" fill="#111827">\u20B1${formatAmount(item.amount)}</text>`,
+          `<text x="${COL_DATE}"   y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#374151">${xml(formatDateHuman(item.date))}</text>`,
+          `<text x="${COL_STATUS}" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="${sc}">${xml(item.status)}</text>`,
+        ].join("\n    ");
+      })
+      .join("\n    ");
+
+    const lineY     = tableHeaderY + (items.length + 1) * HIST_ROW_H + 8;
+    const boxBottom = lineY + 148;
+    const boxHeight = boxBottom - 272 + 18;
+    const footerLine  = boxBottom + 26;
+    const thankYouTop = footerLine + 70;
+    const height      = thankYouTop + 92;
+    const words      = xml(amountInWords(details.amount));
+    const wordsShort = words.length > 86 ? words.slice(0, 83) + "..." : words;
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="${height}" viewBox="0 0 600 ${height}">
+  <rect width="600" height="${height}" fill="#ffffff"/>
+  <rect width="600" height="96" fill="${typeColor}"/>
+  <text x="300" y="46" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="2">OFFICIAL RECEIPT</text>
+  <text x="300" y="76" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#ffe4ea" text-anchor="middle" letter-spacing="1">LOCAL STUDENT COUNCIL &#x2014; DIGITAL TRANSPARENCY</text>
+  ${logos ? receiptLogoMarkup(logos) : ""}
+  <text x="40" y="132" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#1f2937">Local Student Council &#x2014; Digital Transparency Board</text>
+  <text x="40" y="156" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#6b7280">${xml(details.fiscalYear || dynamicSchoolYear())}</text>
+  <line x1="40" y1="176" x2="560" y2="176" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="40" y="212" font-family="monospace" font-size="13" fill="#374151">${xml(details.receiptNumber)}</text>
+  <text x="40" y="236" font-family="monospace" font-size="13" fill="#374151">Issued: ${xml(formatDateHuman(details.date))}</text>
+  <text x="40" y="262" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="${typeColor}" letter-spacing="2">${tag}</text>
+  <rect x="40" y="272" width="520" height="${boxHeight}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    ${headerRowsSvg}
+    ${summaryRowsSvg}
+    ${historyHeaderSvg}
+    ${historyRowsSvg}
+  <line x1="60" y1="${lineY}" x2="540" y2="${lineY}" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="60" y="${lineY + 40}" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#374151">TOTAL AMOUNT PAID</text>
+  <text x="540" y="${lineY + 46}" font-family="monospace" font-size="26" font-weight="bold" fill="${typeColor}" text-anchor="end">PHP ${xml(formatAmount(details.amount))}</text>
+  <text x="60" y="${lineY + 88}" font-family="monospace" font-size="11" fill="#6b7280">${wordsShort}</text>
+  <text x="60" y="${lineY + 114}" font-family="monospace" font-size="11" fill="#9ca3af">PREPARED BY: ${xml(details.recordedBy || "Council Officer")}</text>
+  <line x1="40" y1="${footerLine}" x2="560" y2="${footerLine}" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="40" y="${footerLine + 36}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Authorized signature: ________________________</text>
+  <text x="40" y="${footerLine + 56}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Recorded by: ${xml(details.recordedBy || "Council Officer")}</text>
+  <rect x="40" y="${thankYouTop}" width="520" height="56" rx="6" fill="${typeColor}"/>
+  <text x="300" y="${thankYouTop + 35}" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="3">THANK YOU FOR YOUR SUPPORT!</text>
+</svg>`;
+  }
+
+  // ── Original layout: no payment history (non-contribution or legacy) ───────
+  const rows: [string, string][] = [
+    ...headerRows,
+    ...(isContribution
+      ? [
+          ["REQUIRED AMOUNT",   `\u20B1${formatAmount(details.requiredAmount ?? 0)}`] as [string, string],
+          ["AMOUNT PAID",       `\u20B1${formatAmount(details.amount)}`]               as [string, string],
+          ["REMAINING BALANCE", `\u20B1${formatAmount(details.remainingBalance ?? 0)}`] as [string, string],
+          ["STATUS", xml(details.statusLabel || "\u2014")]                             as [string, string],
+        ]
+      : []),
+  ];
   // Layout is computed from the row count so the TOTAL AMOUNT block and the
-  // footer always stay inside the details box (a third row used to push them
-  // out of the container). The SVG height grows with the rows, so the PNG /
-  // PDF export adapts automatically.
-  const ROWS_START = 352;              // y of the first detail label
-  const ROW_PITCH = 64;                // vertical space per label/value pair
-  const lineY = ROWS_START + rows.length * ROW_PITCH - 12; // separator above TOTAL
-  const boxBottom = lineY + 148;       // bottom edge of the details box
-  const footerLine = boxBottom + 26;   // divider under the box
-  const thankYouTop = footerLine + 70; // green thank-you band
-  const height = thankYouTop + 92;     // page height
-  const boxHeight = boxBottom - 272 + 18;
-  const words = xml(amountInWords(details.amount));
+  // footer always stay inside the details box. The SVG height grows with the
+  // rows, so the PNG / PDF export adapts automatically.
+  const lineY       = ROWS_START + rows.length * ROW_PITCH - 12;
+  const boxBottom   = lineY + 148;
+  const footerLine  = boxBottom + 26;
+  const thankYouTop = footerLine + 70;
+  const height      = thankYouTop + 92;
+  const boxHeight   = boxBottom - 272 + 18;
+  const words      = xml(amountInWords(details.amount));
   const wordsShort = words.length > 86 ? words.slice(0, 83) + "..." : words;
 
   const rowsSvg = rows
@@ -425,15 +539,31 @@ export async function officialReceiptNumber(): Promise<string> {
 /**
  * Uploads an auto-generated SVG receipt to the public "receipts" bucket and
  * returns its public URL. Throws when storage is not configured/available.
+ *
+ * When the `details.receiptNumber` is an OR number (OR-YYYY-NNNNNN), the file
+ * is stored at a deterministic path derived from that number so that subsequent
+ * payments to the same contribution overwrite the same file — one receipt per
+ * contribution, always up-to-date.  Random UUIDs are used as a fallback for
+ * non-OR receipts to preserve backwards compatibility.
  */
 export async function autoCreateReceipt(details: ReceiptDetails): Promise<string> {
   const logos = await getReceiptLogos();
   const svg = buildReceiptSvg(details, logos);
-  const path = `auto/${crypto.randomUUID()}.svg`;
+
+  // Derive a stable, deterministic path from the OR number so overwriting
+  // the same file on each subsequent payment is safe and idempotent.
+  const orSlug =
+    details.receiptNumber && /^OR-\d{4}-\d{6}$/.test(details.receiptNumber)
+      ? details.receiptNumber.toLowerCase()       // e.g. "or-2026-000001"
+      : crypto.randomUUID();
+
+  const path = `auto/${orSlug}.svg`;
   const { error } = await getSupabase()
     .storage.from("receipts")
     .upload(path, new Blob([svg], { type: "image/svg+xml" }), {
-      upsert: false,
+      // upsert:true overwrites the existing file on subsequent payments so
+      // there is always exactly one receipt SVG per contribution.
+      upsert: true,
       contentType: "image/svg+xml",
     });
   if (error) throw new Error(error.message);

@@ -55,6 +55,9 @@ const mapPayment = (item: Record<string, unknown>): PaymentRecord => ({
   receiptUrl: (item.receipt_url as string | null) || undefined,
   orNumber: (item.or_number as string | null) || undefined,
   recordedBy: item.recorded_by as string,
+  paymentItems: Array.isArray(item.payment_items)
+    ? (item.payment_items as PaymentRecord["paymentItems"])
+    : [],
 });
 
 export const auditLogsService = {
@@ -1742,6 +1745,7 @@ export const paymentsService = {
       receipt_url: record.receiptUrl,
       or_number: record.orNumber,
       recorded_by: record.recordedBy,
+      payment_items: record.paymentItems ?? [],
     };
 
     const result = await offlineSyncService.mutation<PaymentRecord>({
@@ -1778,6 +1782,9 @@ export const paymentsService = {
           receiptUrl: data.receipt_url || undefined,
           orNumber: data.or_number || undefined,
           recordedBy: data.recorded_by,
+          paymentItems: Array.isArray(data.payment_items)
+            ? (data.payment_items as PaymentRecord["paymentItems"])
+            : [],
         };
       },
     });
@@ -1858,6 +1865,8 @@ export const paymentsService = {
     if (record.orNumber !== undefined) updateData.or_number = record.orNumber;
     if (record.recordedBy !== undefined)
       updateData.recorded_by = record.recordedBy;
+    if (record.paymentItems !== undefined)
+      updateData.payment_items = record.paymentItems;
 
     const result = await offlineSyncService.mutation<PaymentRecord>({
       table: "payments",
@@ -1895,6 +1904,9 @@ export const paymentsService = {
           receiptUrl: data.receipt_url || undefined,
           orNumber: data.or_number || undefined,
           recordedBy: data.recorded_by,
+          paymentItems: Array.isArray(data.payment_items)
+            ? (data.payment_items as PaymentRecord["paymentItems"])
+            : [],
         };
       },
     });

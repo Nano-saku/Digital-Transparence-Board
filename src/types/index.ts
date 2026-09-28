@@ -124,6 +124,20 @@ export interface ContributionRecord {
   remainingBalance: number;
 }
 
+/**
+ * One installment in the cumulative payment history stored on a PaymentRecord.
+ * Every time a partial or full payment is recorded, a new PaymentItem is
+ * appended to PaymentRecord.paymentItems — the history is never overwritten.
+ */
+export interface PaymentItem {
+  /** Amount paid in this installment. */
+  amount: number;
+  /** ISO date (YYYY-MM-DD) when this installment was recorded. */
+  date: string;
+  /** Payment status at the time of this installment. */
+  status: "Partial" | "Fully Paid";
+}
+
 export interface PaymentRecord {
   id: string;
   studentId: string;
@@ -131,15 +145,23 @@ export interface PaymentRecord {
   eventId: string;
   eventName: string;
   contributionId: string;
+  /** Cumulative total amount paid for this contribution (sum of all installments). */
   amount: number;
   date: string;
   /** Database timestamp of the successful payment insert/update. */
   recordedAt?: string;
   receiptUrl?: string;
-  /** Official Receipt (OR) number, e.g. "OR-2026-000001". Assigned only when
-   *  the student's contribution for the event is fully paid. */
+  /** Official Receipt (OR) number, e.g. "OR-2026-000001". Assigned on the
+   *  first payment (partial or full) and reused for all subsequent updates. */
   orNumber?: string;
   recordedBy: string;
+  /**
+   * Ordered list of individual payment installments. Each element records
+   * the amount, date, and status of one installment. The first element is
+   * the initial partial payment; successive elements are added cumulatively.
+   * Never modified retroactively — only appended to.
+   */
+  paymentItems: PaymentItem[];
 }
 
 // Transaction Types

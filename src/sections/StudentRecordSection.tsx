@@ -209,9 +209,15 @@ export default function StudentRecordSection({
   const receiptsForEvent = (eventId: string): PaymentRecord[] =>
     receiptsByEvent.get(eventId) ?? [];
 
-  const getContributionReceiptDetails = async (record: ContributionRecord) => ({
+  const getContributionReceiptDetails = async (
+    record: ContributionRecord,
+    paymentRecord?: PaymentRecord,
+  ) => ({
     tag: "CONTRIBUTION RECORD" as const,
-    receiptNumber: await officialReceiptNumber(),
+    // Reuse the stored OR number from the payment record so we never burn
+    // an OR sequence number just to preview or download a receipt.
+    receiptNumber:
+      paymentRecord?.orNumber ?? (await officialReceiptNumber()),
     issuedTo: student.name,
     eventName: record.eventName,
     amount: record.amountPaid,
@@ -221,6 +227,9 @@ export default function StudentRecordSection({
     requiredAmount: record.requiredAmount,
     remainingBalance: record.remainingBalance,
     statusLabel: contributionStatus(record).label,
+    // Pass the stored installment history so the receipt renders the payment
+    // history table instead of a single-line amount row.
+    paymentItems: paymentRecord?.paymentItems,
   });
 
   const handlePreviewContributionReceipt = async (
@@ -235,8 +244,10 @@ export default function StudentRecordSection({
 
     try {
       setPreviewingId(record.id);
+      // Pass the payment record so we reuse its OR number and payment history.
+      const paymentRecord = paymentReceipts[0];
       const receiptUrl = await createContributionReceiptPreview(
-        await getContributionReceiptDetails(record),
+        await getContributionReceiptDetails(record, paymentRecord),
       );
       setSelectedReceipt(receiptUrl);
     } catch (error) {
@@ -248,10 +259,11 @@ export default function StudentRecordSection({
   };
 
   // Builds the contribution-record receipt (student, event, required, paid,
-  // balance, status) and downloads it directly — no storage round-trip.
-  // Supports SVG, PNG, and JPG formats.
+  // balance, status, payment history) and downloads it directly — no storage
+  // round-trip. Supports SVG, PNG, and JPG formats.
   const handleDownloadContributionReceipt = async (
     record: ContributionRecord,
+    paymentReceipts: PaymentRecord[],
     format: ReceiptFormat = "svg",
   ) => {
     try {
@@ -263,8 +275,10 @@ export default function StudentRecordSection({
           "Receipt is only available when the paid amount is greater than zero.",
         );
       }
+      // Pass the payment record so we reuse its OR number and payment history.
+      const paymentRecord = paymentReceipts[0];
       const message = await downloadContributionReceipt(
-        await getContributionReceiptDetails(record),
+        await getContributionReceiptDetails(record, paymentRecord),
         format,
       );
       toast.success(message);
@@ -651,6 +665,7 @@ export default function StudentRecordSection({
                                             onClick={() =>
                                               handleDownloadContributionReceipt(
                                                 record,
+                                                paymentReceipts,
                                                 format,
                                               )
                                             }
