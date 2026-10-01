@@ -164,9 +164,10 @@ event and student:
     Morning Time In until the Afternoon session begins, then the Afternoon
     Time In).
   - **Late** – scanned after that session's Time In.
-  - **Absent** – never scanned; the system **automatically marks the student
-    Absent at 10:00 PM** on the event day (checks on the Attendance tab and on
-    a 1-minute timer, idempotent so it never duplicates saved scans/edits).
+  - **Absent** – never scanned; the system automatically marks the student
+    Absent when the event's configured calendar day ends at 12:00 AM in
+    Philippine Time (checks on the Attendance tab and on a 1-minute timer,
+    idempotent so it never duplicates saved scans/edits).
 - `supabase/security.sql` adds the new `morning_time_in`/`morning_time_out` and
   `afternoon_time_in`/`afternoon_time_out` columns to an existing `events`
   table non-destructively (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, along

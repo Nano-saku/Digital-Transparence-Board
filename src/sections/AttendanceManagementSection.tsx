@@ -42,6 +42,10 @@ import {
   composeTime12,
 } from "@/lib/format";
 import { matchesSearchWords } from "@/lib/utils";
+import {
+  getScheduledEventSessions,
+  hasEventAttendanceDayEnded,
+} from "@/lib/attendance";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
@@ -607,33 +611,15 @@ export default function AttendanceManagementSection({
   const autoMarkAbsent = useCallback(async () => {
     if (!canRecordAttendance) return;
     const now = new Date();
-    if (now.getHours() !== 0) return;
-
-    const completedDate = new Date(now);
-    completedDate.setDate(completedDate.getDate() - 1);
-    const completedDateISO = [
-      completedDate.getFullYear(),
-      String(completedDate.getMonth() + 1).padStart(2, "0"),
-      String(completedDate.getDate()).padStart(2, "0"),
-    ].join("-");
     const completedEvents = events.filter(
-      (e) => !e.isNonConducting && e.date === completedDateISO,
+      (event) =>
+        !event.isNonConducting && hasEventAttendanceDayEnded(event.date, now),
     );
     if (completedEvents.length === 0) return;
 
     try {
       for (const event of completedEvents) {
-        for (const session of ["morning", "afternoon", "evening"] as const) {
-          const schedule = event.schedules?.find((s) => s.period === session);
-          if (!schedule) continue;
-
-          const holdsSession =
-            schedule.timeInEnabled ||
-            schedule.timeOutEnabled ||
-            !!schedule.timeIn ||
-            !!schedule.timeOut;
-          if (!holdsSession) continue;
-
+        for (const session of getScheduledEventSessions(event)) {
           const existing = await attendanceService.getByEventIdAndSession(
             event.id,
             session,
@@ -648,7 +634,7 @@ export default function AttendanceManagementSection({
                 studentId: student.id,
                 eventId: event.id,
                 eventName: event.name,
-                date: event.date ?? completedDateISO,
+                date: event.date!,
                 session,
                 status: "absent",
               }),
