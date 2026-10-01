@@ -36,6 +36,7 @@ import {
   formatDate,
   daysUntil,
   today,
+  getEarliestScheduledTime,
   formatTimeRange,
   formatPeso,
 } from "@/lib/format";
@@ -587,14 +588,23 @@ export default function EventManagementSection({
                               {event.date >= todaysISO && (
                                 <span
                                   className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
-                                    daysUntil(event.date) === 0
+                                    daysUntil(
+                                      event.date,
+                                      getEarliestScheduledTime(event.schedules),
+                                    ) === 0
                                       ? "bg-red-500 text-white"
                                       : "bg-green-100 text-green-600"
                                   }`}
                                 >
-                                  {daysUntil(event.date) === 0
+                                  {daysUntil(
+                                    event.date,
+                                    getEarliestScheduledTime(event.schedules),
+                                  ) === 0
                                     ? "Today"
-                                    : `In ${daysUntil(event.date)}d`}
+                                    : `In ${daysUntil(
+                                        event.date,
+                                        getEarliestScheduledTime(event.schedules),
+                                      )}d`}
                                 </span>
                               )}
                             </div>

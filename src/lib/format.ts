@@ -11,7 +11,10 @@
  */
 export function formatDate(dateString: string | Date): string {
   if (!dateString) return "-";
-  const date = dateString instanceof Date ? dateString : new Date(dateString);
+  const date =
+    dateString instanceof Date
+      ? dateString
+      : parseCalendarDate(dateString) ?? new Date(dateString);
   if (Number.isNaN(date.getTime())) return String(dateString);
   return date.toLocaleDateString("en-US", {
     year: "numeric",
@@ -62,14 +65,67 @@ export function getOrdinalSuffix(num: number): string {
   return suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
 }
 
-/** Whole days (rounded up) between now and the given ISO date. */
-export function daysUntil(date: string): number {
-  return Math.ceil((new Date(date).getTime() - Date.now()) / 86400000);
+/**
+ * Parses a date-only value as a local calendar date.
+ *
+ * `new Date("YYYY-MM-DD")` parses the value as UTC, which can display the
+ * previous day in timezones west of UTC. Event and deadline dates are calendar
+ * dates selected by an administrator, so they must not go through that
+ * conversion.
+ */
+export function parseCalendarDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  return date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    ? date
+    : null;
 }
 
-/** Today's date as a UTC `YYYY-MM-DD` string (same as the original helper). */
+/** Creates a local wall-clock Date from a configured calendar date and time. */
+export function dateAtLocalTime(dateValue: string, timeValue?: string): Date | null {
+  const date = parseCalendarDate(dateValue);
+  if (!date) return null;
+
+  const minutes = timeToMinutes(timeValue);
+  if (minutes === null) return date;
+
+  date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return date;
+}
+
+/** Returns the earliest configured scheduled start time. */
+export function getEarliestScheduledTime(
+  schedules?: Array<{ timeIn?: string }>,
+): string | undefined {
+  return schedules
+    ?.map((schedule) => schedule.timeIn?.trim())
+    .filter((time): time is string => Boolean(time))
+    .sort((a, b) => (timeToMinutes(a) ?? Infinity) - (timeToMinutes(b) ?? Infinity))[0];
+}
+
+/** Whole days (rounded up) until a local calendar date and optional time. */
+export function daysUntil(date: string, time?: string): number {
+  const target = dateAtLocalTime(date, time);
+  if (!target) return NaN;
+  return Math.ceil((target.getTime() - Date.now()) / 86400000);
+}
+
+/** Today's local calendar date as a `YYYY-MM-DD` string. */
 export function today(): string {
-  return new Date().toISOString().split("T")[0];
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 /**

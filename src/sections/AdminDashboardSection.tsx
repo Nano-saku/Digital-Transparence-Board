@@ -13,7 +13,14 @@ import {
   MessageSquare,
   Coins,
 } from "lucide-react";
-import { today, daysUntil, formatPeso } from "@/lib/format";
+import {
+  today,
+  daysUntil,
+  formatDate,
+  formatPeso,
+  getEarliestScheduledTime,
+  parseCalendarDate,
+} from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import type {
@@ -463,7 +470,10 @@ export default function AdminDashboardSection({
                   ) : (
                     <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2">
                       {upcomingEvents.map((event) => {
-                        const days = daysUntil(event.date || "");
+                        const days = daysUntil(
+                          event.date || "",
+                          getEarliestScheduledTime(event.schedules),
+                        );
 
                         return (
                           <div
@@ -477,7 +487,7 @@ export default function AdminDashboardSection({
 
                               <p className="text-[11px] text-text-secondary mt-1">
                                 {event.date
-                                  ? new Date(event.date).toLocaleDateString(
+                                  ? (parseCalendarDate(event.date)?.toLocaleDateString(
                                       "en-US",
                                       {
                                         weekday: "short",
@@ -485,7 +495,7 @@ export default function AdminDashboardSection({
                                         day: "numeric",
                                         year: "numeric",
                                       },
-                                    )
+                                    ) ?? formatDate(event.date))
                                   : "Date not set"}
                               </p>
 
