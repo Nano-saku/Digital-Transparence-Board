@@ -117,3 +117,46 @@ export function compareTime24(a?: string, b?: string): number {
   if (minutesA === null || minutesB === null) return 0;
   return minutesA - minutesB;
 }
+
+/**
+ * Splits a 24h `"HH:MM"` time into typeable 12-hour Hour / Minute / AM·PM
+ * parts for editable time fields (separate hour and minute inputs plus an
+ * AM/PM dropdown, with the `:` rendered between them rather than typed).
+ * Returns blank hour/minute (defaulting to AM) when the value is empty or
+ * unparseable, so the fields start empty instead of showing "12:00 AM".
+ */
+export function splitTime24(value?: string): {
+  hour: string;
+  minute: string;
+  period: "AM" | "PM";
+} {
+  const match = value ? /^(\d{1,2}):(\d{2})/.exec(value.trim()) : null;
+  if (!match) return { hour: "", minute: "", period: "AM" };
+  const hour24 = Number(match[1]);
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return {
+    hour: String(hour12),
+    minute: match[2],
+    period: hour24 >= 12 ? "PM" : "AM",
+  };
+}
+
+/**
+ * Combines typed 12-hour Hour / Minute / AM·PM fields into the 24h `"HH:MM"`
+ * format the database stores. Returns `null` when the hour or minute is not
+ * a plain number or is out of range (hour 1-12, minute 00-59).
+ */
+export function composeTime12(
+  hour: string,
+  minute: string,
+  period: "AM" | "PM",
+): string | null {
+  const h = hour.trim();
+  const m = minute.trim();
+  if (!/^\d{1,2}$/.test(h) || !/^\d{1,2}$/.test(m)) return null;
+  const hourNum = Number(h);
+  const minuteNum = Number(m);
+  if (hourNum < 1 || hourNum > 12 || minuteNum > 59) return null;
+  const hour24 = (hourNum % 12) + (period === "PM" ? 12 : 0);
+  return `${String(hour24).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+}

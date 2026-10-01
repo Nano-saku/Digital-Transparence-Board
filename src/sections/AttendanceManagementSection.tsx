@@ -15,6 +15,8 @@ import {
   CameraOff,
   SwitchCamera,
   Trash2,
+  Edit2,
+  Save,
 } from "lucide-react";
 import jsQR from "jsqr";
 import {
@@ -32,16 +34,28 @@ import type {
 } from "@/types";
 import { parseStudentQrText } from "@/lib/qr";
 import { toast } from "sonner";
-import { formatDate, formatTime12, compareTime24 } from "@/lib/format";
+import {
+  formatDate,
+  formatTime12,
+  compareTime24,
+  splitTime24,
+  composeTime12,
+} from "@/lib/format";
 import { matchesSearchWords } from "@/lib/utils";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
-import TimeInput12 from "@/features/events/TimeInput12";
 import AttendanceAnalysisChart from "@/features/events/AttendanceAnalysisChart";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import Pagination from "@/components/common/Pagination";
+import Skeleton from "@/components/Skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface AttendanceManagementSectionProps {
   onBack: () => void;
@@ -69,6 +83,23 @@ export default function AttendanceManagementSection({
     id: string;
     studentName: string;
   } | null>(null);
+
+  // Edit attendance record (Status + Time In + Time Out) via explicit dialog
+  const [editingAttendanceStudent, setEditingAttendanceStudent] =
+    useState<Student | null>(null);
+  const emptyAttendanceEditForm = {
+    status: "present" as "present" | "late" | "absent",
+    timeInHour: "",
+    timeInMinute: "",
+    timeInPeriod: "AM" as "AM" | "PM",
+    timeOutHour: "",
+    timeOutMinute: "",
+    timeOutPeriod: "AM" as "AM" | "PM",
+  };
+  const [attendanceEditForm, setAttendanceEditForm] = useState(
+    emptyAttendanceEditForm,
+  );
+  const [savingAttendanceEdit, setSavingAttendanceEdit] = useState(false);
 
   // Role-based permissions
   const canRecordAttendance = role === "admin" || role === "secretary";
@@ -226,21 +257,6 @@ export default function AttendanceManagementSection({
     ],
   );
 
-  const handleMarkAttendance = async (
-    studentId: string,
-    status: "present" | "absent",
-  ) => {
-    try {
-      await persistAttendance(studentId, { status });
-      toast.success(
-        status === "present" ? "Marked as Present" : "Marked as Absent",
-      );
-    } catch (error) {
-      console.error("Error saving attendance status:", error);
-      toast.error(`Failed to save attendance — ${errorMessage(error)}`);
-    }
-  };
-
   const confirmClearAttendance = async () => {
     if (!attendanceToClear) return;
 
@@ -282,24 +298,74 @@ export default function AttendanceManagementSection({
     setShowAttendanceClearConfirm(true);
   };
 
-  const handleSetAttendanceTime = async (
-    studentId: string,
-    field: "timeIn" | "timeOut",
-    value: string,
-  ) => {
+  const openAttendanceEditModal = (student: Student) => {
+    const record = attendanceMap.get(student.id);
+    const timeIn = splitTime24(record?.timeIn);
+    const timeOut = splitTime24(record?.timeOut);
+    setAttendanceEditForm({
+      status: record?.status ?? "present",
+      timeInHour: timeIn.hour,
+      timeInMinute: timeIn.minute,
+      timeInPeriod: timeIn.period,
+      timeOutHour: timeOut.hour,
+      timeOutMinute: timeOut.minute,
+      timeOutPeriod: timeOut.period,
+    });
+    setEditingAttendanceStudent(student);
+  };
+
+  const closeAttendanceEditModal = () => {
+    setEditingAttendanceStudent(null);
+    setAttendanceEditForm(emptyAttendanceEditForm);
+  };
+
+  const handleSaveAttendanceEdit = async () => {
+    if (!editingAttendanceStudent) return;
+
+    const timeInProvided =
+      attendanceEditForm.timeInHour.trim() ||
+      attendanceEditForm.timeInMinute.trim();
+    const timeOutProvided =
+      attendanceEditForm.timeOutHour.trim() ||
+      attendanceEditForm.timeOutMinute.trim();
+    const parsedTimeIn = timeInProvided
+      ? composeTime12(
+          attendanceEditForm.timeInHour,
+          attendanceEditForm.timeInMinute,
+          attendanceEditForm.timeInPeriod,
+        )
+      : "";
+    const parsedTimeOut = timeOutProvided
+      ? composeTime12(
+          attendanceEditForm.timeOutHour,
+          attendanceEditForm.timeOutMinute,
+          attendanceEditForm.timeOutPeriod,
+        )
+      : "";
+
+    if (timeInProvided && parsedTimeIn === null) {
+      toast.error("Time In hour must be 1-12 and minutes must be 00-59.");
+      return;
+    }
+    if (timeOutProvided && parsedTimeOut === null) {
+      toast.error("Time Out hour must be 1-12 and minutes must be 00-59.");
+      return;
+    }
+
+    setSavingAttendanceEdit(true);
     try {
-      const record = attendanceMap.get(studentId);
-      const status =
-        field === "timeIn" &&
-        value &&
-        record?.status !== "absent" &&
-        selectedAttendanceEvent
-          ? deriveScanStatus(value, selectedAttendanceEvent, attendanceSession)
-          : undefined;
-      await persistAttendance(studentId, { [field]: value, status });
+      await persistAttendance(editingAttendanceStudent.id, {
+        status: attendanceEditForm.status,
+        timeIn: parsedTimeIn ?? undefined,
+        timeOut: parsedTimeOut ?? undefined,
+      });
+      toast.success(`${editingAttendanceStudent.name}'s attendance updated.`);
+      closeAttendanceEditModal();
     } catch (error) {
-      console.error("Error saving attendance time:", error);
-      toast.error(`Failed to save attendance time — ${errorMessage(error)}`);
+      console.error("Error saving attendance:", error);
+      toast.error(`Failed to save attendance — ${errorMessage(error)}`);
+    } finally {
+      setSavingAttendanceEdit(false);
     }
   };
 
@@ -1232,7 +1298,6 @@ export default function AttendanceManagementSection({
                       <tbody>
                         {paginatedStudents.map((student) => {
                           const record = attendanceMap.get(student.id);
-                          const isPresent = record?.status === "present";
                           const isLastScanned =
                             student.id === lastScannedStudentId;
                           return (
@@ -1262,105 +1327,72 @@ export default function AttendanceManagementSection({
                                 {student.section}
                               </td>
                               <td className="text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() =>
-                                      handleMarkAttendance(
-                                        student.id,
-                                        "present",
-                                      )
-                                    }
-                                    className={`p-2 rounded-lg ${
-                                      isPresent
-                                        ? "bg-green-100 text-green-600"
-                                        : "text-text-secondary"
-                                    }`}
-                                    title="Mark as Present (auto-saves)"
-                                  >
-                                    <CheckCircle className="w-5 h-5" />
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleMarkAttendance(student.id, "absent")
-                                    }
-                                    className={`p-2 rounded-lg ${
-                                      record?.status === "absent"
-                                        ? "bg-red/10 text-red-500"
-                                        : "text-text-secondary"
-                                    }`}
-                                    title="Mark as Absent (auto-saves)"
-                                  >
-                                    <XCircle className="w-5 h-5" />
-                                  </button>
-                                  {record && (
-                                    <span
-                                      className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                                        record.status === "late"
-                                          ? "bg-amber-100 text-amber-700"
-                                          : record.status === "present"
-                                            ? "bg-green-100 text-green-600"
-                                            : "bg-red/10 text-red-500"
-                                      }`}
-                                    >
-                                      {record.status === "late"
-                                        ? "Late"
+                                {record ? (
+                                  <span
+                                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                                      record.status === "late"
+                                        ? "bg-amber-100 text-amber-700"
                                         : record.status === "present"
-                                          ? "Present"
-                                          : "Absent"}
-                                    </span>
-                                  )}
-                                </div>
+                                          ? "bg-green-100 text-green-600"
+                                          : "bg-red/10 text-red-500"
+                                    }`}
+                                  >
+                                    {record.status === "late"
+                                      ? "Late"
+                                      : record.status === "present"
+                                        ? "Present"
+                                        : "Absent"}
+                                  </span>
+                                ) : (
+                                  <span className="text-text-secondary text-xs">
+                                    —
+                                  </span>
+                                )}
                               </td>
                               <td className="text-text-secondary text-sm">
                                 {selectedAttendanceEvent?.name ?? "—"}
                               </td>
-                              <td>
-                                <TimeInput12
-                                  value={record?.timeIn ?? ""}
-                                  onChange={(v) =>
-                                    handleSetAttendanceTime(
-                                      student.id,
-                                      "timeIn",
-                                      v,
-                                    )
-                                  }
-                                  disabled={record?.status === "absent"}
-                                  ariaLabel="Time in"
-                                />
+                              <td className="text-text-secondary text-sm">
+                                {formatTime12(record?.timeIn)}
                               </td>
-                              <td>
-                                <TimeInput12
-                                  value={record?.timeOut ?? ""}
-                                  onChange={(v) =>
-                                    handleSetAttendanceTime(
-                                      student.id,
-                                      "timeOut",
-                                      v,
-                                    )
-                                  }
-                                  disabled={record?.status === "absent"}
-                                  ariaLabel="Time out"
-                                />
+                              <td className="text-text-secondary text-sm">
+                                {formatTime12(record?.timeOut)}
                               </td>
                               <td className="text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleClearAttendance(student)}
-                                  disabled={!record}
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                    record
-                                      ? "text-red-500 hover:bg-red/10 hover:text-red-600"
-                                      : "text-text-secondary/40 cursor-not-allowed"
-                                  }`}
-                                  title={
-                                    record
-                                      ? "Clear attendance record"
-                                      : "No attendance record to clear"
-                                  }
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  Clear
-                                </button>
+                                <div className="inline-flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openAttendanceEditModal(student)}
+                                    disabled={!canRecordAttendance}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                      canRecordAttendance
+                                        ? "text-primary hover:bg-primary/10"
+                                        : "text-text-secondary/40 cursor-not-allowed"
+                                    }`}
+                                    title="Edit attendance record"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleClearAttendance(student)}
+                                    disabled={!record}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                      record
+                                        ? "text-red-500 hover:bg-red/10 hover:text-red-600"
+                                        : "text-text-secondary/40 cursor-not-allowed"
+                                    }`}
+                                    title={
+                                      record
+                                        ? "Clear attendance record"
+                                        : "No attendance record to clear"
+                                    }
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Clear
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1429,6 +1461,197 @@ export default function AttendanceManagementSection({
           </div>
         )}
       </div>
+
+      {/* Edit Attendance Modal */}
+      <Dialog
+        open={editingAttendanceStudent != null}
+        onOpenChange={(open) => {
+          if (!open) closeAttendanceEditModal();
+        }}
+      >
+        <DialogContent className="glass-card-strong max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display font-bold text-xl text-dark">
+              Edit Attendance
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            <p className="text-sm text-text-secondary">
+              <span className="font-semibold text-dark">
+                {editingAttendanceStudent?.name}
+              </span>{" "}
+              — {selectedAttendanceEvent?.name ?? "—"}
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium text-dark mb-1">
+                Status
+              </label>
+              <select
+                value={attendanceEditForm.status}
+                onChange={(e) =>
+                  setAttendanceEditForm({
+                    ...attendanceEditForm,
+                    status: e.target.value as "present" | "late" | "absent",
+                  })
+                }
+                className="glass-input w-full px-4 py-2"
+                disabled={savingAttendanceEdit}
+              >
+                <option value="present">Present</option>
+                <option value="late">Late</option>
+                <option value="absent">Absent</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1">
+                  Time In
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={2}
+                    value={attendanceEditForm.timeInHour}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeInHour: e.target.value.replace(/\D/g, ""),
+                      })
+                    }
+                    className="glass-input w-12 px-1 py-2 text-center"
+                    placeholder="3"
+                    title="Hour (1-12)"
+                    disabled={savingAttendanceEdit}
+                  />
+                  <span className="text-text-secondary font-medium">:</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={2}
+                    value={attendanceEditForm.timeInMinute}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeInMinute: e.target.value.replace(/\D/g, ""),
+                      })
+                    }
+                    className="glass-input w-12 px-1 py-2 text-center"
+                    placeholder="37"
+                    title="Minutes (00-59)"
+                    disabled={savingAttendanceEdit}
+                  />
+                  <select
+                    value={attendanceEditForm.timeInPeriod}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeInPeriod: e.target.value as "AM" | "PM",
+                      })
+                    }
+                    className="glass-input flex-1 px-1 py-2"
+                    title="AM or PM"
+                    disabled={savingAttendanceEdit}
+                  >
+                    <option value="AM">AM</option>
+                    <option value="PM">PM</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1">
+                  Time Out
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={2}
+                    value={attendanceEditForm.timeOutHour}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeOutHour: e.target.value.replace(/\D/g, ""),
+                      })
+                    }
+                    className="glass-input w-12 px-1 py-2 text-center"
+                    placeholder="9"
+                    title="Hour (1-12)"
+                    disabled={savingAttendanceEdit}
+                  />
+                  <span className="text-text-secondary font-medium">:</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={2}
+                    value={attendanceEditForm.timeOutMinute}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeOutMinute: e.target.value.replace(/\D/g, ""),
+                      })
+                    }
+                    className="glass-input w-12 px-1 py-2 text-center"
+                    placeholder="46"
+                    title="Minutes (00-59)"
+                    disabled={savingAttendanceEdit}
+                  />
+                  <select
+                    value={attendanceEditForm.timeOutPeriod}
+                    onChange={(e) =>
+                      setAttendanceEditForm({
+                        ...attendanceEditForm,
+                        timeOutPeriod: e.target.value as "AM" | "PM",
+                      })
+                    }
+                    className="glass-input flex-1 px-1 py-2"
+                    title="AM or PM"
+                    disabled={savingAttendanceEdit}
+                  >
+                    <option value="AM">AM</option>
+                    <option value="PM">PM</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-text-secondary">
+              Type Hour (1-12) and Minutes (00-59), then choose AM or PM.
+              Leave both blank to clear.
+            </p>
+
+            <div className="flex gap-3 pt-4">
+              <button
+                onClick={closeAttendanceEditModal}
+                className="flex-1 glass-button px-4 py-2.5"
+                disabled={savingAttendanceEdit}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAttendanceEdit}
+                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
+                disabled={savingAttendanceEdit}
+              >
+                {savingAttendanceEdit ? (
+                  <>
+                    <Skeleton className="h-4 w-4 rounded-full" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Save
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={showAttendanceClearConfirm && attendanceToClear != null}
