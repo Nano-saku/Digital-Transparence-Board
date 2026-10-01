@@ -54,7 +54,7 @@ import {
   formatDate,
   formatPeso,
   getOrdinalSuffix,
-  formatTimeRange,
+  formatTime12,
   today,
 } from "@/lib/format";
 import {
@@ -489,7 +489,8 @@ export default function StudentRecordSection({
                         <th>Event</th>
                         <th>Date</th>
                         <th>Status</th>
-                        <th>Time</th>
+                        <th>Time In</th>
+                        <th>Time Out</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -522,9 +523,13 @@ export default function StudentRecordSection({
                             )}
                           </td>
                           <td className="text-text-secondary whitespace-nowrap">
-                            {record.status !== "absent" &&
-                            (record.timeIn || record.timeOut)
-                              ? formatTimeRange(record.timeIn, record.timeOut)
+                            {record.status !== "absent" && record.timeIn
+                              ? formatTime12(record.timeIn)
+                              : "—"}
+                          </td>
+                          <td className="text-text-secondary whitespace-nowrap">
+                            {record.status !== "absent" && record.timeOut
+                              ? formatTime12(record.timeOut)
                               : "—"}
                           </td>
                         </tr>
