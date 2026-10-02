@@ -766,7 +766,7 @@ export default function TransparencyBoardSection({
           }
         }}
       >
-        <DialogContent className="glass-card-strong max-w-md">
+        <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-md max-h-[calc(100dvh-2rem)] [&>[data-slot=scroll-area]]:min-h-0">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
               {editingTransaction ? "Edit Transaction" : "Add Transaction"}
