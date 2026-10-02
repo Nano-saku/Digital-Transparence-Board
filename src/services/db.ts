@@ -968,6 +968,69 @@ export const attendanceService = {
     );
   },
 
+  async getByEventIdAndDate(
+    eventId: string,
+    date: string,
+  ): Promise<AttendanceRecord[]> {
+    const { data, error } = await getSupabase()
+      .from("attendance")
+      .select("*")
+      .eq("event_id", eventId)
+      .eq("date", date)
+      .order("id", { ascending: false });
+
+    if (error) throw error;
+
+    return (data ?? []).map((item: AttendanceRow) => ({
+      id: item.id,
+      studentId: item.student_id,
+      eventId: item.event_id,
+      eventName: item.event_name,
+      date: item.date,
+      status: item.status,
+      session: (item.session ?? "morning") as
+        | "morning"
+        | "afternoon"
+        | "evening",
+      timeIn: item.time_in ?? undefined,
+      timeOut: item.time_out ?? undefined,
+    }));
+  },
+
+  async getByStudentEventAndDate(
+    studentId: string,
+    eventId: string,
+    date: string,
+  ): Promise<AttendanceRecord | null> {
+    const records = await this.getByEventIdAndDate(eventId, date);
+    return records.find((record) => record.studentId === studentId) ?? null;
+  },
+
+  async createAbsentIfMissing(
+    record: Omit<AttendanceRecord, "id">,
+  ): Promise<AttendanceRecord> {
+    const existing = await this.getByStudentEventAndDate(
+      record.studentId,
+      record.eventId,
+      record.date,
+    );
+    if (existing) return existing;
+
+    try {
+      return await this.create(record);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+
+      const concurrent = await this.getByStudentEventAndDate(
+        record.studentId,
+        record.eventId,
+        record.date,
+      );
+      if (concurrent) return concurrent;
+      throw error;
+    }
+  },
+
   async create(
     record: Omit<AttendanceRecord, "id">,
   ): Promise<AttendanceRecord> {
@@ -1065,9 +1128,26 @@ export const attendanceService = {
           .update(updateData)
           .eq("id", id)
           .select()
-          .single();
+          .maybeSingle();
 
         if (error) throw error;
+        if (!data) {
+          const { data: existingRow, error: lookupError } = await getSupabase()
+            .from("attendance")
+            .select("id")
+            .eq("id", id)
+            .maybeSingle();
+
+          if (lookupError) throw lookupError;
+          if (!existingRow) {
+            throw new Error(
+              "This attendance record no longer exists. Refresh the attendance list and try again.",
+            );
+          }
+          throw new Error(
+            "Attendance was not updated because this account is not authorized to write attendance. Run supabase/attendance_fix.sql and sign in again.",
+          );
+        }
         return {
           id: data.id,
           studentId: data.student_id,

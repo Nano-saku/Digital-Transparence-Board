@@ -88,9 +88,14 @@ export default function AttendanceManagementSection({
     studentName: string;
   } | null>(null);
 
-  // Edit attendance record (Status + Time In + Time Out) via explicit dialog
-  const [editingAttendanceStudent, setEditingAttendanceStudent] =
-    useState<Student | null>(null);
+  // Edit attendance record (Status + Time In + Time Out) via explicit dialog.
+  // Keep the selected row as well as the student so Save always updates the
+  // exact database record that was opened, rather than looking it up again by
+  // student/event/session.
+  const [editingAttendance, setEditingAttendance] = useState<{
+    student: Student;
+    record: AttendanceRecord;
+  } | null>(null);
   const emptyAttendanceEditForm = {
     status: "present" as "present" | "late" | "absent",
     timeInHour: "",
@@ -141,6 +146,7 @@ export default function AttendanceManagementSection({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastScanRef = useRef({ data: "", at: 0 });
+  const autoMarkingAbsentRef = useRef(false);
 
   const selectedAttendanceEvent = events.find(
     (e) => e.id === selectedEventForAttendance,
@@ -215,29 +221,38 @@ export default function AttendanceManagementSection({
     async (
       studentId: string,
       patch: Partial<Pick<AttendanceRecord, "status" | "timeIn" | "timeOut">>,
+      recordToUpdate?: AttendanceRecord,
     ): Promise<AttendanceRecord | null> => {
       const event = selectedAttendanceEvent;
-      if (!event) {
-        toast.error("Select an event before recording attendance");
-        return null;
-      }
       const existing =
+        recordToUpdate ??
         attendanceRecords.find(
           (r) =>
             r.studentId === studentId &&
             r.eventId === selectedEventForAttendance &&
             r.session === attendanceSession,
-        ) ?? null;
+        ) ??
+        null;
+
+      if (!event && !existing) {
+        toast.error("Select an event before recording attendance");
+        return null;
+      }
       const payload = {
         studentId,
-        eventId: event.id,
-        eventName: event.name,
-        date: event.date ?? new Date().toISOString().slice(0, 10),
-        session: attendanceSession,
+        eventId: existing?.eventId ?? event!.id,
+        eventName: existing?.eventName ?? event!.name,
+        date:
+          existing?.date ??
+          event!.date ??
+          new Date().toISOString().slice(0, 10),
+        session: existing?.session ?? attendanceSession,
         status: patch.status ?? existing?.status ?? "present",
-        timeIn: patch.timeIn !== undefined ? patch.timeIn : existing?.timeIn,
+        // Attendance time columns are TEXT NOT NULL. An empty string is the
+        // persisted representation for a deliberately cleared time.
+        timeIn: patch.timeIn !== undefined ? patch.timeIn : existing?.timeIn ?? "",
         timeOut:
-          patch.timeOut !== undefined ? patch.timeOut : existing?.timeOut,
+          patch.timeOut !== undefined ? patch.timeOut : existing?.timeOut ?? "",
       };
       const saved = existing
         ? await attendanceService.update(existing.id, payload)
@@ -304,6 +319,10 @@ export default function AttendanceManagementSection({
 
   const openAttendanceEditModal = (student: Student) => {
     const record = attendanceMap.get(student.id);
+    if (!record) {
+      toast.error("No attendance record exists for this student.");
+      return;
+    }
     const timeIn = splitTime24(record?.timeIn);
     const timeOut = splitTime24(record?.timeOut);
     setAttendanceEditForm({
@@ -315,16 +334,16 @@ export default function AttendanceManagementSection({
       timeOutMinute: timeOut.minute,
       timeOutPeriod: timeOut.period,
     });
-    setEditingAttendanceStudent(student);
+    setEditingAttendance({ student, record });
   };
 
   const closeAttendanceEditModal = () => {
-    setEditingAttendanceStudent(null);
+    setEditingAttendance(null);
     setAttendanceEditForm(emptyAttendanceEditForm);
   };
 
   const handleSaveAttendanceEdit = async () => {
-    if (!editingAttendanceStudent) return;
+    if (!editingAttendance) return;
 
     const timeInProvided =
       attendanceEditForm.timeInHour.trim() ||
@@ -358,12 +377,15 @@ export default function AttendanceManagementSection({
 
     setSavingAttendanceEdit(true);
     try {
-      await persistAttendance(editingAttendanceStudent.id, {
+      const saved = await persistAttendance(editingAttendance.record.studentId, {
         status: attendanceEditForm.status,
-        timeIn: parsedTimeIn ?? undefined,
-        timeOut: parsedTimeOut ?? undefined,
-      });
-      toast.success(`${editingAttendanceStudent.name}'s attendance updated.`);
+        timeIn: parsedTimeIn ?? "",
+        timeOut: parsedTimeOut ?? "",
+      }, editingAttendance.record);
+      if (!saved) {
+        throw new Error("No attendance record was returned after the update.");
+      }
+      toast.success(`${editingAttendance.student.name}'s attendance updated.`);
       closeAttendanceEditModal();
     } catch (error) {
       console.error("Error saving attendance:", error);
@@ -388,8 +410,42 @@ export default function AttendanceManagementSection({
 
   const nowClock = () => new Date().toTimeString().slice(0, 5);
 
-  const errorMessage = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error);
+  const errorMessage = (error: unknown): string => {
+    const details =
+      typeof error === "object" && error !== null
+        ? (error as {
+            message?: unknown;
+            details?: unknown;
+            hint?: unknown;
+            code?: unknown;
+          })
+        : null;
+    if (details) {
+      const code =
+        typeof details.code === "string" ? details.code.trim() : "";
+      if (code === "42501") {
+        return "Your account is not authorized to write attendance. Run supabase/attendance_fix.sql, then sign in again.";
+      }
+      if (code === "PGRST116") {
+        return "The attendance row was not returned after saving. Refresh the attendance list and try again.";
+      }
+      const parts = [details.message, details.details, details.hint]
+        .filter(
+          (part): part is string =>
+            typeof part === "string" && part.trim().length > 0,
+        )
+        .map((part) => part.trim());
+      if (code) parts.push(`code ${code}`);
+      if (parts.length > 0) return parts.join(" — ");
+      try {
+        return JSON.stringify(error);
+      } catch {
+        return "Unknown database error";
+      }
+    }
+    if (error instanceof Error) return error.message;
+    return String(error);
+  };
 
   const handleManualAttendance = async (
     student: Student,
@@ -610,51 +666,64 @@ export default function AttendanceManagementSection({
 
   const autoMarkAbsent = useCallback(async () => {
     if (!canRecordAttendance) return;
+    if (autoMarkingAbsentRef.current) return;
+    autoMarkingAbsentRef.current = true;
     const now = new Date();
     const completedEvents = events.filter(
       (event) =>
         !event.isNonConducting && hasEventAttendanceDayEnded(event.date, now),
     );
-    if (completedEvents.length === 0) return;
+    if (completedEvents.length === 0) {
+      autoMarkingAbsentRef.current = false;
+      return;
+    }
 
     try {
       for (const event of completedEvents) {
-        for (const session of getScheduledEventSessions(event)) {
-          const existing = await attendanceService.getByEventIdAndSession(
-            event.id,
-            session,
-          );
-          const recordedIds = new Set(existing.map((r) => r.studentId));
-          const missing = students.filter((s) => !recordedIds.has(s.id));
-          if (missing.length === 0) continue;
+        const sessions = getScheduledEventSessions(event);
+        if (!event.date || sessions.length === 0) continue;
 
-          const saved = await Promise.all(
-            missing.map((student) =>
-              attendanceService.create({
-                studentId: student.id,
-                eventId: event.id,
-                eventName: event.name,
-                date: event.date!,
-                session,
-                status: "absent",
-              }),
-            ),
-          );
+        // The database uniqueness rule is student + event + event date, not
+        // student + event + session. Read all sessions together so a Present,
+        // Late, or Absent row in any session prevents another insert.
+        const existing = await attendanceService.getByEventIdAndDate(
+          event.id,
+          event.date,
+        );
+        const recordsByStudent = new Map(
+          existing.map((record) => [record.studentId, record]),
+        );
 
-          setAttendanceRecords((prev) => [
-            ...prev.filter(
-              (r) => !(r.eventId === event.id && r.session === session),
-            ),
-            ...existing,
-            ...saved,
-          ]);
+        for (const student of students) {
+          if (recordsByStudent.has(student.id)) continue;
+
+          const record = await attendanceService.createAbsentIfMissing({
+            studentId: student.id,
+            eventId: event.id,
+            eventName: event.name,
+            date: event.date,
+            // A single row is required by attendance_student_event_date_key.
+            // Use the first configured session for newly-created absent rows.
+            session: sessions[0],
+            status: "absent",
+          });
+          recordsByStudent.set(student.id, record);
         }
+
+        const resolved = [...recordsByStudent.values()];
+        setAttendanceRecords((prev) => {
+          const byId = new Map(prev.map((record) => [record.id, record]));
+          resolved.forEach((record) => byId.set(record.id, record));
+          return [...byId.values()];
+        });
       }
     } catch (error) {
       console.error("Auto-marking absent students failed:", error);
       toast.error(
         `Failed to auto-mark absent students — ${errorMessage(error)}`,
       );
+    } finally {
+      autoMarkingAbsentRef.current = false;
     }
   }, [canRecordAttendance, events, students]);
 
@@ -1450,7 +1519,7 @@ export default function AttendanceManagementSection({
 
       {/* Edit Attendance Modal */}
       <Dialog
-        open={editingAttendanceStudent != null}
+        open={editingAttendance != null}
         onOpenChange={(open) => {
           if (!open) closeAttendanceEditModal();
         }}
@@ -1465,9 +1534,9 @@ export default function AttendanceManagementSection({
           <div className="space-y-4 mt-4">
             <p className="text-sm text-text-secondary">
               <span className="font-semibold text-dark">
-                {editingAttendanceStudent?.name}
+                {editingAttendance?.student.name}
               </span>{" "}
-              — {selectedAttendanceEvent?.name ?? "—"}
+              — {editingAttendance?.record.eventName ?? "—"}
             </p>
 
             <div>

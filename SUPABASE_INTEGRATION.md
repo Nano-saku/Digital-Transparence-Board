@@ -6,7 +6,7 @@ the service layer in `src/services/db.ts`.
 
 ## Setup
 
-1. **Run the database scripts** — two SQL files live in `supabase/`:
+1. **Run the database scripts** — the SQL files live in `supabase/`:
    - **`supabase/schema.sql`** — creates/upgrades the tables, indexes, and
      strict Row-Level Security policies without dropping data. It is safe to
      rerun on a fresh or existing project.
@@ -14,6 +14,10 @@ the service layer in `src/services/db.ts`.
      `board_members` catalog, storage, and role-based policies. It also removes
      the obsolete profile-image column from `user_roles`. **Run this on any
      project** (existing or fresh) before going live. It is idempotent.
+    - **`supabase/attendance_fix.sql`** — repairs attendance columns, removes
+      legacy duplicate student/event/session rows, restores the admin/secretary
+      attendance policy, and re-syncs the standard officer roles. Run it when
+      an attendance write reports SQLSTATE `42501`.
    - For an **existing database**, run `security.sql` first or by itself. It
      now creates the missing `board_members` catalog before applying its
      policies. Run `schema.sql` afterward only if the base tables also need to
