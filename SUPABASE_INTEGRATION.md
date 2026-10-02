@@ -16,8 +16,26 @@ the service layer in `src/services/db.ts`.
      project** (existing or fresh) before going live. It is idempotent.
     - **`supabase/attendance_fix.sql`** — repairs attendance columns, removes
       legacy duplicate student/event/session rows, restores the admin/secretary
-      attendance policy, and re-syncs the standard officer roles. Run it when
-      an attendance write reports SQLSTATE `42501`.
+      attendance policy (and `has_role` + its EXECUTE grant), re-syncs the
+      standard officer roles, and installs the **Automatic Absent** RPC
+      `mark_absent_if_missing(p_event_id, p_session)`. Run it when an
+      attendance write reports SQLSTATE `42501`, and once to enable the RPC.
+      - The RPC is `SECURITY DEFINER` but performs its own check: only signed-in
+        `admin`/`secretary` accounts may call it (`42501` otherwise), and
+        `EXECUTE` is granted to `authenticated` only. RLS on `attendance` is
+        unchanged.
+      - It inserts `absent` rows only for students with **no** row for the
+        event's date (`ON CONFLICT DO NOTHING`), never overwriting Present,
+        Late, or Absent, and only after the event day has ended in
+        Asia/Manila. Re-running it is a no-op.
+      - Until the RPC is installed, the app falls back to one bulk
+        `INSERT ... ON CONFLICT (student_id, event_id, date) DO NOTHING`
+        through the normal RLS policy.
+      - On a `42501`, the app refreshes the Supabase session once and retries
+        (an expired access token makes requests run as `anon`). If it still
+        fails, the message names the real cause: expired session, an account
+        without an attendance role, or a database policy that needs this
+        script.
    - For an **existing database**, run `security.sql` first or by itself. It
      now creates the missing `board_members` catalog before applying its
      policies. Run `schema.sql` afterward only if the base tables also need to

@@ -1,4 +1,5 @@
-﻿import { getSupabase } from "../lib/supabase";
+﻿import { isAuthRetryableFetchError } from "@supabase/supabase-js";
+import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
 import {
   normalizeStudentName,
@@ -172,6 +173,125 @@ function isUniqueViolation(error: unknown): boolean {
     (error as { code?: string }).code === "23505"
   );
 }
+
+// ============================================
+// ATTENDANCE AUTHORIZATION HELPERS
+// ============================================
+
+/** Roles allowed by the attendance_write_staff RLS policy. */
+const ATTENDANCE_WRITE_ROLES = ["admin", "secretary"];
+
+/** Postgres 42501 / RLS rejection (insufficient_privilege). */
+function isPermissionDenied(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === "42501") return true;
+  return (
+    typeof message === "string" &&
+    message.toLowerCase().includes("row-level security")
+  );
+}
+
+/** The mark_absent_if_missing RPC has not been installed yet. */
+function isMissingRpc(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "PGRST202" || code === "42883";
+}
+
+/** Error with a Postgres-style code so the retry logic can recognize it. */
+function attendancePermissionError(message: string): Error {
+  return Object.assign(new Error(message), { code: "42501" });
+}
+
+/**
+ * Why an attendance request failed, so callers can react to the real cause:
+ * - "network": Supabase was unreachable (postgrest-js reports fetch failures
+ *   with an empty code and a "Failed to fetch"-style message). Retry later.
+ * - "auth": the database rejected the officer (42501, expired JWT).
+ * - "database": any other Postgres/PostgREST error.
+ */
+export type AttendanceErrorKind = "network" | "auth" | "database";
+
+export function classifyAttendanceError(error: unknown): AttendanceErrorKind {
+  if (isAuthRetryableFetchError(error)) return "network";
+  if (typeof error !== "object" || error === null) return "database";
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  const codeText = typeof code === "string" ? code.trim() : "";
+  if (isPermissionDenied(error) || codeText === "PGRST301" || codeText === "PGRST302") {
+    return "auth";
+  }
+  if (
+    !codeText &&
+    typeof message === "string" &&
+    /failed to fetch|networkerror|network request failed|load failed|fetch failed|timeout|aborted/i.test(
+      message,
+    )
+  ) {
+    return "network";
+  }
+  return "database";
+}
+
+/**
+ * Explains a permission denial that survived a session refresh. The message
+ * matches the actual cause instead of always blaming the database script.
+ */
+async function describeAttendanceDenial(): Promise<string> {
+  const supabase = getSupabase();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user) {
+    return "Your officer session has expired. Sign in again to record attendance.";
+  }
+
+  const { data: roleRecord } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", session.user.id)
+    .maybeSingle();
+  const role = (roleRecord?.role as string | undefined) ?? null;
+
+  if (!role || !ATTENDANCE_WRITE_ROLES.includes(role)) {
+    return `This account (${role ?? "no officer role"}) is not allowed to record attendance. Only admin and secretary accounts can.`;
+  }
+  return "The database rejected this attendance write even though your account is an admin/secretary. Ask the system administrator to run supabase/attendance_fix.sql in the Supabase SQL Editor.";
+}
+
+/**
+ * Runs an attendance write. If PostgREST rejects it with 42501 (most often
+ * because the access token expired while the tab was open, so the request
+ * ran as `anon`), refreshes the session once and retries. RLS is never
+ * bypassed: the retry runs under the same policies.
+ */
+async function withAttendanceAuthRetry<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+
+    const { data, error: refreshError } =
+      await getSupabase().auth.refreshSession();
+    // A network failure while refreshing says nothing about the session;
+    // surface the network error so callers treat it as a connectivity issue
+    // instead of reporting a false "not authorized".
+    if (refreshError && isAuthRetryableFetchError(refreshError)) throw refreshError;
+    if (refreshError || !data.session) {
+      throw attendancePermissionError(
+        "Your officer session has expired. Sign in again to record attendance.",
+      );
+    }
+
+    try {
+      return await operation();
+    } catch (retryError) {
+      if (!isPermissionDenied(retryError)) throw retryError;
+      throw attendancePermissionError(await describeAttendanceDenial());
+    }
+  }
+}
+
 // ============================================
 // AUDIT CONTEXT
 // ============================================
@@ -863,6 +983,20 @@ type AttendanceRow = {
   time_out?: string | null;
 };
 
+type EventSessionValue = "morning" | "afternoon" | "evening";
+
+const toAttendanceRecord = (item: AttendanceRow): AttendanceRecord => ({
+  id: item.id,
+  studentId: item.student_id,
+  eventId: item.event_id,
+  eventName: item.event_name,
+  date: item.date,
+  status: item.status,
+  session: (item.session ?? "morning") as EventSessionValue,
+  timeIn: item.time_in ?? undefined,
+  timeOut: item.time_out ?? undefined,
+});
+
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
     return cachedRead<AttendanceRecord>("attendance", async () => {
@@ -1006,29 +1140,115 @@ export const attendanceService = {
     return records.find((record) => record.studentId === studentId) ?? null;
   },
 
-  async createAbsentIfMissing(
-    record: Omit<AttendanceRecord, "id">,
-  ): Promise<AttendanceRecord> {
-    const existing = await this.getByStudentEventAndDate(
-      record.studentId,
-      record.eventId,
-      record.date,
-    );
-    if (existing) return existing;
+  /**
+   * Automatic Absent: inserts an "absent" row for every student without an
+   * attendance row for the event's date. Existing rows (Present, Late,
+   * Absent) are never modified. Returns only the newly inserted rows.
+   *
+   * ONLINE ONLY. This deliberately bypasses offlineSyncService: it is never
+   * cached, queued, or replayed. Failures are thrown unchanged so callers can
+   * use classifyAttendanceError() — a "network" failure simply means "try
+   * again on the next check".
+   *
+   * Uses the mark_absent_if_missing RPC (supabase/attendance_fix.sql), which
+   * authorizes admin/secretary itself and inserts in one statement. If that
+   * RPC is not installed yet, falls back to a single RLS-checked bulk
+   * INSERT ... ON CONFLICT DO NOTHING on attendance_student_event_date_key.
+   */
+  async markAbsentIfMissing(params: {
+    eventId: string;
+    eventName: string;
+    date: string;
+    session: EventSessionValue;
+    studentIds: string[];
+  }): Promise<AttendanceRecord[]> {
+    const supabase = getSupabase();
+
+    // Never send this request without an officer session: PostgREST would
+    // run it as `anon` and RLS would reject it. getSession() refreshes an
+    // expired access token first; a network failure there is a network
+    // failure, not an authorization problem.
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+    if (sessionError && isAuthRetryableFetchError(sessionError)) {
+      throw sessionError;
+    }
+    if (!session) {
+      throw attendancePermissionError(
+        "Your officer session has expired. Sign in again to record attendance.",
+      );
+    }
 
     try {
-      return await this.create(record);
+      return await withAttendanceAuthRetry(async () => {
+        const { data, error } = await supabase.rpc("mark_absent_if_missing", {
+          p_event_id: params.eventId,
+          p_session: params.session,
+        });
+        if (error) throw error;
+        return ((data ?? []) as AttendanceRow[]).map(toAttendanceRecord);
+      });
     } catch (error) {
-      if (!isUniqueViolation(error)) throw error;
-
-      const concurrent = await this.getByStudentEventAndDate(
-        record.studentId,
-        record.eventId,
-        record.date,
+      if (!isMissingRpc(error)) throw error;
+      console.warn(
+        "mark_absent_if_missing RPC is not installed; using direct insert. Run supabase/attendance_fix.sql.",
       );
-      if (concurrent) return concurrent;
-      throw error;
     }
+
+    const existing = await this.getByEventIdAndDate(
+      params.eventId,
+      params.date,
+    );
+    const recorded = new Set(existing.map((record) => record.studentId));
+    const rows = params.studentIds
+      .filter((studentId) => !recorded.has(studentId))
+      .map((studentId) => ({
+        id: createRecordId(),
+        student_id: studentId,
+        event_id: params.eventId,
+        event_name: params.eventName,
+        date: params.date,
+        status: "absent" as const,
+        session: params.session,
+        time_in: "",
+        time_out: "",
+      }));
+    if (rows.length === 0) return [];
+
+    const inserted = await withAttendanceAuthRetry(async () => {
+      const { data, error } = await supabase
+        .from("attendance")
+        .upsert(rows, {
+          onConflict: "student_id,event_id,date",
+          ignoreDuplicates: true,
+        })
+        .select();
+      if (error) throw error;
+      return ((data ?? []) as AttendanceRow[]).map(toAttendanceRecord);
+    });
+
+    // The RPC writes its own audit entry; this fallback writes one directly
+    // (never through the offline queue). Audit failure must not undo the
+    // attendance rows that were already saved.
+    if (inserted.length > 0) {
+      try {
+        await auditLogsService.create(
+          await buildAudit(
+            "ATTENDANCE_AUTO_ABSENT",
+            "attendance",
+            `Automatically marked ${inserted.length} student(s) absent for ${params.eventName}.`,
+            params.eventId,
+            { eventId: params.eventId, date: params.date, count: inserted.length },
+          ),
+        );
+      } catch (auditError) {
+        console.warn("Could not record Automatic Absent audit:", auditError);
+      }
+    }
+
+    return inserted;
   },
 
   async create(
@@ -1060,13 +1280,16 @@ export const attendanceService = {
       ),
       makeLocal: () => ({ id, ...record }) as AttendanceRecord,
       executeOnline: async () => {
-        const { data, error } = await getSupabase()
-          .from("attendance")
-          .insert({ id, ...payload })
-          .select()
-          .single();
+        const data = await withAttendanceAuthRetry(async () => {
+          const { data: inserted, error } = await getSupabase()
+            .from("attendance")
+            .insert({ id, ...payload })
+            .select()
+            .single();
+          if (error) throw error;
+          return inserted;
+        });
 
-        if (error) throw error;
         return {
           id: data.id,
           studentId: data.student_id,
@@ -1123,15 +1346,20 @@ export const attendanceService = {
           id,
         }) as AttendanceRecord,
       executeOnline: async () => {
-        const { data, error } = await getSupabase()
-          .from("attendance")
-          .update(updateData)
-          .eq("id", id)
-          .select()
-          .maybeSingle();
+        const data = await withAttendanceAuthRetry(async () => {
+          const { data: updated, error } = await getSupabase()
+            .from("attendance")
+            .update(updateData)
+            .eq("id", id)
+            .select()
+            .maybeSingle();
 
-        if (error) throw error;
-        if (!data) {
+          if (error) throw error;
+          if (updated) return updated;
+
+          // RLS filters an UPDATE silently (0 rows, no error). Tell a missing
+          // row apart from a denied one; a denial is retried after a session
+          // refresh and then explained accurately by withAttendanceAuthRetry.
           const { data: existingRow, error: lookupError } = await getSupabase()
             .from("attendance")
             .select("id")
@@ -1144,10 +1372,10 @@ export const attendanceService = {
               "This attendance record no longer exists. Refresh the attendance list and try again.",
             );
           }
-          throw new Error(
-            "Attendance was not updated because this account is not authorized to write attendance. Run supabase/attendance_fix.sql and sign in again.",
+          throw attendancePermissionError(
+            "Attendance was not updated: this session is not authorized to write attendance.",
           );
-        }
+        });
         return {
           id: data.id,
           studentId: data.student_id,

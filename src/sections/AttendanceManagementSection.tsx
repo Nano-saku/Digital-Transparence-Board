@@ -24,6 +24,7 @@ import {
   studentsService,
   attendanceService,
   subscribeToTables,
+  classifyAttendanceError,
 } from "@/services/db";
 import type {
   Event,
@@ -33,6 +34,7 @@ import type {
   UserRole,
 } from "@/types";
 import { parseStudentQrText } from "@/lib/qr";
+import { offlineSyncService } from "@/lib/offlineSync";
 import { toast } from "sonner";
 import {
   formatDate,
@@ -155,6 +157,15 @@ export default function AttendanceManagementSection({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastScanRef = useRef({ data: "", at: 0 });
   const autoMarkingAbsentRef = useRef(false);
+  // Last Automatic Absent failure shown, so the 60-second retry does not
+  // repeat the same toast every minute.
+  const autoAbsentErrorRef = useRef<string | null>(null);
+  // Latest attendance rows for the Automatic Absent check, read through a
+  // ref so its own state updates do not re-trigger the effect.
+  const attendanceRecordsRef = useRef<AttendanceRecord[]>([]);
+  useEffect(() => {
+    attendanceRecordsRef.current = attendanceRecords;
+  }, [attendanceRecords]);
 
   const selectedAttendanceEvent = events.find(
     (e) => e.id === selectedEventForAttendance,
@@ -473,7 +484,11 @@ export default function AttendanceManagementSection({
       const code =
         typeof details.code === "string" ? details.code.trim() : "";
       if (code === "42501") {
-        return "Your account is not authorized to write attendance. Run supabase/attendance_fix.sql, then sign in again.";
+        // attendanceService already refreshed the session, retried once, and
+        // replaced the raw error with the specific cause (expired session,
+        // non-attendance role, or database policy). Show that cause as-is.
+        if (error instanceof Error && error.message) return error.message;
+        return "This session is not authorized to write attendance. Sign in again with an admin or secretary account.";
       }
       if (code === "PGRST116") {
         return "The attendance row was not returned after saving. Refresh the attendance list and try again.";
@@ -736,50 +751,72 @@ export default function AttendanceManagementSection({
       return;
     }
 
+    // Automatic Absent is ONLINE ONLY: a server-side bulk insert that is never
+    // queued through offlineSyncService. While offline it is skipped
+    // silently; the 60-second interval and the "online" listener retry it.
+    if (
+      offlineSyncService.isOffline() ||
+      (typeof navigator !== "undefined" && !navigator.onLine)
+    ) {
+      autoMarkingAbsentRef.current = false;
+      return;
+    }
+
+    // Students already holding a row (any status, any session) for an event's
+    // date. Present/Late/Absent rows are never overwritten.
+    const recordedKeys = new Set(
+      attendanceRecordsRef.current.map(
+        (record) => `${record.eventId}|${record.date}|${record.studentId}`,
+      ),
+    );
+
     try {
       for (const event of completedEvents) {
         const sessions = getScheduledEventSessions(event);
         if (!event.date || sessions.length === 0) continue;
 
-        // The database uniqueness rule is student + event + event date, not
-        // student + event + session. Read all sessions together so a Present,
-        // Late, or Absent row in any session prevents another insert.
-        const existing = await attendanceService.getByEventIdAndDate(
-          event.id,
-          event.date,
+        const missing = students.filter(
+          (student) =>
+            !recordedKeys.has(`${event.id}|${event.date}|${student.id}`),
         );
-        const recordsByStudent = new Map(
-          existing.map((record) => [record.studentId, record]),
-        );
+        if (missing.length === 0) continue;
 
-        for (const student of students) {
-          if (recordsByStudent.has(student.id)) continue;
+        const inserted = await attendanceService.markAbsentIfMissing({
+          eventId: event.id,
+          eventName: event.name,
+          date: event.date,
+          // A single row is required by attendance_student_event_date_key.
+          // Use the first configured session for newly-created absent rows.
+          session: sessions[0],
+          studentIds: missing.map((student) => student.id),
+        });
+        if (inserted.length === 0) continue;
 
-          const record = await attendanceService.createAbsentIfMissing({
-            studentId: student.id,
-            eventId: event.id,
-            eventName: event.name,
-            date: event.date,
-            // A single row is required by attendance_student_event_date_key.
-            // Use the first configured session for newly-created absent rows.
-            session: sessions[0],
-            status: "absent",
-          });
-          recordsByStudent.set(student.id, record);
-        }
-
-        const resolved = [...recordsByStudent.values()];
         setAttendanceRecords((prev) => {
           const byId = new Map(prev.map((record) => [record.id, record]));
-          resolved.forEach((record) => byId.set(record.id, record));
+          inserted.forEach((record) => byId.set(record.id, record));
           return [...byId.values()];
         });
       }
+      autoAbsentErrorRef.current = null;
     } catch (error) {
+      const kind = classifyAttendanceError(error);
+      if (kind === "network") {
+        // Supabase unreachable (e.g. Wi-Fi without internet). Not an error
+        // for the officer: nothing was written, and the next check retries.
+        console.warn("Automatic Absent skipped; Supabase unreachable:", error);
+        return;
+      }
       console.error("Auto-marking absent students failed:", error);
-      toast.error(
-        `Failed to auto-mark absent students — ${errorMessage(error)}`,
-      );
+      const message =
+        kind === "auth"
+          ? "not authorized. Sign out and sign in again; if it persists, an admin must run supabase/attendance_fix.sql."
+          : errorMessage(error);
+      // The check runs every minute; show each distinct failure only once.
+      if (autoAbsentErrorRef.current !== message) {
+        autoAbsentErrorRef.current = message;
+        toast.error(`Failed to auto-mark absent students — ${message}`);
+      }
     } finally {
       autoMarkingAbsentRef.current = false;
     }
@@ -788,7 +825,13 @@ export default function AttendanceManagementSection({
   useEffect(() => {
     autoMarkAbsent();
     const interval = setInterval(autoMarkAbsent, 60_000);
-    return () => clearInterval(interval);
+    // Run as soon as connectivity returns instead of waiting for the interval.
+    const handleOnline = () => void autoMarkAbsent();
+    window.addEventListener("online", handleOnline);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("online", handleOnline);
+    };
   }, [autoMarkAbsent]);
 
   const attendanceSearchTerm = attendanceSearch.trim().toLowerCase();
