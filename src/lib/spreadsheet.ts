@@ -155,6 +155,50 @@ export function parseAmount(value: string): number | null {
 }
 
 /**
+ * Parses a spreadsheet "Amount Paid" cell. Accepts peso signs ("₱", "PHP",
+ * "Php", "P"), thousands separators and decimals ("₱1,500.50"). Returns null
+ * for blank, non-numeric, zero, or negative values — i.e. "no payment".
+ */
+export function parsePositiveAmount(value: string): number | null {
+  const withoutCurrency = value.trim().replace(/^(?:php|p)(?=\s*[\d.,])/i, "");
+  const amount = parseAmount(withoutCurrency);
+  if (amount === null || amount <= 0) return null;
+  return Math.round(amount * 100) / 100;
+}
+
+/**
+ * Tokenizes a person's name for matching: lowercase, punctuation removed
+ * (so "Samborayan, Sitti Aisah R." and "Sitti Aisah R Samborayan" produce the
+ * same tokens), whitespace collapsed.
+ */
+function nameTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/** Exact (case/punctuation/whitespace-insensitive) name key. */
+export function exactNameKey(value: string): string {
+  return nameTokens(value).join(" ");
+}
+
+/**
+ * Loose name key that ignores middle initials and word order, so
+ * "Norkesa Samborayan", "Norkesa A. Samborayan" and "Samborayan, Norkesa A."
+ * all match. Callers must treat keys shared by several students as ambiguous.
+ */
+export function looseNameKey(value: string): string {
+  return nameTokens(value)
+    .filter((token) => token.length > 1)
+    .sort()
+    .join(" ");
+}
+
+/**
  * Strips stray internal whitespace from an ID, e.g. "2026- 00040" ->
  * "2026-00040". Real-world exports of hand-maintained sheets frequently have
  * an accidental space typed next to the dash; this keeps those rows matching
@@ -201,27 +245,49 @@ const PAID_AMOUNT_ALIASES = [
  * per student, with every event's Event / Required Amount / Amount Paid
  * columns repeated side by side. `parseCsv` / `excelRowsToRecords` keep every
  * occurrence of a repeated header by suffixing it "_2", "_3", ... (see
- * `dedupeHeaders`), so this walks "event", "event_2", "event_3", ... until a
- * group is missing, reading each group's amounts via the same suffix. A
- * narrow-format row (no numeric suffix at all) naturally comes back as a
- * single-item array, so both shapes are handled by the same call site.
+ * `dedupeHeaders`), so this walks the row's columns in order and starts a new
+ * group at every Event column, reading the Required Amount / Amount Paid
+ * columns that follow it. A narrow-format row (a single trio) naturally comes
+ * back as a single-item array, so both shapes are handled by the same call
+ * site. Groups whose Event cell is blank are omitted; Amount Paid is returned
+ * raw (possibly "") so the caller decides what counts as paid.
  */
 export function expandEventGroups(row: Record<string, string>): EventAmountGroup[] {
+  // Walk the columns in their original left-to-right order (records are
+  // built header-by-header, and non-numeric string keys keep insertion
+  // order). Every "Event" column starts a new group; the first Required
+  // Amount / Amount Paid column after it (and before the next Event column)
+  // belongs to that group. This handles any number of groups — no fixed cap,
+  // no early stop at a blank cell — and also mixed header spellings such as
+  // "Event" in one group and "Activity" in another.
+  const baseName = (key: string) => key.replace(/_\d+$/, '');
   const groups: EventAmountGroup[] = [];
-  for (let occurrence = 1; occurrence <= 60; occurrence++) {
-    const suffix = occurrence === 1 ? '' : `_${occurrence}`;
-    const eventKeys = EVENT_NAME_ALIASES.map((alias) => `${alias}${suffix}`);
-    const groupExists = eventKeys.some((key) => key in row);
-    if (!groupExists) break;
+  let current: EventAmountGroup | null = null;
+  let hasRequired = false;
+  let hasPaid = false;
 
-    const eventName = pickField(row, ...eventKeys);
-    if (!eventName) continue; // column group exists but this event slot is blank for this row
+  const flush = () => {
+    // A group whose Event cell is blank for this row cannot be matched.
+    if (current && current.eventName) groups.push(current);
+  };
 
-    groups.push({
-      eventName,
-      requiredAmount: pickField(row, ...REQUIRED_AMOUNT_ALIASES.map((alias) => `${alias}${suffix}`)),
-      amountPaid: pickField(row, ...PAID_AMOUNT_ALIASES.map((alias) => `${alias}${suffix}`)),
-    });
+  for (const [key, rawValue] of Object.entries(row)) {
+    const base = baseName(key);
+    const value = (rawValue ?? '').trim();
+
+    if (EVENT_NAME_ALIASES.includes(base)) {
+      flush();
+      current = { eventName: value, requiredAmount: '', amountPaid: '' };
+      hasRequired = false;
+      hasPaid = false;
+    } else if (current && !hasPaid && PAID_AMOUNT_ALIASES.includes(base)) {
+      current.amountPaid = value;
+      hasPaid = true;
+    } else if (current && !hasRequired && REQUIRED_AMOUNT_ALIASES.includes(base)) {
+      current.requiredAmount = value;
+      hasRequired = true;
+    }
   }
+  flush();
   return groups;
 }

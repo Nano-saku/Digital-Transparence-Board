@@ -1,6 +1,8 @@
 ﻿import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
+import { autoCreateReceipt } from "../lib/receipts";
+import { today } from "../lib/format";
 import {
   normalizeStudentName,
   splitSearchWords,
@@ -13,6 +15,7 @@ import type {
   AttendanceRecord,
   ContributionRecord,
   PaymentRecord,
+  PaymentItem,
   Transaction,
   FeedbackItem,
   FinancialReport,
@@ -172,6 +175,28 @@ function isUniqueViolation(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "23505"
   );
+}
+
+/**
+ * Live connectivity check against Supabase (not just `navigator.onLine`,
+ * which only reports whether a network interface is up). Performs a cheap
+ * HEAD count on `events` with a timeout. Used by flows that must write
+ * directly to the database and must never fall back to the offline queue.
+ */
+export async function checkSupabaseConnection(
+  timeoutMs = 8000,
+): Promise<boolean> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+
+  try {
+    const { error } = await getSupabase()
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .abortSignal(AbortSignal.timeout(timeoutMs));
+    return !error;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================
@@ -1949,6 +1974,11 @@ const requiredPaymentAmountError = (
   return null;
 };
 
+/** Outcome of {@link paymentsService.importPaidEntryDirect}. */
+export type DirectPaymentImportResult =
+  | { status: "saved"; payment: PaymentRecord; receiptIssued: boolean }
+  | { status: "skipped"; reason: string };
+
 export const paymentsService = {
   /** Validate the exact amount required for a standard event payment. */
   assertRequiredPaymentAmount(amount: number, requiredAmount: number): void {
@@ -2150,6 +2180,248 @@ export const paymentsService = {
     if (validationError) throw new Error(validationError);
 
     return this.upsertForStudentAndEvent(record);
+  },
+
+  /**
+   * Save one paid spreadsheet entry DIRECTLY to Supabase (never through the
+   * offline queue). Intended for the Contribution import, which requires a
+   * live connection and must report the real outcome of every entry.
+   *
+   * - Skips (does not overwrite) a student/event pair that already has a
+   *   payment row or a contribution with an amount already paid, so
+   *   re-importing the same file never creates duplicates.
+   * - Inserts the payment WITHOUT an OR number so the database trigger
+   *   `assign_payment_or_number` allocates it; the receipt is generated
+   *   afterwards from the returned OR, so receipt and payment always match.
+   * - A receipt/audit failure does not undo a saved payment; a failure to
+   *   update the contribution totals rolls the inserted payment back.
+   */
+  async importPaidEntryDirect(input: {
+    student: { id: string; name: string };
+    event: { id: string; name: string };
+    requiredAmount: number;
+    amountPaid: number;
+    recordedBy: string;
+    issueReceipt: boolean;
+  }): Promise<DirectPaymentImportResult> {
+    const { student, event, requiredAmount, amountPaid } = input;
+
+    if (
+      !Number.isFinite(amountPaid) ||
+      amountPaid <= 0 ||
+      !hasCurrencyPrecision(amountPaid)
+    ) {
+      throw new Error("Amount Paid must be a positive peso amount.");
+    }
+    if (!Number.isFinite(requiredAmount) || requiredAmount <= 0) {
+      throw new Error("Required Amount must be greater than zero.");
+    }
+    if (toCurrencyCents(amountPaid) > toCurrencyCents(requiredAmount)) {
+      throw new Error(
+        `Amount Paid ₱${amountPaid.toFixed(2)} exceeds the required ₱${requiredAmount.toFixed(2)}.`,
+      );
+    }
+
+    const supabase = getSupabase();
+
+    // 1) Duplicate guard: an existing payment row for this pair.
+    const existingPayment = await this.getByStudentAndEvent(
+      student.id,
+      event.id,
+    );
+    if (existingPayment) {
+      return {
+        status: "skipped",
+        reason: `already has a payment${existingPayment.orNumber ? ` (${existingPayment.orNumber})` : ""}`,
+      };
+    }
+
+    // 2) Duplicate guard: a contribution that already has money recorded.
+    let contribution = await contributionsService.getByStudentAndEvent(
+      student.id,
+      event.id,
+    );
+    if (contribution && contribution.amountPaid > 0) {
+      return { status: "skipped", reason: "contribution already has a payment" };
+    }
+
+    // 3) Make sure the contribution row exists (normally created by trigger).
+    if (!contribution) {
+      const { data, error } = await supabase
+        .from("contributions")
+        .insert({
+          id: createRecordId(),
+          student_id: student.id,
+          event_id: event.id,
+          event_name: event.name,
+          required_amount: requiredAmount,
+          amount_paid: 0,
+          remaining_balance: requiredAmount,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        if (!isUniqueViolation(error)) throw error;
+        contribution = await contributionsService.getByStudentAndEvent(
+          student.id,
+          event.id,
+        );
+        if (!contribution) throw error;
+        if (contribution.amountPaid > 0) {
+          return {
+            status: "skipped",
+            reason: "contribution already has a payment",
+          };
+        }
+      } else {
+        contribution = {
+          id: data.id,
+          studentId: data.student_id,
+          eventId: data.event_id,
+          eventName: data.event_name,
+          requiredAmount: data.required_amount,
+          amountPaid: data.amount_paid,
+          remainingBalance: data.remaining_balance,
+        };
+      }
+    }
+
+    return this.insertImportedPayment({
+      ...input,
+      contributionId: contribution.id,
+    });
+  },
+
+  /** Steps 4–7 of {@link importPaidEntryDirect}: insert, totals, receipt, audit. */
+  async insertImportedPayment(input: {
+    student: { id: string; name: string };
+    event: { id: string; name: string };
+    requiredAmount: number;
+    amountPaid: number;
+    recordedBy: string;
+    issueReceipt: boolean;
+    contributionId: string;
+  }): Promise<DirectPaymentImportResult> {
+    const { student, event, requiredAmount, amountPaid, recordedBy } = input;
+    const supabase = getSupabase();
+    const date = today();
+    const remainingBalance =
+      Math.max(0, toCurrencyCents(requiredAmount) - toCurrencyCents(amountPaid)) /
+      100;
+    const status: PaymentItem["status"] =
+      remainingBalance <= 0 ? "Fully Paid" : "Partial";
+    const paymentItems: PaymentItem[] = [{ amount: amountPaid, date, status }];
+
+    // 4) Insert the payment. or_number is left NULL so the DB trigger assigns
+    //    the next official number atomically.
+    const { data: inserted, error: insertError } = await supabase
+      .from("payments")
+      .insert({
+        id: createRecordId(),
+        student_id: student.id,
+        student_name: student.name,
+        event_id: event.id,
+        event_name: event.name,
+        contribution_id: input.contributionId,
+        amount: amountPaid,
+        date,
+        receipt_url: null,
+        or_number: null,
+        recorded_by: recordedBy,
+        payment_items: paymentItems,
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      if (isUniqueViolation(insertError)) {
+        return { status: "skipped", reason: "payment already exists" };
+      }
+      throw insertError;
+    }
+
+    let payment = mapPayment(inserted);
+
+    // 5) Update the contribution totals. Roll the payment back on failure so
+    //    the two tables never disagree.
+    const { error: contributionError } = await supabase
+      .from("contributions")
+      .update({
+        event_name: event.name,
+        required_amount: requiredAmount,
+        amount_paid: amountPaid,
+        remaining_balance: remainingBalance,
+      })
+      .eq("id", input.contributionId);
+
+    if (contributionError) {
+      const { error: rollbackError } = await supabase
+        .from("payments")
+        .delete()
+        .eq("id", payment.id);
+      if (rollbackError) {
+        console.error("Failed to roll back imported payment:", rollbackError);
+      }
+      throw contributionError;
+    }
+
+    // 6) Receipt, generated from the OR number the database assigned.
+    let receiptIssued = false;
+    if (input.issueReceipt && payment.orNumber) {
+      try {
+        const receiptUrl = await autoCreateReceipt({
+          tag: "PAYMENT",
+          receiptNumber: payment.orNumber,
+          issuedTo: student.name,
+          eventName: event.name,
+          description: `Payment for ${event.name} (imported)`,
+          amount: amountPaid,
+          type: "income",
+          date,
+          recordedBy,
+          requiredAmount,
+          remainingBalance,
+          statusLabel: status,
+          paymentItems,
+        });
+        const { error: receiptError } = await supabase
+          .from("payments")
+          .update({ receipt_url: receiptUrl })
+          .eq("id", payment.id);
+        if (receiptError) throw receiptError;
+        payment = { ...payment, receiptUrl };
+        receiptIssued = true;
+      } catch (receiptError) {
+        console.warn(
+          `Receipt generation failed for ${payment.orNumber}:`,
+          receiptError,
+        );
+      }
+    }
+
+    // 7) Audit log (the payment already reached the database).
+    try {
+      await auditLogsService.create(
+        await buildAudit(
+          "PAYMENT_IMPORTED",
+          "payment",
+          `Imported payment for ${student.name} at ${event.name}.`,
+          payment.id,
+          {
+            studentId: student.id,
+            eventId: event.id,
+            amount: amountPaid,
+            orNumber: payment.orNumber,
+            source: "spreadsheet_import",
+          },
+        ),
+      );
+    } catch (auditError) {
+      console.warn("Failed to write import audit log:", auditError);
+    }
+
+    return { status: "saved", payment, receiptIssued };
   },
 
   async update(

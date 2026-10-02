@@ -23,6 +23,7 @@ import {
   eventsService,
   paymentsService,
   subscribeToTables,
+  checkSupabaseConnection,
 } from "@/services/db";
 import type {
   ContributionRecord,
@@ -49,8 +50,11 @@ import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
 import {
   pickField,
   parseAmount,
+  parsePositiveAmount,
   normalizeStudentId,
   expandEventGroups,
+  exactNameKey,
+  looseNameKey,
 } from "@/lib/spreadsheet";
 import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
 interface ContributionManagementSectionProps {
@@ -692,32 +696,62 @@ export default function ContributionManagementSection({
       return;
     }
 
-    let successfulImports = 0;
-    let importFailures = 0;
-    let receiptsIssued = 0;
-    // Lookup tables. Student ID is preferred; an unambiguous student name is
-    // also supported for files that identify students by name only.
-    const studentById = new Map<string, Student | null>();
-    for (const student of students) {
-      const key = normalizeStudentId(student.studentId).toLowerCase();
-      studentById.set(key, studentById.has(key) ? null : student);
+    // Imported payments are written straight to Supabase and are NEVER put in
+    // the offline queue, so a live connection is required before starting.
+    if (!(await checkSupabaseConnection())) {
+      toast.error(
+        "You are offline or the database cannot be reached. Connect to the internet and import again — imported payments are not queued offline.",
+      );
+      return;
     }
-    const studentByName = new Map<string, Student | null>();
+
+    // Lookup tables. A key that maps to `null` is shared by several records
+    // and is therefore ambiguous — it is never used for matching.
+    const addUnique = <T,>(
+      map: Map<string, T | null>,
+      key: string,
+      value: T,
+    ) => {
+      if (!key) return;
+      map.set(key, map.has(key) ? null : value);
+    };
+    const studentById = new Map<string, Student | null>();
+    const studentByExactName = new Map<string, Student | null>();
+    const studentByLooseName = new Map<string, Student | null>();
     for (const student of students) {
-      const key = student.name.trim().toLowerCase();
-      studentByName.set(key, studentByName.has(key) ? null : student);
+      addUnique(
+        studentById,
+        normalizeStudentId(student.studentId).toLowerCase(),
+        student,
+      );
+      addUnique(studentByExactName, exactNameKey(student.name), student);
+      addUnique(studentByLooseName, looseNameKey(student.name), student);
     }
     const eventByName = new Map<string, Event | null>();
     for (const event of events) {
-      const key = event.name.trim().toLowerCase();
-      eventByName.set(key, eventByName.has(key) ? null : event);
+      addUnique(eventByName, event.name.trim().toLowerCase(), event);
     }
 
-    const parsed: ParsedContributionRow[] = [];
+    // Student ID first, then the exact name, then a loose name match that
+    // ignores middle initials / word order (only when it is unambiguous).
+    const matchStudent = (fileId: string, fileName: string): Student | null => {
+      if (fileId) {
+        const byId = studentById.get(normalizeStudentId(fileId).toLowerCase());
+        if (byId) return byId;
+      }
+      if (fileName) {
+        const byExact = studentByExactName.get(exactNameKey(fileName));
+        if (byExact) return byExact;
+        const byLoose = studentByLooseName.get(looseNameKey(fileName));
+        if (byLoose) return byLoose;
+      }
+      return null;
+    };
 
-    let unmatchedStudent = 0;
-    let unmatchedEvent = 0;
-    let invalidAmount = 0;
+    const parsed: ParsedContributionRow[] = [];
+    const problems: string[] = [];
+    let matchedStudents = 0;
+    let groupsRead = 0;
 
     for (const row of rows) {
       const fileStudentId = pickField(
@@ -738,37 +772,33 @@ export default function ContributionManagementSection({
         "studentname",
       );
 
-      const student =
-        (fileStudentId
-          ? studentById.get(normalizeStudentId(fileStudentId).toLowerCase())
-          : undefined) ??
-        (fileStudentName
-          ? studentByName.get(fileStudentName.toLowerCase())
-          : undefined);
+      const rowLabel =
+        [fileStudentId, fileStudentName].filter(Boolean).join(" ") ||
+        "(blank student)";
 
+      const student = matchStudent(fileStudentId, fileStudentName);
       if (!student) {
-        unmatchedStudent++;
+        problems.push(`${rowLabel}: student not found`);
         continue;
       }
+      matchedStudents++;
 
-      // A row can contain either:
-      //   Event / Required Amount / Amount Paid
-      //
-      // or multiple repeated groups:
-      //   Event / Required Amount / Amount Paid /
-      //   Event / Required Amount / Amount Paid / ...
+      // Every Event / Required Amount / Amount Paid group on the row (one for
+      // a narrow file, twelve for the official wide tracking sheet).
       const groups = expandEventGroups(row);
-
-      if (groups.length === 0) {
-        unmatchedEvent++;
-        continue;
-      }
+      groupsRead += groups.length;
 
       for (const group of groups) {
-        const event = eventByName.get(group.eventName.trim().toLowerCase());
+        // Blank, zero or non-numeric Amount Paid = not paid; nothing to save.
+        // A blank cell never overwrites a previously recorded payment.
+        const amountPaid = parsePositiveAmount(group.amountPaid);
+        if (amountPaid === null) continue;
 
+        const event = eventByName.get(group.eventName.trim().toLowerCase());
         if (!event) {
-          unmatchedEvent++;
+          problems.push(
+            `${student.name}: event "${group.eventName}" not found`,
+          );
           continue;
         }
 
@@ -776,103 +806,139 @@ export default function ContributionManagementSection({
         const requiredAmount = requiredAmountValue
           ? parseAmount(requiredAmountValue)
           : event.allocationAmount;
-        const amountPaid = parseAmount(group.amountPaid);
 
-        // Required amount must be a valid positive amount.
         if (requiredAmount === null || requiredAmount <= 0) {
-          invalidAmount++;
-          continue;
-        }
-
-        // Blank cells mean "no update". Do not turn them into zero and do not
-        // overwrite a previously recorded payment with an empty spreadsheet
-        // cell. Zero is also ignored because it is not a payment receipt.
-        if (amountPaid === null || amountPaid === 0) {
-          continue;
-        }
-
-        // Paid amount cannot be negative or greater than the required amount.
-        if (amountPaid < 0 || amountPaid > requiredAmount) {
-          invalidAmount++;
-
-          console.warn(
-            `Skipped invalid amount: ${student.studentId} / ${event.name} ` +
-              `(required ₱${requiredAmount}, paid ₱${amountPaid})`,
+          problems.push(
+            `${student.name} – ${event.name}: invalid Required Amount "${group.requiredAmount}"`,
           );
-
+          continue;
+        }
+        if (amountPaid > requiredAmount) {
+          problems.push(
+            `${student.name} – ${event.name}: paid ₱${amountPaid} exceeds required ₱${requiredAmount}`,
+          );
           continue;
         }
 
-        parsed.push({
-          student,
-          event,
-          requiredAmount,
-          amountPaid,
-        });
+        parsed.push({ student, event, requiredAmount, amountPaid });
       }
     }
 
+    const readSummary =
+      `${matchedStudents} of ${rows.length} student row(s) matched · ` +
+      `${groupsRead} event group(s) read · ` +
+      `${parsed.length} paid entr${parsed.length === 1 ? "y" : "ies"} found`;
+
+    if (problems.length > 0) {
+      console.warn("Contribution import — rows not imported:", problems);
+    }
+
     if (parsed.length === 0) {
-      toast.error(
-        "No valid rows found. Expected columns: Student ID / Name, then Event, Required Amount, Amount Paid (repeat that trio for each additional event).",
-      );
+      toast.error("No paid entries to import", {
+        description: [
+          readSummary,
+          ...problems.slice(0, 5),
+          problems.length > 5 ? `…and ${problems.length - 5} more` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        duration: 10000,
+      });
       return;
     }
 
     // Pause realtime-triggered reloads during the import.
     isImportingRef.current = true;
+    const canIssueReceipts =
+      role === "admin" || role === "treasurer" || role === "auditor";
+    const recordedBy = staffName || "Council Officer";
+    const toastId = toast.loading(
+      `Saving 1 of ${parsed.length} payment(s)...`,
+    );
 
-    toast.info(`Importing ${parsed.length} contribution(s)...`);
+    let saved = 0;
+    let skipped = 0;
+    let receiptsIssued = 0;
+    const failures: string[] = [];
 
     try {
-      // Process the complete dataset in order. Each iteration uses its own
-      // immutable parsed item and waits for all payment, contribution, and
-      // receipt operations to finish before moving to the next item. This is
-      // deliberately not rows.forEach(async ...) or a shared mutable row:
-      // neither can stop the import after the first asynchronous operation or
-      // accidentally save the next student's data under the previous student.
-      for (const item of parsed) {
+      // Strictly sequential: each entry is fully written (payment, totals,
+      // receipt, audit) before the next one starts, so OR numbers follow the
+      // file order and a failure only affects its own entry. Nothing goes
+      // through the offline queue.
+      for (const [index, item] of parsed.entries()) {
+        const label = `${item.student.name} – ${item.event.name}`;
+
+        if (!navigator.onLine) {
+          for (const remaining of parsed.slice(index)) {
+            failures.push(
+              `${remaining.student.name} – ${remaining.event.name}: connection lost`,
+            );
+          }
+          break;
+        }
+
+        toast.loading(`Saving ${index + 1} of ${parsed.length} payment(s)...`, {
+          id: toastId,
+        });
+
         try {
-          const receiptIssued = await savePaymentForStudentEvent({
+          const result = await paymentsService.importPaidEntryDirect({
             student: item.student,
             event: item.event,
             requiredAmount: item.requiredAmount,
-            amount: item.amountPaid,
-            mode: "replace",
-            imported: true,
+            amountPaid: item.amountPaid,
+            recordedBy,
+            issueReceipt: canIssueReceipts,
           });
-          successfulImports++;
-          if (receiptIssued) receiptsIssued++;
+
+          if (result.status === "saved") {
+            saved++;
+            if (result.receiptIssued) receiptsIssued++;
+          } else {
+            skipped++;
+            console.info(`Import skipped ${label}: ${result.reason}`);
+          }
         } catch (error) {
-          importFailures++;
-          console.error("Error importing a contribution row:", error);
+          const message =
+            error instanceof Error
+              ? error.message
+              : ((error as { message?: string } | null)?.message ??
+                String(error));
+          failures.push(`${label}: ${message}`);
+          console.error(`Error importing ${label}:`, error);
         }
       }
-
-      // Combine all reasons rows may have been skipped.
-      const totalSkipped = unmatchedStudent + unmatchedEvent + invalidAmount;
-
-      const parts = [`${successfulImports} contribution(s) imported`];
-      if (importFailures > 0) {
-        parts.push(`${importFailures} contribution(s) failed`);
-      }
-
-      if (receiptsIssued > 0) {
-        parts.push(`${receiptsIssued} receipt(s) generated`);
-      }
-
-      if (totalSkipped > 0) {
-        parts.push(`${totalSkipped} skipped`);
-      }
-
-      toast.success(parts.join(", "));
-    } catch (error) {
-      console.error("Error importing contribution records:", error);
-
-      toast.error("Failed to import contribution records");
     } finally {
       isImportingRef.current = false;
+      toast.dismiss(toastId);
+      // Same page / search / filters — loadData reads the current state.
       await loadData();
+    }
+
+    if (failures.length > 0) {
+      console.error("Contribution import — failed entries:", failures);
+    }
+
+    const title =
+      `Import finished: ${saved} saved, ` +
+      `${skipped} already recorded (skipped), ${failures.length} failed`;
+    const notImported = [...failures, ...problems];
+    const description = [
+      readSummary,
+      receiptsIssued > 0 ? `${receiptsIssued} receipt(s) generated` : "",
+      ...notImported.slice(0, 5),
+      notImported.length > 5
+        ? `…and ${notImported.length - 5} more (see browser console)`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    if (failures.length > 0 || problems.length > 0) {
+      toast.warning(title, { description, duration: 15000 });
+    } else {
+      toast.success(title, { description, duration: 8000 });
     }
   };
 
