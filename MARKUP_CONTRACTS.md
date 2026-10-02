@@ -49,13 +49,13 @@ move as files evolve.
 ### Media and scanner refs
 
 - The QR scanner requires both `videoRef` and `canvasRef` to remain attached to
-  the camera video and capture canvas (`src/sections/AttendanceManagementSection.tsx:101-103`).
+  the camera video and capture canvas (`src/sections/AttendanceManagementSection.tsx:154-155`).
   Its effect reads the video dimensions, draws the video into the canvas, reads
   image data, and sends decoded text to the current scan handler
-  (`src/sections/AttendanceManagementSection.tsx:423-454`).
+  (`src/sections/AttendanceManagementSection.tsx:612-645`).
 - Scanner cleanup is part of the contract: stopping the animation frame,
   stopping every `MediaStreamTrack`, and clearing `video.srcObject` must remain
-  coupled to the effect cleanup (`src/sections/AttendanceManagementSection.tsx:528-534`).
+  coupled to the effect cleanup (`src/sections/AttendanceManagementSection.tsx:714-722`).
 - The decorative network canvas must retain `canvasRef` and a real `<canvas>`
   element. The animation obtains a 2D context from the ref and renders through
   browser canvas APIs (`src/components/ui/animated-network.tsx:35-60,143-146`).
@@ -191,8 +191,16 @@ outside the ref scope without changing the corresponding selector.
   a real `<canvas>` receiving frames. The effect requests camera permission
   through `navigator.mediaDevices.getUserMedia`, enumerates video devices, and
   falls back between selected, environment, and generic cameras
-  (`src/sections/AttendanceManagementSection.tsx:456-514`). Preserve the
+  (`src/sections/AttendanceManagementSection.tsx:645-665`). Preserve the
   video/canvas elements and their refs when changing the scanner layout.
+- Attendance Management renders one **Whole Day** view, not Morning/Afternoon/
+  Evening tabs. The header lists every session configured in the Event section
+  via `getEventSessionWindows` and badges the running one resolved by
+  `resolveEventSessionForTime` against a 30s ticking clock
+  (`src/sections/AttendanceManagementSection.tsx:161-186,990-1113`). Markup must
+  not reintroduce a session selector: Time In resolves the session
+  automatically and Time Out reuses the stored `record.session`, so the table's
+  read-only Session column is the only place the session is surfaced per row.
 - Receipt actions are browser behaviors, not just links: opening uses
   `window.open(..., "_blank", "noopener,noreferrer")`, while downloading calls
   `downloadReceipt` (`src/components/ReceiptViewer.tsx:38-55`). Keep the Open

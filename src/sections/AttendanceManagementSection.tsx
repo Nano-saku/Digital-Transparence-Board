@@ -43,8 +43,13 @@ import {
 } from "@/lib/format";
 import { matchesSearchWords } from "@/lib/utils";
 import {
+  EVENT_SESSION_ICONS,
+  EVENT_SESSION_LABELS,
+  getEventSessionWindow,
+  getEventSessionWindows,
   getScheduledEventSessions,
   hasEventAttendanceDayEnded,
+  resolveEventSessionForTime,
 } from "@/lib/attendance";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
@@ -67,6 +72,9 @@ interface AttendanceManagementSectionProps {
   userId?: string;
 }
 
+/** Current wall-clock time as 24h "HH:MM". */
+const nowClock = () => new Date().toTimeString().slice(0, 5);
+
 export default function AttendanceManagementSection({
   onBack,
   role,
@@ -86,6 +94,8 @@ export default function AttendanceManagementSection({
   const [attendanceToClear, setAttendanceToClear] = useState<{
     id: string;
     studentName: string;
+    /** Scheduled session the cleared record belongs to, e.g. "Morning". */
+    sessionLabel: string;
   } | null>(null);
 
   // Edit attendance record (Status + Time In + Time Out) via explicit dialog.
@@ -117,8 +127,6 @@ export default function AttendanceManagementSection({
   const [selectedEventForAttendance, setSelectedEventForAttendance] =
     useState("");
   const [attendanceSearch, setAttendanceSearch] = useState("");
-  const [attendanceSession, setAttendanceSession] =
-    useState<EventSession>("morning");
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<
     "all" | "present" | "late" | "absent"
   >("all");
@@ -150,6 +158,31 @@ export default function AttendanceManagementSection({
 
   const selectedAttendanceEvent = events.find(
     (e) => e.id === selectedEventForAttendance,
+  );
+
+  // Whole Day view: every session configured in the Event section is handled
+  // on this one screen, so the secretary never switches session tabs.
+  const scheduledSessionWindows = useMemo(
+    () =>
+      selectedAttendanceEvent
+        ? getEventSessionWindows(selectedAttendanceEvent)
+        : [],
+    [selectedAttendanceEvent],
+  );
+
+  // Ticking clock used to highlight the scheduled session running right now.
+  const [nowHM, setNowHM] = useState(() => nowClock());
+  useEffect(() => {
+    const interval = setInterval(() => setNowHM(nowClock()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const activeSession = useMemo(
+    () =>
+      selectedAttendanceEvent
+        ? resolveEventSessionForTime(selectedAttendanceEvent, nowHM)
+        : null,
+    [selectedAttendanceEvent, nowHM],
   );
 
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -200,44 +233,67 @@ export default function AttendanceManagementSection({
     },
   ]);
 
+  // Whole Day records: every scheduled session of the selected event at once.
+  // The database keeps one attendance row per student + event + date
+  // (attendance_student_event_date_key), which is exactly the Whole Day row.
   const selectedAttendanceRecords = useMemo(
     () =>
       selectedEventForAttendance
         ? attendanceRecords.filter(
-            (r) =>
-              r.eventId === selectedEventForAttendance &&
-              r.session === attendanceSession,
+            (r) => r.eventId === selectedEventForAttendance,
           )
         : [],
-    [attendanceRecords, selectedEventForAttendance, attendanceSession],
+    [attendanceRecords, selectedEventForAttendance],
   );
 
-  const attendanceMap = useMemo(
-    () => new Map(selectedAttendanceRecords.map((r) => [r.studentId, r])),
-    [selectedAttendanceRecords],
-  );
+  const attendanceMap = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
+    selectedAttendanceRecords.forEach((record) => {
+      const existing = map.get(record.studentId);
+      // Prefer a real result over an auto-created absent placeholder, then the
+      // row that already carries a Time In.
+      if (!existing) {
+        map.set(record.studentId, record);
+        return;
+      }
+      const score = (r: AttendanceRecord) =>
+        (r.status === "absent" ? 0 : 2) + (r.timeIn ? 1 : 0);
+      if (score(record) > score(existing)) map.set(record.studentId, record);
+    });
+    return map;
+  }, [selectedAttendanceRecords]);
 
   const persistAttendance = useCallback(
     async (
       studentId: string,
       patch: Partial<Pick<AttendanceRecord, "status" | "timeIn" | "timeOut">>,
       recordToUpdate?: AttendanceRecord,
+      /** Scheduled session auto-detected for this write. */
+      sessionForWrite?: EventSession,
     ): Promise<AttendanceRecord | null> => {
       const event = selectedAttendanceEvent;
       const existing =
         recordToUpdate ??
-        attendanceRecords.find(
-          (r) =>
-            r.studentId === studentId &&
-            r.eventId === selectedEventForAttendance &&
-            r.session === attendanceSession,
-        ) ??
+        attendanceMap.get(studentId) ??
         null;
 
       if (!event && !existing) {
         toast.error("Select an event before recording attendance");
         return null;
       }
+
+      // Whole Day view: the scheduled session is derived from the event's
+      // configured schedules and the recorded time, never from a tab.
+      const resolvedSession =
+        sessionForWrite ??
+        existing?.session ??
+        (event
+          ? (resolveEventSessionForTime(
+              event,
+              patch.timeIn || patch.timeOut || nowClock(),
+            ) ?? "morning")
+          : "morning");
+
       const payload = {
         studentId,
         eventId: existing?.eventId ?? event!.id,
@@ -246,7 +302,7 @@ export default function AttendanceManagementSection({
           existing?.date ??
           event!.date ??
           new Date().toISOString().slice(0, 10),
-        session: existing?.session ?? attendanceSession,
+        session: resolvedSession,
         status: patch.status ?? existing?.status ?? "present",
         // Attendance time columns are TEXT NOT NULL. An empty string is the
         // persisted representation for a deliberately cleared time.
@@ -268,12 +324,7 @@ export default function AttendanceManagementSection({
       });
       return saved;
     },
-    [
-      selectedAttendanceEvent,
-      attendanceRecords,
-      selectedEventForAttendance,
-      attendanceSession,
-    ],
+    [selectedAttendanceEvent, attendanceMap],
   );
 
   const confirmClearAttendance = async () => {
@@ -292,7 +343,7 @@ export default function AttendanceManagementSection({
         setLastScanTime(null);
       }
       toast.success(
-        `${attendanceToClear.studentName}'s ${attendanceSession} attendance has been cleared.`,
+        `${attendanceToClear.studentName}'s ${attendanceToClear.sessionLabel} attendance has been cleared.`,
       );
       setShowAttendanceClearConfirm(false);
       setAttendanceToClear(null);
@@ -313,6 +364,7 @@ export default function AttendanceManagementSection({
     setAttendanceToClear({
       id: record.id,
       studentName: student.name,
+      sessionLabel: EVENT_SESSION_LABELS[record.session] ?? "Whole Day",
     });
     setShowAttendanceClearConfirm(true);
   };
@@ -398,17 +450,14 @@ export default function AttendanceManagementSection({
   const deriveScanStatus = (
     scanTimeHM: string,
     event?: Event,
-    session?: EventSession,
+    session?: EventSession | null,
   ): "present" | "late" => {
     if (!event || !session) return "present";
-    const schedule = event.schedules?.find((s) => s.period === session);
-    const sessionIn = schedule?.timeIn;
+    const sessionIn = getEventSessionWindow(event, session).timeIn;
     return sessionIn && compareTime24(scanTimeHM, sessionIn) > 0
       ? "late"
       : "present";
   };
-
-  const nowClock = () => new Date().toTimeString().slice(0, 5);
 
   const errorMessage = (error: unknown): string => {
     const details =
@@ -456,13 +505,7 @@ export default function AttendanceManagementSection({
       toast.error("Select an event before recording attendance");
       return;
     }
-    const existing =
-      attendanceRecords.find(
-        (r) =>
-          r.studentId === student.id &&
-          r.eventId === selectedEventForAttendance &&
-          r.session === attendanceSession,
-      ) ?? null;
+    const existing = attendanceMap.get(student.id) ?? null;
 
     if (action === "timeIn") {
       if (existing?.timeIn) {
@@ -470,13 +513,23 @@ export default function AttendanceManagementSection({
         return;
       }
       const scanTime = nowClock();
+      // Whole Day: detect the scheduled session from the event configuration.
+      const session = resolveEventSessionForTime(event, scanTime);
+      const sessionLabel = session
+        ? EVENT_SESSION_LABELS[session]
+        : "Whole Day";
       try {
-        await persistAttendance(student.id, {
-          status: deriveScanStatus(scanTime, event, attendanceSession),
-          timeIn: scanTime,
-        });
+        await persistAttendance(
+          student.id,
+          {
+            status: deriveScanStatus(scanTime, event, session),
+            timeIn: scanTime,
+          },
+          existing ?? undefined,
+          session ?? undefined,
+        );
         toast.success(
-          `${student.name} Time In recorded at ${formatTime12(scanTime)} for ${attendanceSession} session`,
+          `${student.name} Time In recorded at ${formatTime12(scanTime)} for the ${sessionLabel} session`,
         );
       } catch (error) {
         console.error("Error recording Time In:", error);
@@ -484,9 +537,7 @@ export default function AttendanceManagementSection({
       }
     } else {
       if (!existing?.timeIn) {
-        toast.error(
-          `${student.name} has no Time In yet for ${attendanceSession} session`,
-        );
+        toast.error(`${student.name} has no Time In yet for this event`);
         return;
       }
       if (existing.timeOut) {
@@ -494,13 +545,20 @@ export default function AttendanceManagementSection({
         return;
       }
       const scanTime = nowClock();
+      const sessionLabel =
+        EVENT_SESSION_LABELS[existing.session] ?? "Whole Day";
       try {
-        await persistAttendance(student.id, {
-          status: existing.status,
-          timeOut: scanTime,
-        });
+        await persistAttendance(
+          student.id,
+          {
+            status: existing.status,
+            timeOut: scanTime,
+          },
+          existing,
+          existing.session,
+        );
         toast.success(
-          `${student.name} Time Out recorded at ${formatTime12(scanTime)} for ${attendanceSession} session`,
+          `${student.name} Time Out recorded at ${formatTime12(scanTime)} for the ${sessionLabel} session`,
         );
       } catch (error) {
         console.error("Error recording Time Out:", error);
@@ -781,7 +839,6 @@ export default function AttendanceManagementSection({
     setAttendancePage(1);
   }, [
     selectedEventForAttendance,
-    attendanceSession,
     attendanceSearchTerm,
     attendanceStatusFilter,
     scannedCourse,
@@ -932,102 +989,31 @@ export default function AttendanceManagementSection({
               </select>
             </div>
 
+            {/* Whole Day attendance view - every scheduled session at once */}
             {selectedAttendanceEvent && (
               <div className="mb-5 overflow-hidden rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-blue-50/60 shadow-sm">
                 <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5">
-                  {/* Session Tabs - Full width at top */}
-                  <div className="flex gap-2 border-b border-gray-200 pb-3">
-                    {(
-                      ["morning", "afternoon", "evening"] as EventSession[]
-                    ).map((session) => (
-                      <button
-                        key={session}
-                        onClick={() => setAttendanceSession(session)}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                          attendanceSession === session
-                            ? "bg-red text-white"
-                            : "bg-white/50 text-text-secondary hover:bg-white/80"
-                        }`}
-                      >
-                        {session === "morning"
-                          ? "☀️ Morning"
-                          : session === "afternoon"
-                            ? "🌤️ Afternoon"
-                            : "🌙 Evening"}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Event Info Row */}
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  {/* Whole Day header */}
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-100 text-2xl shadow-inner">
-                        {attendanceSession === "morning"
-                          ? "☀️"
-                          : attendanceSession === "afternoon"
-                            ? "🌤️"
-                            : "🌙"}
+                        🗓️
                       </div>
                       <div className="min-w-0">
                         <p className="font-display text-lg font-semibold text-blue-700">
-                          {attendanceSession.charAt(0).toUpperCase() +
-                            attendanceSession.slice(1)}{" "}
-                          Session
+                          Whole Day Attendance
                         </p>
-                        <p className="mt-1 flex items-center gap-1.5 text-sm text-text-secondary">
+                        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-text-secondary">
                           <Calendar className="h-4 w-4 text-slate-500" />
-                          Schedule:{" "}
-                          {(() => {
-                            const schedule =
-                              selectedAttendanceEvent.schedules?.find(
-                                (s) => s.period === attendanceSession,
-                              );
-
-                            if (!schedule) {
-                              return (
-                                <span className="text-amber-600 font-medium">
-                                  No schedule set for this session
-                                </span>
-                              );
-                            }
-
-                            const timeIn = schedule.timeIn
-                              ? formatTime12(schedule.timeIn)
-                              : null;
-                            const timeOut = schedule.timeOut
-                              ? formatTime12(schedule.timeOut)
-                              : null;
-
-                            if (timeIn && timeOut) {
-                              return (
-                                <span className="text-green-600 font-medium">
-                                  {timeIn} - {timeOut}
-                                </span>
-                              );
-                            }
-
-                            if (timeIn) {
-                              return (
-                                <span className="text-blue-600 font-medium">
-                                  {timeIn} - Time Out not set
-                                </span>
-                              );
-                            }
-
-                            if (timeOut) {
-                              return (
-                                <span className="text-blue-600 font-medium">
-                                  Time In not set - {timeOut}
-                                </span>
-                              );
-                            }
-
-                            return (
-                              <span className="text-amber-600 font-medium">
-                                Schedule times not configured
-                              </span>
-                            );
-                          })()}
+                          {selectedAttendanceEvent.date
+                            ? formatDate(selectedAttendanceEvent.date)
+                            : "Event date not set"}
+                          <span aria-hidden="true">·</span>
+                          {scheduledSessionWindows.length > 0
+                            ? `${scheduledSessionWindows.length} scheduled session${
+                                scheduledSessionWindows.length > 1 ? "s" : ""
+                              } handled automatically`
+                            : "No sessions configured for this event"}
                         </p>
                       </div>
                     </div>
@@ -1036,12 +1022,93 @@ export default function AttendanceManagementSection({
                         {selectedAttendanceEvent.name}
                       </p>
                       <p className="text-xs">
-                        {selectedAttendanceEvent.schedules?.length
-                          ? `${selectedAttendanceEvent.schedules.length} session(s) configured`
-                          : "No sessions configured for this event"}
+                        Time In / Time Out are matched to the right scheduled
+                        session automatically — no session tabs to switch.
                       </p>
                     </div>
                   </div>
+
+                  {/* Scheduled sessions detected from the Event section */}
+                  {scheduledSessionWindows.length > 0 ? (
+                    <div className="grid gap-3 border-t border-blue-100 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {scheduledSessionWindows.map((window) => {
+                        const isActive = window.session === activeSession;
+                        const sessionRecords = selectedAttendanceRecords.filter(
+                          (record) => record.session === window.session,
+                        );
+                        const presentCount = sessionRecords.filter(
+                          (record) => record.status === "present",
+                        ).length;
+                        const lateCount = sessionRecords.filter(
+                          (record) => record.status === "late",
+                        ).length;
+                        const absentCount = sessionRecords.filter(
+                          (record) => record.status === "absent",
+                        ).length;
+
+                        return (
+                          <div
+                            key={window.session}
+                            className={`rounded-xl border p-3 transition-colors ${
+                              isActive
+                                ? "border-red/40 bg-red/5"
+                                : "border-white/60 bg-white/70"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="flex items-center gap-1.5 text-sm font-semibold text-dark">
+                                <span aria-hidden="true">{window.icon}</span>
+                                {window.label} Session
+                              </p>
+                              {isActive && (
+                                <span className="rounded-full bg-red px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                                  Now
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-xs text-text-secondary">
+                              {window.timeIn && window.timeOut ? (
+                                <span className="font-medium text-green-600">
+                                  {formatTime12(window.timeIn)} -{" "}
+                                  {formatTime12(window.timeOut)}
+                                </span>
+                              ) : window.timeIn ? (
+                                <span className="font-medium text-blue-600">
+                                  {formatTime12(window.timeIn)} - Time Out not
+                                  set
+                                </span>
+                              ) : window.timeOut ? (
+                                <span className="font-medium text-blue-600">
+                                  Time In not set -{" "}
+                                  {formatTime12(window.timeOut)}
+                                </span>
+                              ) : (
+                                <span className="font-medium text-amber-600">
+                                  Schedule times not configured
+                                </span>
+                              )}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
+                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-green-600">
+                                Present {presentCount}
+                              </span>
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                                Late {lateCount}
+                              </span>
+                              <span className="rounded-full bg-red/10 px-2 py-0.5 text-red-500">
+                                Absent {absentCount}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="border-t border-blue-100 pt-3 text-sm font-medium text-amber-600">
+                      Add a Morning, Afternoon, or Evening schedule in the Event
+                      section so the Whole Day view can detect it.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -1055,9 +1122,9 @@ export default function AttendanceManagementSection({
                     Attendance rules
                   </span>
                   <span className="text-xs text-text-secondary">
-                    Present = recorded on/before scheduled Time In | Late =
-                    recorded after scheduled Time In | Absent = never recorded
-                    (auto-marked at 12:00 AM)
+                    Present = recorded on/before the detected session's
+                    scheduled Time In | Late = recorded after that scheduled
+                    Time In | Absent = never recorded (auto-marked at 12:00 AM)
                   </span>
                 </div>
               </div>
@@ -1345,6 +1412,7 @@ export default function AttendanceManagementSection({
                           <th>Section</th>
                           <th className="text-center">Status</th>
                           <th>Event</th>
+                          <th>Session</th>
                           <th>Time In</th>
                           <th>Time Out</th>
                           <th className="text-center">Actions</th>
@@ -1408,6 +1476,14 @@ export default function AttendanceManagementSection({
                                 {selectedAttendanceEvent?.name ?? "—"}
                               </td>
                               <td className="text-text-secondary text-sm">
+                                {record
+                                  ? `${EVENT_SESSION_ICONS[record.session] ?? ""} ${
+                                      EVENT_SESSION_LABELS[record.session] ??
+                                      "—"
+                                    }`.trim()
+                                  : "—"}
+                              </td>
+                              <td className="text-text-secondary text-sm">
                                 {formatTime12(record?.timeIn)}
                               </td>
                               <td className="text-text-secondary text-sm">
@@ -1455,7 +1531,7 @@ export default function AttendanceManagementSection({
                         {filteredStudents.length === 0 && (
                           <tr>
                             <td
-                              colSpan={9}
+                              colSpan={10}
                               className="text-center text-text-secondary py-6"
                             >
                               {scannedCourse && scannedSection
@@ -1725,8 +1801,8 @@ export default function AttendanceManagementSection({
             {attendanceToClear?.studentName ?? ""}
           </span>
           's{" "}
-          <span className="font-semibold text-dark capitalize">
-            {attendanceSession}
+          <span className="font-semibold text-dark">
+            {attendanceToClear?.sessionLabel ?? "Whole Day"}
           </span>{" "}
           attendance?
         </p>
