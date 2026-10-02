@@ -1034,20 +1034,48 @@ export default function AttendanceManagementSection({
 
             {/* Whole Day attendance view - every scheduled session at once */}
             {selectedAttendanceEvent && (
-              <div className="mb-5 overflow-hidden rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-blue-50/60 shadow-sm">
+              <div className="whole-day-panel mb-5 overflow-hidden rounded-2xl shadow-sm">
                 <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5">
                   {/* Whole Day header */}
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-100 text-2xl shadow-inner">
-                        🗓️
+                      <div
+                        aria-hidden="true"
+                        className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-info/15 shadow-inner"
+                      >
+                        {/* Back cloud — mirrored, tucked behind the sun (top-left) */}
+                        <svg
+                          viewBox="0 0 32 20"
+                          className="absolute left-[1px] top-[6px] z-0 h-[15px] w-6"
+                        >
+                          <g transform="matrix(-1 0 0 1 32 0)">
+                            <path
+                              className="whole-day-cloud-back"
+                              d="M7.5 18H25A5 5 0 0 0 25.5 8.03A7 7 0 0 0 12.2 6.6A5.75 5.75 0 0 0 7.5 18Z"
+                            />
+                          </g>
+                        </svg>
+                        <span className="relative z-10 select-none text-[2rem] leading-none">
+                          {EVENT_SESSION_ICONS.morning}
+                        </span>
+                        {/* Front cloud — overlaps the sun and peeks past the edge (bottom-right) */}
+                        <svg
+                          viewBox="0 0 32 20"
+                          overflow="visible"
+                          className="absolute -right-[5px] bottom-[3px] z-20 h-[17.5px] w-7"
+                        >
+                          <path
+                            className="whole-day-cloud-front"
+                            d="M7.5 18H25A5 5 0 0 0 25.5 8.03A7 7 0 0 0 12.2 6.6A5.75 5.75 0 0 0 7.5 18Z"
+                          />
+                        </svg>
                       </div>
                       <div className="min-w-0">
-                        <p className="font-display text-lg font-semibold text-blue-700">
+                        <p className="font-display text-lg font-semibold text-info">
                           Whole Day Attendance
                         </p>
                         <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-text-secondary">
-                          <Calendar className="h-4 w-4 text-slate-500" />
+                          <Calendar className="h-4 w-4 text-text-muted" />
                           {selectedAttendanceEvent.date
                             ? formatDate(selectedAttendanceEvent.date)
                             : "Event date not set"}
@@ -1073,7 +1101,7 @@ export default function AttendanceManagementSection({
 
                   {/* Scheduled sessions detected from the Event section */}
                   {scheduledSessionWindows.length > 0 ? (
-                    <div className="grid gap-3 border-t border-blue-100 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="theme-border grid gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3">
                       {scheduledSessionWindows.map((window) => {
                         const isActive = window.session === activeSession;
                         const sessionRecords = selectedAttendanceRecords.filter(
@@ -1094,8 +1122,8 @@ export default function AttendanceManagementSection({
                             key={window.session}
                             className={`rounded-xl border p-3 transition-colors ${
                               isActive
-                                ? "border-red/40 bg-red/5"
-                                : "border-white/60 bg-white/70"
+                                ? "border-red/40 bg-red/10"
+                                : "whole-day-session-card"
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -1111,34 +1139,34 @@ export default function AttendanceManagementSection({
                             </div>
                             <p className="mt-1 text-xs text-text-secondary">
                               {window.timeIn && window.timeOut ? (
-                                <span className="font-medium text-green-600">
+                                <span className="font-medium text-success">
                                   {formatTime12(window.timeIn)} -{" "}
                                   {formatTime12(window.timeOut)}
                                 </span>
                               ) : window.timeIn ? (
-                                <span className="font-medium text-blue-600">
+                                <span className="font-medium text-info">
                                   {formatTime12(window.timeIn)} - Time Out not
                                   set
                                 </span>
                               ) : window.timeOut ? (
-                                <span className="font-medium text-blue-600">
+                                <span className="font-medium text-info">
                                   Time In not set -{" "}
                                   {formatTime12(window.timeOut)}
                                 </span>
                               ) : (
-                                <span className="font-medium text-amber-600">
+                                <span className="font-medium text-warning">
                                   Schedule times not configured
                                 </span>
                               )}
                             </p>
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
-                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-green-600">
+                              <span className="rounded-full bg-success/15 px-2 py-0.5 text-success">
                                 Present {presentCount}
                               </span>
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
                                 Late {lateCount}
                               </span>
-                              <span className="rounded-full bg-red/10 px-2 py-0.5 text-red-500">
+                              <span className="rounded-full bg-danger/15 px-2 py-0.5 text-danger">
                                 Absent {absentCount}
                               </span>
                             </div>
@@ -1147,7 +1175,7 @@ export default function AttendanceManagementSection({
                       })}
                     </div>
                   ) : (
-                    <p className="border-t border-blue-100 pt-3 text-sm font-medium text-amber-600">
+                    <p className="theme-border border-t pt-3 text-sm font-medium text-warning">
                       Add a Morning, Afternoon, or Evening schedule in the Event
                       section so the Whole Day view can detect it.
                     </p>

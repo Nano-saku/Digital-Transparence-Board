@@ -154,6 +154,14 @@
   .theme-surface-secondary { background: var(--surface-secondary); color: var(--text-primary); border-color: var(--border-subtle); }
   .theme-muted { color: var(--text-muted); }
   .theme-border { border-color: var(--border-subtle); }
+  /* Whole Day attendance panel — theme-aware tinted gradient so secondary
+     text tokens stay readable in both dark and light mode. */
+  .whole-day-panel { background: linear-gradient(90deg, color-mix(in srgb, var(--info) 12%, var(--surface)) 0%, var(--surface) 50%, color-mix(in srgb, var(--info) 7%, var(--surface)) 100%); border: 1px solid color-mix(in srgb, var(--info) 28%, transparent); }
+  .whole-day-session-card { background: var(--surface-secondary); border-color: var(--border-strong); }
+  /* Whole Day badge clouds — back cloud is a soft theme-tinted blue, front
+     cloud is near-white with a blue outline so it reads on both themes. */
+  .whole-day-cloud-back { fill: color-mix(in srgb, var(--info) 45%, var(--surface)); animation: cloud-drift 7s ease-in-out infinite reverse; }
+  .whole-day-cloud-front { fill: #f7f9ff; stroke: color-mix(in srgb, var(--info) 45%, transparent); stroke-width: 1; filter: drop-shadow(0 1px 1.5px rgba(8, 13, 34, 0.3)); animation: cloud-drift 5s ease-in-out infinite; }
   .bg-info\/15 { background: color-mix(in srgb, var(--info) 15%, transparent); }
   .bg-success\/15 { background: color-mix(in srgb, var(--success) 15%, transparent); }
   .bg-warning\/15 { background: color-mix(in srgb, var(--warning) 15%, transparent); }
@@ -239,6 +247,7 @@
 @keyframes fade-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes breathe { 0%, 100% { opacity: 0.7; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes skeleton-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@keyframes cloud-drift { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(2px); } }
 @layer utilities {
   .text-balance { text-wrap: balance; }
   .dssc-section-title { font-family: "Space Grotesk", sans-serif; font-weight: 700; color: var(--text-primary); }
