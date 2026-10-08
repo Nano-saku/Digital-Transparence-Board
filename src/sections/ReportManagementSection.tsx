@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+﻿import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   FileText,
   Download,
@@ -485,13 +485,9 @@ export default function ReportManagementSection({
       });
 
       const safeName = selectedEvent.name.replace(/\s+/g, "-").toLowerCase();
-      downloadBlob(
-        new Blob([html], { type: "text/html;charset=utf-8" }),
-        `attendance-report-${safeName}-${selectedYear}yr-${selectedCourse}-${selectedSection}.html`,
-      );
-      toast.success(
-        "Report downloaded. Open it in a browser and use Print → Save as PDF to export.",
-      );
+      const fileName = `attendance-report-${safeName}-${selectedYear}yr-${selectedCourse}-${selectedSection}.html`;
+      downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), fileName);
+      toast.success("Report downloaded.");
     } catch (error) {
       console.error("Error generating report:", error);
       toast.error("Failed to generate report");
@@ -707,7 +703,11 @@ export default function ReportManagementSection({
                     </div>
                   </div>
                   {reportRows.length > 0 && (
-                    <button onClick={generatePrintableReport} disabled={generating} className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm self-start">
+                    <button
+                      onClick={generatePrintableReport}
+                      disabled={generating}
+                      className="btn-primary px-3.5 py-2 flex items-center gap-1.5 text-sm self-start"
+                    >
                       {generating ? (
                         <><Skeleton className="h-4 w-4 rounded-full" />Generating...</>
                       ) : (
@@ -936,7 +936,7 @@ function buildReportHtml(report: PrintableReport): string {
 <html lang="en"><head><meta charset="utf-8"/>
 <title>Student Attendance Report</title>
 <style>
-  @page{size:landscape;margin:12mm 10mm}
+  @page{size:landscape;margin:0}
   *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
   .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
@@ -944,7 +944,7 @@ function buildReportHtml(report: PrintableReport): string {
   .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:21px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.present{color:#047857}.late{color:#b45309}.absent{color:#b91c1c}.percent{color:#1b2e8c}
   table{width:100%;border-collapse:collapse;font-size:12px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 9px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:7px 9px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.odd{background:#f9fafb}.even{background:#fff}
   .s-present,.s-late,.s-absent{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-late{background:#fef3c7;color:#b45309}.s-absent{background:#fee2e2;color:#b91c1c}
-  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:0}}
+  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
 </style></head><body>
   <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Attendance Report</h1><div class="sub">Official Attendance Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
   <section class="metadata"><div><span class="label">Event:</span>${report.eventName}</div><div><span class="label">Year Level:</span>${report.yearLabel}</div><div><span class="label">Course:</span>${report.course}</div><div><span class="label">Section:</span>${report.section}</div></section>
@@ -962,14 +962,14 @@ function buildContributionReportHtml(
 <html lang="en"><head><meta charset="utf-8"/>
 <title>Student Contribution Report</title>
 <style>
-  @page{size:landscape;margin:12mm 10mm}
+  @page{size:landscape;margin:0}
   *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
   .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
   .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
   table{width:100%;border-collapse:collapse;font-size:11px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.amount{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
   .s-paid{background:#d1fae5;color:#047857}.s-partial{background:#fef3c7;color:#b45309}.s-unpaid{background:#fee2e2;color:#b91c1c}.s-paid,.s-partial,.s-unpaid{padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
-  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:0}}
+  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
 </style></head><body>
   <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Contribution Report</h1><div class="sub">Official Contribution Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
   <section class="metadata"><div><span class="label">Event:</span>${report.eventFilter}</div><div><span class="label">Year Level:</span>${report.yearFilter}</div><div><span class="label">Course:</span>${report.courseFilter}</div><div><span class="label">Section:</span>${report.sectionFilter}</div><div><span class="label">Payment Status:</span>${report.statusFilter}</div></section>
