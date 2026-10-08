@@ -629,7 +629,7 @@ export default function TransparencyBoardSection({
                         <th>Type</th>
                         <th>Amount</th>
                         <th>Officer</th>
-                         {canManageLedger && <th>Receipt</th>}
+                        <th>Receipt</th>
                         {canManageLedger && <th>Actions</th>}
                       </tr>
                     </thead>
@@ -661,27 +661,25 @@ export default function TransparencyBoardSection({
                           <td className="text-text-secondary">
                             {transaction.responsibleOfficer}
                           </td>
-                          {canManageLedger && (
-                            <td>
-                              {transaction.receiptUrl ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedReceipt(
-                                      transaction.receiptUrl || null,
-                                    )
-                                  }
-                                  className="glass-button px-2.5 py-1.5 flex items-center gap-1.5 text-xs"
-                                  title="Preview receipt"
-                                >
-                                  <Eye className="w-4 h-4 text-red" />
-                                  <span>Preview</span>
-                                </button>
-                              ) : (
-                                <span className="text-text-secondary/50">-</span>
-                              )}
-                            </td>
-                          )}
+                          <td>
+                            {transaction.receiptUrl ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSelectedReceipt(
+                                    transaction.receiptUrl || null,
+                                  )
+                                }
+                                className="glass-button px-2.5 py-1.5 flex items-center gap-1.5 text-xs"
+                                title="Preview receipt"
+                              >
+                                <Eye className="w-4 h-4 text-red" />
+                                <span>Preview</span>
+                              </button>
+                            ) : (
+                              <span className="text-text-secondary/50">-</span>
+                            )}
+                          </td>
                           {canManageLedger && (
                             <td>
                               <div className="flex items-center gap-1">

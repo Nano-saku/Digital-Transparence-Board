@@ -259,14 +259,19 @@ export default function FeedbackSection({ defaultTab }: FeedbackSectionProps) {
                 <div className="flex items-center gap-3 p-4 glass-card">
                   <button
                     type="button"
-onClick={() => setFormData({ ...formData, isAnonymous: !formData.isAnonymous })}
-                    className={`w-10 h-6 rounded-full p-0 ${
-                      formData.isAnonymous ? 'bg-red' : 'bg-gray-300'
-                    }`}
+                    role="switch"
+                    aria-checked={formData.isAnonymous}
+                    aria-label={formData.isAnonymous ? 'Include my information' : 'Submit anonymously'}
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        isAnonymous: !prev.isAnonymous,
+                      }))
+                    }
+                    disabled={submitting}
+                    className={`feedback-toggle ${formData.isAnonymous ? 'feedback-toggle-on' : ''}`}
                   >
-                    <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                      formData.isAnonymous ? 'translate-x-5' : 'translate-x-1'
-                    }`} />
+                    <span className="feedback-toggle-thumb" aria-hidden="true" />
                   </button>
                   <div className="flex items-center gap-2">
                     {formData.isAnonymous ? <EyeOff className="w-4 h-4 text-text-secondary" /> : <User className="w-4 h-4 text-text-secondary" />}

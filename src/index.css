@@ -53,7 +53,6 @@
     --text-on-primary: #ffffff; --text-on-primary-hsl: 0 0% 100%;
     --theme-heading: var(--text-primary); --theme-page: #080d22;
     --control-bg: rgba(4, 8, 22, 0.62); --control-bg-focus: rgba(4, 8, 22, 0.82);
-    --control-border: rgba(166, 180, 226, 0.34); --focus-ring: #f3d487;
     --grad-seal-metallic: radial-gradient(circle at 75% 20%, rgba(102, 130, 255, 0.3), transparent 32%), linear-gradient(135deg, #080d22 0%, #0e1734 55%, #172457 100%);
     --grad-card-accent: linear-gradient(90deg, #526ff2 0%, #9cacff 100%); --grad-btn-primary: linear-gradient(135deg, #526ff2 0%, #7c91ff 100%);
     --status-success: #54d98b; --status-warning: #e9bd5c; --status-danger: #f17777;
@@ -98,7 +97,6 @@
     --text-on-primary: #ffffff; --text-on-primary-hsl: 0 0% 100%;
     --theme-heading: var(--text-primary); --theme-page: #f1f5fd;
     --control-bg: rgba(255, 255, 255, 0.92); --control-bg-focus: #ffffff;
-    --control-border: rgba(55, 79, 126, 0.35); --focus-ring: #8a6200;
     --grad-seal-metallic: radial-gradient(circle at 75% 20%, rgba(82, 111, 242, 0.18), transparent 32%), linear-gradient(135deg, #e9f0ff 0%, #f8fbff 55%, #dbe7ff 100%);
     --grad-card-accent: linear-gradient(90deg, #3154d8 0%, #6682ff 100%); --grad-btn-primary: linear-gradient(135deg, #3154d8 0%, #526ff2 100%);
     --glass-bg: rgba(255, 255, 255, 0.94); --glass-border: rgba(55, 79, 126, 0.22); --glass-shadow: 0 24px 70px rgba(36, 65, 122, 0.16); --student-qr-actions-shadow: 0 -8px 16px rgba(244, 246, 252, 0.95);
@@ -125,6 +123,14 @@
   .theme-toggle-thumb { position: absolute; top: 0.1875rem; left: 0.1875rem; display: flex; width: 1.5rem; height: 1.5rem; align-items: center; justify-content: center; border-radius: 9999px; background: var(--surface-raised); color: var(--text-primary); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25); transition: transform 180ms ease-out, background 180ms ease-out, color 180ms ease-out; }
   .theme-toggle-track-dark .theme-toggle-thumb { transform: translateX(1.5rem); }
   .theme-toggle-thumb svg { width: 0.9rem; height: 0.9rem; }
+  .feedback-toggle { position: relative; display: inline-flex; width: 2.5rem; height: 1.5rem; flex: 0 0 auto; align-items: center; padding: 0; border: 1px solid var(--border-strong); border-radius: 9999px; background: color-mix(in srgb, var(--text-muted) 42%, var(--surface)); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18); transition: background 180ms ease-out, border-color 180ms ease-out, box-shadow 180ms ease-out; }
+  .feedback-toggle:hover:not(:disabled) { border-color: var(--dssc-metallic-highlight); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 3px color-mix(in srgb, var(--dssc-metallic-blue) 14%, transparent); }
+  .feedback-toggle:focus, .feedback-toggle:focus-visible { outline: 3px solid var(--feedback-toggle-focus); outline-offset: 3px; }
+  .feedback-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
+  .feedback-toggle-on { border-color: var(--danger); background: var(--danger); box-shadow: none; }
+  .feedback-toggle-on:hover:not(:disabled) { border-color: var(--danger); background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
+  .feedback-toggle-thumb { position: absolute; top: 50%; left: 0.1875rem; display: block; width: 1rem; height: 1rem; border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent); border-radius: 9999px; background: var(--surface-raised); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28); transform: translate(0, -50%); transition: transform 180ms ease-out, background 180ms ease-out; }
+  .feedback-toggle-on .feedback-toggle-thumb { transform: translate(1.125rem, -50%); }
   .text-theme-heading { color: var(--theme-heading); }
   .admin-login-section { min-height: calc(100svh - 4rem); margin-top: 4rem; background: var(--grad-seal-metallic); }
   .admin-login-card { color: var(--theme-heading); }
