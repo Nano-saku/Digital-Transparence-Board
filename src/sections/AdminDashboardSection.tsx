@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Users,
-  Wallet,
   TrendingUp,
   TrendingDown,
-  PieChart,
   UserCog,
   Calendar,
   CreditCard,
@@ -23,6 +21,7 @@ import {
 } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
+import FinancialSummaryCard from "@/components/common/FinancialSummaryCard";
 import type {
   ViewState,
   FinancialSummary,
@@ -71,6 +70,9 @@ export default function AdminDashboardSection({
     [],
   );
 
+  /** Full transaction history — used for the Funds Summary sparkline charts. */
+  const [allTransactionsData, setAllTransactionsData] = useState<Transaction[]>([]);
+
   const [studentCount, setStudentCount] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<Event[]>([]);
   const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
@@ -99,6 +101,7 @@ export default function AdminDashboardSection({
 
       // Transactions
       setRecentTransactions(transactionsData.slice(0, 5));
+      setAllTransactionsData(transactionsData);
 
       // Students
       setStudentCount(studentsData.length);
@@ -170,44 +173,6 @@ export default function AdminDashboardSection({
       position: "-=0.3",
     },
   ]);
-
-  const summaryCards = [
-    {
-      label: "Total Students",
-      value: studentCount.toString(),
-      icon: Users,
-      color: "blue",
-      suffix: "",
-    },
-    {
-      label: "Expected Contributions",
-      value: formatPeso(financialSummary?.totalExpectedContributions ?? 0),
-      icon: Wallet,
-      color: "purple",
-      suffix: "",
-    },
-    {
-      label: "Funds Collected",
-      value: formatPeso(financialSummary?.totalFundsCollected ?? 0),
-      icon: TrendingUp,
-      color: "green",
-      suffix: "",
-    },
-    {
-      label: "Funds Spent",
-      value: formatPeso(financialSummary?.totalFundsSpent ?? 0),
-      icon: TrendingDown,
-      color: "red",
-      suffix: "",
-    },
-    {
-      label: "Remaining Budget",
-      value: formatPeso(financialSummary?.remainingBudget ?? 0),
-      icon: PieChart,
-      color: "yellow",
-      suffix: "",
-    },
-  ];
 
   const quickActions = [
     ...(role === "admin"
@@ -332,7 +297,7 @@ export default function AdminDashboardSection({
   return (
     <section
       ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
+      className="admin-dashboard-section min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
     >
       {/* Content */}
       <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
@@ -394,19 +359,57 @@ export default function AdminDashboardSection({
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
-                  {summaryCards.map((card, index) => (
-                    <div key={index} className="min-w-0">
-                      <p className="font-display font-bold text-2xl sm:text-2xl lg:text-3xl text-dark leading-none tracking-tight truncate">
-                        {card.value}
-                        {card.suffix}
-                      </p>
-
-                      <p className="text-[10px] sm:text-[11px] text-text-secondary uppercase tracking-wider mt-2 truncate">
-                        {card.label}
-                      </p>
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  {/* Total Students */}
+                  <div className="stat-mini-card rounded-xl p-4 flex flex-col gap-2 min-w-0">
+                    <div className="stat-mini-icon-wrap w-8 h-8 rounded-lg flex items-center justify-center">
+                      <Users className="w-4 h-4" />
                     </div>
-                  ))}
+                    <p className="stat-mini-value font-display font-bold text-2xl sm:text-2xl lg:text-3xl leading-none tracking-tight truncate">
+                      {studentCount.toString()}
+                    </p>
+                    <p className="stat-mini-label text-[10px] sm:text-[11px] uppercase tracking-wider truncate">
+                      Total Students
+                    </p>
+                  </div>
+
+                  {/* Expected Contributions */}
+                  <div className="stat-mini-card rounded-xl p-4 flex flex-col gap-2 min-w-0">
+                    <div className="stat-mini-icon-wrap w-8 h-8 rounded-lg flex items-center justify-center">
+                      <Coins className="w-4 h-4" />
+                    </div>
+                    <p className="stat-mini-value font-display font-bold text-2xl sm:text-2xl lg:text-3xl leading-none tracking-tight truncate">
+                      {formatPeso(financialSummary?.totalExpectedContributions ?? 0)}
+                    </p>
+                    <p className="stat-mini-label text-[10px] sm:text-[11px] uppercase tracking-wider truncate">
+                      Expected Contributions
+                    </p>
+                  </div>
+                </div>
+
+                {/* Funds Summary — three dark financial cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <FinancialSummaryCard
+                    title="Funds Collected"
+                    value={financialSummary?.totalFundsCollected ?? 0}
+                    transactions={allTransactionsData}
+                    chartMode="income"
+                    allTransactions={allTransactionsData}
+                  />
+                  <FinancialSummaryCard
+                    title="Funds Spent"
+                    value={financialSummary?.totalFundsSpent ?? 0}
+                    transactions={allTransactionsData}
+                    chartMode="expense"
+                    allTransactions={allTransactionsData}
+                  />
+                  <FinancialSummaryCard
+                    title="Remaining Budget"
+                    value={financialSummary?.remainingBudget ?? 0}
+                    transactions={allTransactionsData}
+                    chartMode="balance"
+                    allTransactions={allTransactionsData}
+                  />
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-dark/5">
@@ -556,12 +559,12 @@ export default function AdminDashboardSection({
                         <div
                           className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center ${
                             action.color === "blue"
-                              ? "bg-blue-100 text-blue-600"
+                              ? "bg-blue-500/15 text-blue-400 dark-icon-blue"
                               : action.color === "green"
-                                ? "bg-green-100 text-green-600"
+                                ? "bg-green-500/15 text-green-500 dark-icon-green"
                                 : action.color === "purple"
-                                  ? "bg-purple-100 text-purple-600"
-                                  : "bg-yellow-100 text-yellow-600"
+                                  ? "bg-purple-500/15 text-purple-400 dark-icon-purple"
+                                  : "bg-yellow-500/15 text-yellow-500 dark-icon-yellow"
                           }`}
                         >
                           <Icon className="w-5 h-5" />
@@ -726,8 +729,8 @@ export default function AdminDashboardSection({
                             <div
                               className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center ${
                                 isIncome
-                                  ? "bg-green-100 text-green-600"
-                                  : "bg-red-100 text-red-600"
+                                  ? "bg-green-500/15 text-green-500"
+                                  : "bg-red-500/15 text-red-400"
                               }`}
                             >
                               <Icon className="w-4 h-4" />
@@ -755,7 +758,7 @@ export default function AdminDashboardSection({
 
                             <span
                               className={`text-sm font-display font-semibold flex-shrink-0 ${
-                                isIncome ? "text-green-600" : "text-red-600"
+                                isIncome ? "text-green-500" : "text-red-400"
                               }`}
                             >
                               {isIncome ? "+" : "-"}

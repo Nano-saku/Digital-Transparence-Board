@@ -250,6 +250,74 @@
 [data-theme="light"] .admin-login-card .text-text-secondary { color: #52617d; }
 [data-theme="light"] .admin-login-card .text-slate-200 { color: #1d3264; }
 
+/* ── FinancialSummaryCard ── dark (default) ──────────────────────────────── */
+.financial-summary-card {
+  --fsc-positive: #4ade80;
+  --fsc-negative: #f87171;
+  background: linear-gradient(145deg, #1a2140 0%, #111827 100%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.32), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  transition: background 220ms ease-out, border-color 220ms ease-out, box-shadow 220ms ease-out;
+}
+.financial-summary-card .fsc-title       { color: rgba(160, 174, 204, 0.75); }
+.financial-summary-card .fsc-amount-whole { color: #f0f4ff; }
+.financial-summary-card .fsc-amount-decimal { color: rgba(180, 194, 230, 0.6); }
+.financial-summary-card .fsc-period      { color: rgba(148, 163, 184, 0.5); }
+
+/* ── FinancialSummaryCard ── light override ──────────────────────────────── */
+[data-theme="light"] .financial-summary-card {
+  --fsc-positive: #15803d;
+  --fsc-negative: #b91c1c;
+  background: linear-gradient(145deg, #ffffff 0%, #f0f5ff 100%);
+  border: 1px solid rgba(55, 79, 126, 0.18);
+  box-shadow: 0 4px 20px rgba(36, 65, 122, 0.10), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+[data-theme="light"] .financial-summary-card .fsc-title        { color: rgba(48, 75, 117, 0.72); }
+[data-theme="light"] .financial-summary-card .fsc-amount-whole  { color: #14244b; }
+[data-theme="light"] .financial-summary-card .fsc-amount-decimal { color: rgba(48, 75, 117, 0.55); }
+[data-theme="light"] .financial-summary-card .fsc-period        { color: rgba(82, 97, 125, 0.6); }
+
+/* ── stat-mini-card (Total Students / Expected Contributions) ─────────────── */
+/* Dark default */
+.stat-mini-card {
+  background: linear-gradient(145deg, #1e2d50 0%, #151f36 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  transition: background 220ms ease-out, border-color 220ms ease-out, box-shadow 220ms ease-out;
+}
+.stat-mini-card .stat-mini-icon-wrap {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(180, 200, 240, 0.8);
+}
+.stat-mini-card .stat-mini-value { color: #f0f4ff; }
+.stat-mini-card .stat-mini-label { color: rgba(148, 163, 184, 0.6); }
+
+/* Light override */
+[data-theme="light"] .stat-mini-card {
+  background: linear-gradient(145deg, #ffffff 0%, #f0f5ff 100%);
+  border: 1px solid rgba(55, 79, 126, 0.18);
+  box-shadow: 0 4px 16px rgba(36, 65, 122, 0.09), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+[data-theme="light"] .stat-mini-card .stat-mini-icon-wrap {
+  background: rgba(55, 79, 126, 0.10);
+  color: #2d5096;
+}
+[data-theme="light"] .stat-mini-card .stat-mini-value { color: #14244b; }
+[data-theme="light"] .stat-mini-card .stat-mini-label { color: rgba(48, 75, 117, 0.65); }
+
+/* ── AdminDashboard light-mode icon tints ───────────────────────────────── */
+/* In light mode the 15% opacity tints on pure bg-*-500 read too pale;      */
+/* override to solid pastel backgrounds + deeper text so icons stay legible. */
+[data-theme="light"] .dark-icon-blue   { background: #dbeafe; color: #1d4ed8; }
+[data-theme="light"] .dark-icon-green  { background: #dcfce7; color: #15803d; }
+[data-theme="light"] .dark-icon-purple { background: #ede9fe; color: #7c3aed; }
+[data-theme="light"] .dark-icon-yellow { background: #fef9c3; color: #a16207; }
+
+/* Transaction income/expense text — lighter tones look great on dark,          */
+/* in light mode we want deeper accessible greens/reds scoped to the dashboard. */
+[data-theme="light"] .admin-dashboard-section .text-green-500 { color: #15803d; }
+[data-theme="light"] .admin-dashboard-section .text-red-400   { color: #b91c1c; }
+
 @keyframes fade-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes breathe { 0%, 100% { opacity: 0.7; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes skeleton-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
