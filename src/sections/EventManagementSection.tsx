@@ -96,6 +96,7 @@ export default function EventManagementSection({
     name: string;
     allocationAmount: number;
     isNonConducting: boolean;
+    isNoContribution: boolean;
     date: string;
     contributionDeadline: string;
     schedules: EventSchedule[];
@@ -103,6 +104,7 @@ export default function EventManagementSection({
     name: "",
     allocationAmount: 0,
     isNonConducting: false,
+    isNoContribution: false,
     date: "",
     contributionDeadline: "",
     schedules: [],
@@ -230,6 +232,7 @@ export default function EventManagementSection({
       name: "",
       allocationAmount: 0,
       isNonConducting: false,
+      isNoContribution: false,
       date: "",
       contributionDeadline: "",
       schedules: [],
@@ -247,6 +250,7 @@ export default function EventManagementSection({
       allocationAmount: event.allocationAmount,
       date: event.date && event.date !== "TBD" ? event.date : "",
       isNonConducting: event.isNonConducting ?? false,
+      isNoContribution: event.isNoContribution ?? false,
       contributionDeadline: event.contributionDeadline ?? "",
       schedules: event.schedules ?? [],
     });
@@ -263,6 +267,7 @@ export default function EventManagementSection({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         isNonConducting: eventForm.isNonConducting,
+        isNoContribution: eventForm.isNoContribution,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -275,6 +280,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         isNonConducting: false,
+        isNoContribution: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -301,6 +307,7 @@ export default function EventManagementSection({
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         isNonConducting: eventForm.isNonConducting,
+        isNoContribution: eventForm.isNoContribution,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -315,6 +322,7 @@ export default function EventManagementSection({
         name: "",
         allocationAmount: 0,
         isNonConducting: false,
+        isNoContribution: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -572,6 +580,11 @@ export default function EventManagementSection({
                         <td className="font-medium text-dark">
                           <div className="flex items-center gap-2 flex-wrap">
                             {event.name}
+                            {event.isNoContribution && (
+                              <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700">
+                                No Contribution
+                              </span>
+                            )}
                           </div>
                         </td>
 
@@ -654,17 +667,35 @@ export default function EventManagementSection({
 
                         {/* Allocation */}
                         <td className="text-text-secondary whitespace-nowrap">
-                          {formatPeso(event.allocationAmount)}
+                          {event.isNoContribution ? (
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
+                              N/A
+                            </span>
+                          ) : (
+                            formatPeso(event.allocationAmount)
+                          )}
                         </td>
 
                         {/* Expected Collection */}
                         <td className="font-medium text-green-600 whitespace-nowrap">
-                          {formatPeso(expectedCollection(event))}
+                          {event.isNoContribution ? (
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
+                              N/A
+                            </span>
+                          ) : (
+                            formatPeso(expectedCollection(event))
+                          )}
                         </td>
 
                         {/* Actual Collected */}
                         <td className="font-medium text-blue-600 whitespace-nowrap">
-                          {formatPeso(collectedAmount(event))}
+                          {event.isNoContribution ? (
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
+                              N/A
+                            </span>
+                          ) : (
+                            formatPeso(collectedAmount(event))
+                          )}
                         </td>
 
                         {/* Actions */}
@@ -826,6 +857,45 @@ export default function EventManagementSection({
               </button>
             </div>
 
+            {/* No Contribution toggle */}
+            <div className="flex items-center justify-between rounded-xl border border-border bg-surface-soft/50 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-dark">
+                  No contribution required
+                </p>
+                <p className="text-xs text-text-secondary">
+                  Excludes this event from collection tracking & performance
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={eventForm.isNoContribution}
+                aria-label="Toggle no-contribution event"
+                onClick={() =>
+                  setEventForm((prev) => ({
+                    ...prev,
+                    isNoContribution: !prev.isNoContribution,
+                    ...(!prev.isNoContribution
+                      ? { contributionDeadline: "", allocationAmount: 0 }
+                      : {}),
+                  }))
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  eventForm.isNoContribution ? "bg-purple-500" : "bg-gray-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                    eventForm.isNoContribution
+                      ? "translate-x-4.5"
+                      : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+
             {/* Date */}
             {!eventForm.isNonConducting && (
               <div>
@@ -889,28 +959,30 @@ export default function EventManagementSection({
             )}
 
             {/* Contribution deadline */}
-            <div>
-              <label className="block text-sm font-medium text-dark mb-1">
-                Contribution deadline
-              </label>
+            {!eventForm.isNoContribution && (
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1">
+                  Contribution deadline
+                </label>
 
-              <p className="text-xs text-text-secondary mb-2">
-                Last day a student's contribution counts as on-time. Leave blank
-                for no deadline.
-              </p>
+                <p className="text-xs text-text-secondary mb-2">
+                  Last day a student's contribution counts as on-time. Leave blank
+                  for no deadline.
+                </p>
 
-              <input
-                type="date"
-                value={eventForm.contributionDeadline}
-                onChange={(e) =>
-                  setEventForm({
-                    ...eventForm,
-                    contributionDeadline: e.target.value,
-                  })
-                }
-                className="glass-input w-full px-4 py-2"
-              />
-            </div>
+                <input
+                  type="date"
+                  value={eventForm.contributionDeadline}
+                  onChange={(e) =>
+                    setEventForm({
+                      ...eventForm,
+                      contributionDeadline: e.target.value,
+                    })
+                  }
+                  className="glass-input w-full px-4 py-2"
+                />
+              </div>
+            )}
 
             {/* Attendance Schedule */}
             {!eventForm.isNonConducting && (
@@ -1041,25 +1113,27 @@ export default function EventManagementSection({
             )}
 
             {/* Allocation Amount */}
-            <div>
-              <label className="block text-sm font-medium text-dark mb-1">
-                Allocation Amount (₱)
-              </label>
+            {!eventForm.isNoContribution && (
+              <div>
+                <label className="block text-sm font-medium text-dark mb-1">
+                  Allocation Amount (₱)
+                </label>
 
-              <input
-                type="number"
-                value={eventForm.allocationAmount || ""}
-                onChange={(e) =>
-                  setEventForm({
-                    ...eventForm,
-                    allocationAmount: parseInt(e.target.value) || 0,
-                  })
-                }
-                className="glass-input w-full px-4 py-2"
-                placeholder="0.00"
-                min="0"
-              />
-            </div>
+                <input
+                  type="number"
+                  value={eventForm.allocationAmount || ""}
+                  onChange={(e) =>
+                    setEventForm({
+                      ...eventForm,
+                      allocationAmount: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="glass-input w-full px-4 py-2"
+                  placeholder="0.00"
+                  min="0"
+                />
+              </div>
+            )}
 
             {/* Assigned Board Members */}
             {canManageEvents && boardMembers.length > 0 && (

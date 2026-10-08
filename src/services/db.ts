@@ -491,6 +491,7 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     name: item.name as string,
     allocationAmount: item.allocation_amount as number,
     isNonConducting: Boolean(item.is_non_conducting),
+    isNoContribution: Boolean(item.is_no_contribution),
     date: (item.date as string | null) ?? undefined,
     contributionDeadline:
       (item.contribution_deadline as string | null) || undefined,
@@ -800,6 +801,7 @@ export const eventsService = {
       name: event.name,
       allocation_amount: event.allocationAmount,
       is_non_conducting: event.isNonConducting ?? false,
+      is_no_contribution: event.isNoContribution ?? false,
       date: event.date,
       contribution_deadline: event.contributionDeadline ?? "",
       evaluation_active: event.evaluationActive ?? false,
@@ -853,6 +855,9 @@ export const eventsService = {
 
     if (event.isNonConducting !== undefined)
       updateData.is_non_conducting = event.isNonConducting;
+
+    if (event.isNoContribution !== undefined)
+      updateData.is_no_contribution = event.isNoContribution;
 
     if (event.schedules !== undefined) {
       updateData.schedules = event.schedules;

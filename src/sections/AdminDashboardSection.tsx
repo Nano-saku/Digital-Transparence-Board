@@ -95,9 +95,18 @@ export default function AdminDashboardSection({
         transactionsService.getAll(),
       ]);
 
-      // Financial report
+      // Financial report — exclude no-contribution events from collection performance
+      const noContributionIds = new Set(
+        eventsData
+          .filter((e) => e.isNoContribution)
+          .map((e) => e.id),
+      );
       setFinancialSummary(financialReport.summary);
-      setEventPerformance(financialReport.eventAllocations ?? []);
+      setEventPerformance(
+        (financialReport.eventAllocations ?? []).filter(
+          (a) => !noContributionIds.has(a.eventId),
+        ),
+      );
 
       // Transactions
       setRecentTransactions(transactionsData.slice(0, 5));
@@ -626,7 +635,7 @@ export default function AdminDashboardSection({
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {eventPerformance.slice(0, 5).map((event) => {
+                    {eventPerformance.map((event) => {
                       const expected =
                         Number(event.allocationAmount ?? 0) * studentCount;
 
