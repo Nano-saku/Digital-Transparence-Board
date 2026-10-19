@@ -99,6 +99,15 @@ function buildAdminNavItems(role: UserRole | null): {
       : []),
 
     ...(role === "admin"
+      ? [
+          {
+            label: "Officers & Volunteers",
+            view: "officer-volunteers-management" as ViewState,
+          },
+        ]
+      : []),
+
+    ...(role === "admin"
       ? [{ label: "System Logs", view: "system-logs" as ViewState }]
       : []),
   ];

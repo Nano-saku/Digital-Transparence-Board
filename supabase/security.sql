@@ -165,6 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_board_members_account_user_id
 
 ALTER TABLE events ADD COLUMN IF NOT EXISTS assigned_member_ids   TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE events ADD COLUMN IF NOT EXISTS assigned_member_names TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS auto_mark_absent       BOOLEAN NOT NULL DEFAULT false;
 
 ALTER TABLE public.board_members ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "board_members_read_public" ON public.board_members;

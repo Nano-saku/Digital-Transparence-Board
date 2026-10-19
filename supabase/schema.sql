@@ -976,7 +976,8 @@ CREATE TABLE public.events (
     assigned_member_names text[] DEFAULT '{}'::text[] NOT NULL,
     contribution_deadline text DEFAULT ''::text NOT NULL,
     evaluation_active boolean DEFAULT false NOT NULL,
-    evaluation_form_url text DEFAULT ''::text NOT NULL
+    evaluation_form_url text DEFAULT ''::text NOT NULL,
+    auto_mark_absent boolean DEFAULT false NOT NULL
 );
 
 

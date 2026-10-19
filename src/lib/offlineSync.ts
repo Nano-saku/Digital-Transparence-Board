@@ -11,7 +11,9 @@ type TableName =
   | "transactions"
   | "feedback"
   | "board_members"
-  | "student_requirement_files";
+  | "student_requirement_files"
+  | "lsc_officers"
+  | "event_volunteers";
 type MutationKind = "create" | "update" | "delete";
 
 /**

@@ -10,6 +10,7 @@ import {
   ArrowRight,
   MessageSquare,
   Coins,
+  ShieldCheck,
 } from "lucide-react";
 import {
   today,
@@ -145,6 +146,7 @@ export default function AdminDashboardSection({
       [
         "students",
         "events",
+        "lsc_officers",
         "contributions",
         "payments",
         "transactions",
@@ -192,6 +194,13 @@ export default function AdminDashboardSection({
             icon: UserCog,
             view: "student-management" as ViewState,
             color: "blue",
+          },
+          {
+            title: "Officers & Volunteers",
+            description: "Appoint LSC officers and assign event volunteers",
+            icon: ShieldCheck,
+            view: "officer-volunteers-management" as ViewState,
+            color: "purple",
           },
         ]
       : []),
@@ -636,8 +645,14 @@ export default function AdminDashboardSection({
                 ) : (
                   <div className="space-y-2">
                     {eventPerformance.map((event) => {
+                      // The database report already excludes currently
+                      // appointed LSC officers from the expected allocation.
+                      // Fall back for older deployed functions that do not yet
+                      // return expectedAmount.
                       const expected =
-                        Number(event.allocationAmount ?? 0) * studentCount;
+                        event.expectedAmount != null
+                          ? Number(event.expectedAmount)
+                          : Number(event.allocationAmount ?? 0) * studentCount;
 
                       const collected = Number(event.totalCollected ?? 0);
 

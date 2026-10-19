@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef, Suspense, lazy } from "react";
 import type { ViewState, Student, UserRole, Event } from "@/types";
-import { studentsService, eventEvaluationsService } from "@/services/db";
+import {
+  eventEvaluationsService,
+  lscOfficersService,
+  studentsService,
+  subscribeToTables,
+  type StudentAppointmentVerification,
+} from "@/services/db";
 import { authService, type AuthSession } from "@/services/auth";
 import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
@@ -18,6 +24,7 @@ import Navigation from "@/sections/Navigation";
 import PushPromptModal from "@/components/PushPromptModal";
 import LandingSection from "@/sections/LandingSection";
 import StudentRecordSection from "@/sections/StudentRecordSection";
+import OfficerRecordSection from "@/sections/OfficerRecordSection";
 import TransparencyBoardSection from "@/sections/TransparencyBoardSection";
 import FeedbackSection from "@/sections/FeedbackSection";
 import FooterSection from "@/sections/FooterSection";
@@ -39,6 +46,9 @@ const StudentManagementSection = lazy(
 );
 const RequirementFilesManagementSection = lazy(
   () => import("@/sections/RequirementFilesManagementSection"),
+);
+const OfficerVolunteersManagementSection = lazy(
+  () => import("@/sections/OfficerVolunteersManagementSection"),
 );
 const EventManagementSection = lazy(
   () => import("@/sections/EventManagementSection"),
@@ -69,6 +79,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
 const ADMIN_VIEWS: ViewState[] = [
   "admin-dashboard",
   "student-management",
+  "officer-volunteers-management",
   "requirement-files-management",
   "event-management",
   "payment-management",
@@ -87,6 +98,8 @@ function canRoleAccess(view: ViewState, role: UserRole | null): boolean {
   switch (view) {
     case "student-management":
       return role === "admin" || role === "secretary";
+    case "officer-volunteers-management":
+      return role === "admin";
     case "requirement-files-management":
       return role === "admin";
     case "system-logs":
@@ -132,10 +145,13 @@ function App() {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [pendingEvaluationEvent, setPendingEvaluationEvent] =
     useState<Event | null>(null);
+  const [appointmentVerification, setAppointmentVerification] =
+    useState<StudentAppointmentVerification | null>(null);
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
   const logoutInProgressRef = useRef(false);
+  const appointmentCheckRef = useRef(0);
 
   const mainRef = useRef<HTMLDivElement>(null);
 
@@ -179,6 +195,7 @@ function App() {
         if (
           persisted?.studentId &&
           (persisted.view === "student-record" ||
+            persisted.view === "officer-record" ||
             persisted.view === "evaluation-required")
         ) {
           try {
@@ -191,8 +208,16 @@ function App() {
               );
               setSelectedStudent(student);
               setPendingEvaluationEvent(pendingEvent);
+              const verification = await lscOfficersService.verifyForStudent(
+                student,
+              );
+              setAppointmentVerification(verification);
               setCurrentView(
-                pendingEvent ? "evaluation-required" : "student-record",
+                pendingEvent
+                  ? "evaluation-required"
+                  : verification.status === "verified"
+                    ? "officer-record"
+                    : "student-record",
               );
             } else {
               clearViewSession();
@@ -241,10 +266,12 @@ function App() {
         const pendingEvent = await eventEvaluationsService.getPendingGate(
           student.studentId,
         );
+        const verification = await lscOfficersService.verifyForStudent(student);
 
         if (pendingEvent) {
           setSelectedStudent(student);
           setPendingEvaluationEvent(pendingEvent);
+          setAppointmentVerification(verification);
           setCurrentView("evaluation-required");
           saveViewSession({
             view: "evaluation-required",
@@ -252,11 +279,20 @@ function App() {
           });
         } else {
           setSelectedStudent(student);
-          setCurrentView("student-record");
+          setAppointmentVerification(verification);
+          const nextView: ViewState =
+            verification.status === "verified"
+              ? "officer-record"
+              : "student-record";
+          setCurrentView(nextView);
           saveViewSession({
-            view: "student-record",
+            view: nextView,
             studentId: student.studentId,
           });
+        }
+
+        if (verification.status === "error") {
+          toast.info("Showing the regular student record while appointment verification is unavailable.");
         }
       } else {
         toast.error("Student Name and Student ID do not match.");
@@ -268,6 +304,58 @@ function App() {
       setSearching(false);
     }
   };
+
+  // Appointment changes are authoritative. Re-check the current student rather
+  // than trusting the previous result, so creation, replacement, role changes,
+  // and removal take effect without a page reload. Errors fail closed to the
+  // unchanged regular student UI.
+  useEffect(() => {
+    if (!selectedStudent) return;
+
+    let cancelled = false;
+    // Never keep rendering officer-only content while a fresh appointment
+    // check is in flight. The officer route will fail closed to the regular
+    // student record until this request verifies again.
+    setAppointmentVerification(null);
+    const verifyAppointment = async () => {
+      const requestId = ++appointmentCheckRef.current;
+      const verification = await lscOfficersService.verifyForStudent(
+        selectedStudent,
+      );
+      if (cancelled || requestId !== appointmentCheckRef.current) return;
+
+      setAppointmentVerification(verification);
+      if (currentView !== "student-record" && currentView !== "officer-record") {
+        return;
+      }
+
+      if (verification.status === "verified") {
+        setCurrentView("officer-record");
+        saveViewSession({
+          view: "officer-record",
+          studentId: selectedStudent.studentId,
+        });
+      } else {
+        setCurrentView("student-record");
+        saveViewSession({
+          view: "student-record",
+          studentId: selectedStudent.studentId,
+        });
+      }
+    };
+
+    void verifyAppointment();
+    const unsubscribe = subscribeToTables(
+      ["lsc_officers"],
+      () => void verifyAppointment(),
+      `student-appointment-${selectedStudent.id}`,
+    );
+    return () => {
+      cancelled = true;
+      appointmentCheckRef.current += 1;
+      unsubscribe();
+    };
+  }, [currentView, selectedStudent]);
 
   // Handle admin/staff login. Throws so the login form can surface errors.
   const handleLogin = async (email: string, password: string) => {
@@ -398,6 +486,28 @@ function App() {
           )
         );
 
+      case "officer-record":
+        return selectedStudent &&
+          appointmentVerification?.status === "verified" &&
+          appointmentVerification.appointments.length > 0 ? (
+          <OfficerRecordSection
+            student={selectedStudent}
+            appointments={appointmentVerification.appointments}
+            onBack={() => navigateTo("landing")}
+          />
+        ) : selectedStudent ? (
+          <StudentRecordSection
+            student={selectedStudent}
+            onBack={() => navigateTo("landing")}
+          />
+        ) : (
+          <LandingSection
+            onSearch={handleSearch}
+            onViewTransparency={() => navigateTo("transparency")}
+            searching={searching}
+          />
+        );
+
       case "evaluation-required":
         return (
           pendingEvaluationEvent && (
@@ -476,6 +586,17 @@ function App() {
       case "student-management":
         return canAccess("student-management") ? (
           <StudentManagementSection
+            onBack={() => navigateTo("admin-dashboard")}
+          />
+        ) : (
+          renderAdminLogin()
+        );
+
+      case "officer-volunteers-management":
+        return canAccess("officer-volunteers-management") ? (
+          <OfficerVolunteersManagementSection
+            role={role!}
+            staffName={auth?.displayName ?? ""}
             onBack={() => navigateTo("admin-dashboard")}
           />
         ) : (

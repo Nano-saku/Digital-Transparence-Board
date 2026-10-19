@@ -1,8 +1,9 @@
-﻿import { isAuthRetryableFetchError } from "@supabase/supabase-js";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
 import { autoCreateReceipt } from "../lib/receipts";
 import { today } from "../lib/format";
+import { normalizeLscPreviewFileReference } from "../lib/lscPreview";
 import {
   normalizeStudentName,
   splitSearchWords,
@@ -23,7 +24,10 @@ import type {
   StudentRequirementFile,
   EventEvaluation,
   AuditLog,
+  LscOfficer,
+  EventVolunteer,
 } from "../types";
+export { OFFICIAL_LSC_POSITIONS } from "../types";
 
 // Operational tables use TEXT primary keys so they remain compatible with the
 // former Firestore document-id format. PostgreSQL does not generate a value for
@@ -492,6 +496,7 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     allocationAmount: item.allocation_amount as number,
     isNonConducting: Boolean(item.is_non_conducting),
     isNoContribution: Boolean(item.is_no_contribution),
+    autoMarkAbsent: item.auto_mark_absent === true,
     date: (item.date as string | null) ?? undefined,
     contributionDeadline:
       (item.contribution_deadline as string | null) || undefined,
@@ -802,6 +807,7 @@ export const eventsService = {
       allocation_amount: event.allocationAmount,
       is_non_conducting: event.isNonConducting ?? false,
       is_no_contribution: event.isNoContribution ?? false,
+      auto_mark_absent: event.autoMarkAbsent ?? false,
       date: event.date,
       contribution_deadline: event.contributionDeadline ?? "",
       evaluation_active: event.evaluationActive ?? false,
@@ -858,6 +864,9 @@ export const eventsService = {
 
     if (event.isNoContribution !== undefined)
       updateData.is_no_contribution = event.isNoContribution;
+
+    if (event.autoMarkAbsent !== undefined)
+      updateData.auto_mark_absent = event.autoMarkAbsent;
 
     if (event.schedules !== undefined) {
       updateData.schedules = event.schedules;
@@ -1194,6 +1203,11 @@ export const attendanceService = {
   }): Promise<AttendanceRecord[]> {
     const supabase = getSupabase();
 
+    // Automatic Absent is deliberately never queued or replayed by the
+    // offline mutation service. Do not make a write when connectivity has
+    // already gone away between the scheduler's check and this call.
+    if (typeof navigator !== "undefined" && !navigator.onLine) return [];
+
     // Never send this request without an officer session: PostgREST would
     // run it as `anon` and RLS would reject it. getSession() refreshes an
     // expired access token first; a network failure there is a network
@@ -1231,6 +1245,14 @@ export const attendanceService = {
       params.eventId,
       params.date,
     );
+    const { data: eventSetting, error: eventSettingError } = await supabase
+      .from("events")
+      .select("auto_mark_absent")
+      .eq("id", params.eventId)
+      .maybeSingle();
+    if (eventSettingError) throw eventSettingError;
+    if (eventSetting?.auto_mark_absent !== true) return [];
+
     const recorded = new Set(existing.map((record) => record.studentId));
     const rows = params.studentIds
       .filter((studentId) => !recorded.has(studentId))
@@ -2900,12 +2922,12 @@ export const boardMembersService = {
   // invite-officer script, not through db.ts - so only the cache-fallback
   // read pattern applies here.
   async listBoardMembers(): Promise<BoardMember[]> {
-    return cachedRead<BoardMember>("board_members", async () => {
+    const catalog = await cachedRead<BoardMember>("board_members", async () => {
       const { data, error } = await getSupabase()
         .from("board_members")
         .select("*")
         .order("name");
-      if (error) throw error;
+      if (error) return [];
       return (
         data?.map((item) => ({
           id: item.id,
@@ -2914,6 +2936,28 @@ export const boardMembersService = {
         })) || []
       );
     });
+
+    try {
+      // Include officers who were manually assigned the "Board Member" position
+      const officers = await lscOfficersService.getAll();
+      const officerBoardMembers = officers
+        .filter((o) => o.positions.includes("Board Member"))
+        .map((o) => ({
+          id: `officer-${o.id}`,
+          name: o.name,
+        }));
+
+      const mergedMap = new Map<string, BoardMember>();
+      catalog.forEach((m) => mergedMap.set(m.name.toLowerCase().trim(), m));
+      officerBoardMembers.forEach((m) => {
+        if (!mergedMap.has(m.name.toLowerCase().trim())) {
+          mergedMap.set(m.name.toLowerCase().trim(), m);
+        }
+      });
+      return Array.from(mergedMap.values());
+    } catch {
+      return catalog;
+    }
   },
 };
 
@@ -2977,7 +3021,14 @@ export const financialReportingService = {
 
   subscribe(onChange: () => void): () => void {
     return subscribeToTables(
-      ["events", "students", "contributions", "payments", "transactions"],
+      [
+        "events",
+        "students",
+        "lsc_officers",
+        "contributions",
+        "payments",
+        "transactions",
+      ],
       onChange,
       "financial-report",
     );
@@ -3373,6 +3424,462 @@ export const studentRequirementFilesService = {
             console.warn("Could not remove requirement file from storage:", e);
           }
         }
+      },
+    });
+  },
+};
+
+
+// ============================================
+// LSC OFFICERS & VOLUNTEERS SERVICE
+// ============================================
+
+/**
+ * Format officer positions according to the multi-role display standard:
+ * Joined by " / ", e.g. "Creative Director / Board Member".
+ */
+export function formatLscPositions(
+  positions: string[] | undefined | null,
+): string {
+  if (!positions || positions.length === 0) return "No role assigned";
+  return positions.join(" / ");
+}
+
+const mapLscOfficer = (item: Record<string, unknown>): LscOfficer => {
+  let positions: string[] = [];
+  if (Array.isArray(item.positions)) {
+    positions = (item.positions as unknown[]).filter(
+      (p): p is string => typeof p === "string" && p.trim().length > 0,
+    );
+  } else if (typeof item.positions === "string") {
+    try {
+      const parsed = JSON.parse(item.positions);
+      if (Array.isArray(parsed)) {
+        positions = parsed.filter(
+          (p): p is string => typeof p === "string" && p.trim().length > 0,
+        );
+      }
+    } catch {
+      positions = item.positions
+        .split("/")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return {
+    id: item.id as string,
+    studentId: (item.student_id as string) || "",
+    studentDbId: (item.student_db_id as string) || undefined,
+    name: (item.name as string) || "",
+    previewFileReference: normalizeLscPreviewFileReference(
+      item.preview_file_reference,
+    ),
+    program: (item.program as string) || "",
+    yearLevel: Number(item.year_level) || 1,
+    section: (item.section as string) || "",
+    positions,
+    createdAt: (item.created_at as string) || new Date().toISOString(),
+    updatedAt: (item.updated_at as string) || new Date().toISOString(),
+  };
+};
+
+export type StudentAppointmentVerification = {
+  status: "verified" | "not-appointed" | "error";
+  appointments: LscOfficer[];
+  error?: unknown;
+};
+
+export const lscOfficersService = {
+  /**
+   * Verifies the current LSC appointment for one already-verified student.
+   *
+   * This intentionally bypasses the broad officer-list cache and never turns
+   * a query failure into "not an officer". The student DB id is preferred,
+   * while the student number keeps older appointment rows compatible. Every
+   * matching row is returned so multiple active appointments remain active.
+   */
+  async verifyForStudent(
+    student: Student,
+  ): Promise<StudentAppointmentVerification> {
+    try {
+      const supabase = getSupabase();
+      const [byStudentDbId, byStudentNumber] = await Promise.all([
+        supabase
+          .from("lsc_officers")
+          .select("*")
+          .eq("student_db_id", student.id),
+        // Keep this second lookup for legacy rows and for rows whose foreign
+        // key was not populated. It also ensures every matching appointment
+        // row is included when a student has multiple position records.
+        supabase
+          .from("lsc_officers")
+          .select("*")
+          .ilike("student_id", escapeLikePattern(student.studentId.trim())),
+      ]);
+
+      if (byStudentDbId.error) throw byStudentDbId.error;
+      if (byStudentNumber.error) throw byStudentNumber.error;
+
+      const rowsById = new Map<string, Record<string, unknown>>();
+      for (const row of [
+        ...(byStudentDbId.data ?? []),
+        ...(byStudentNumber.data ?? []),
+      ]) {
+        const typedRow = row as Record<string, unknown>;
+        const id = String(typedRow.id ?? "");
+        if (id) rowsById.set(id, typedRow);
+      }
+
+      const appointments = Array.from(rowsById.values()).map(mapLscOfficer);
+      return {
+        status: appointments.length > 0 ? "verified" : "not-appointed",
+        appointments,
+      };
+    } catch (error) {
+      console.error("Could not verify LSC appointment:", error);
+      return { status: "error", appointments: [], error };
+    }
+  },
+
+  async getAll(): Promise<LscOfficer[]> {
+    return cachedRead<LscOfficer>("lsc_officers", async () => {
+      const { data, error } = await getSupabase()
+        .from("lsc_officers")
+        .select("*")
+        .order("name");
+      if (error) {
+        console.warn(
+          "lsc_officers query error, returning cached/empty:",
+          error.message,
+        );
+        return [];
+      }
+      return (data ?? []).map(mapLscOfficer);
+    });
+  },
+
+  async getByStudentId(studentId: string): Promise<LscOfficer | null> {
+    const all = await this.getAll();
+    const cleanId = studentId.trim().toLowerCase();
+    return (
+      all.find((o) => o.studentId.trim().toLowerCase() === cleanId) ?? null
+    );
+  },
+
+  /**
+   * Manually assigns or updates an LSC Officer record.
+   * Admin decides who is an LSC Officer and manually assigns positions.
+   * Never inferred or auto-assigned.
+   */
+  async assign(input: {
+    studentId: string;
+    studentDbId?: string;
+    name: string;
+    program?: string;
+    yearLevel?: number;
+    section?: string;
+    positions: string[];
+    previewFileReference?: string;
+  }): Promise<LscOfficer> {
+    const existing = await this.getByStudentId(input.studentId);
+    const id = existing ? existing.id : createRecordId();
+    const now = new Date().toISOString();
+
+    const cleanedPositions = Array.from(
+      new Set(input.positions.map((p) => p.trim()).filter(Boolean)),
+    );
+    const previewFileReference = normalizeLscPreviewFileReference(
+      input.previewFileReference,
+    );
+    if (input.previewFileReference && !previewFileReference) {
+      throw new Error("Invalid LSC Preview file reference");
+    }
+
+    const payload = {
+      id,
+      student_id: input.studentId,
+      student_db_id: input.studentDbId || null,
+      name: input.name,
+      program: input.program ?? "",
+      year_level: input.yearLevel ?? 1,
+      section: input.section ?? "",
+      positions: cleanedPositions,
+      preview_file_reference: previewFileReference ?? null,
+      updated_at: now,
+      ...(existing ? {} : { created_at: now }),
+    };
+
+    const action = existing
+      ? "LSC_OFFICER_ROLES_UPDATED"
+      : "LSC_OFFICER_ASSIGNED";
+    const description = `${existing ? "Updated roles for" : "Assigned"} LSC Officer ${input.name}: ${formatLscPositions(cleanedPositions)}`;
+
+    const result = await offlineSyncService.mutation<LscOfficer>({
+      table: "lsc_officers",
+      kind: existing ? "update" : "create",
+      recordId: id,
+      payload,
+      audit: await buildAudit(
+        action,
+        "lsc_officer",
+        description,
+        id,
+        {
+          studentId: input.studentId,
+          name: input.name,
+          positions: cleanedPositions,
+          previewFileReference,
+        },
+      ),
+      makeLocal: () => ({
+        id,
+        studentId: input.studentId,
+        studentDbId: input.studentDbId,
+        name: input.name,
+        program: input.program ?? "",
+        yearLevel: input.yearLevel ?? 1,
+        section: input.section ?? "",
+        positions: cleanedPositions,
+        previewFileReference,
+        createdAt: existing ? existing.createdAt : now,
+        updatedAt: now,
+      }),
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("lsc_officers")
+          .upsert(payload)
+          .select()
+          .single();
+        if (error) throw error;
+        return mapLscOfficer(data);
+      },
+    });
+
+    if (!result) throw new Error("Failed to assign LSC officer");
+    return result;
+  },
+
+  /**
+   * Adds an additional role to an existing officer without replacing existing roles.
+   */
+  async addRole(studentId: string, roleToAdd: string): Promise<LscOfficer> {
+    const officer = await this.getByStudentId(studentId);
+    if (!officer) {
+      throw new Error(`Officer with student ID ${studentId} not found`);
+    }
+    const currentPositions = (officer.positions || []) as string[];
+    if (currentPositions.includes(roleToAdd)) {
+      return officer;
+    }
+    const newPositions = [...currentPositions, roleToAdd];
+    return this.assign({
+      studentId: officer.studentId,
+      studentDbId: officer.studentDbId,
+      name: officer.name,
+      program: officer.program,
+      yearLevel: officer.yearLevel,
+      section: officer.section,
+      positions: newPositions,
+      previewFileReference: officer.previewFileReference,
+    });
+  },
+
+  /**
+   * Removes an individual role from an officer without removing other roles.
+   * If all roles are removed, the officer record is deleted.
+   */
+  async removeRole(
+    studentId: string,
+    roleToRemove: string,
+  ): Promise<LscOfficer | null> {
+    const officer = await this.getByStudentId(studentId);
+    if (!officer) return null;
+    const currentPositions = officer.positions || [];
+    const newPositions = currentPositions.filter((r) => r !== roleToRemove);
+    if (newPositions.length === 0) {
+      await this.remove(officer.id);
+      return null;
+    }
+    return this.assign({
+      studentId: officer.studentId,
+      studentDbId: officer.studentDbId,
+      name: officer.name,
+      program: officer.program,
+      yearLevel: officer.yearLevel,
+      section: officer.section,
+      positions: newPositions,
+      previewFileReference: officer.previewFileReference,
+    });
+  },
+
+  /**
+   * Removes an LSC Officer record entirely.
+   */
+  async remove(id: string): Promise<void> {
+    const all = await this.getAll();
+    const officer = all.find((o) => o.id === id);
+    const officerName = officer?.name || id;
+
+    await offlineSyncService.mutation<void>({
+      table: "lsc_officers",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      audit: await buildAudit(
+        "LSC_OFFICER_REMOVED",
+        "lsc_officer",
+        `Removed LSC Officer status from ${officerName}.`,
+        id,
+      ),
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("lsc_officers")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
+      },
+    });
+  },
+};
+
+
+const mapEventVolunteer = (
+  item: Record<string, unknown>,
+): EventVolunteer => ({
+  id: item.id as string,
+  eventId: item.event_id as string,
+  eventName: (item.event_name as string) || "",
+  studentId: item.student_id as string,
+  studentName: (item.student_name as string) || "",
+  program: (item.program as string) || undefined,
+  yearLevel: item.year_level ? Number(item.year_level) : undefined,
+  section: (item.section as string) || undefined,
+  roleOrTask: (item.role_or_task as string) || "Volunteer",
+  status: (item.status as EventVolunteer["status"]) || "assigned",
+  createdAt: (item.created_at as string) || new Date().toISOString(),
+});
+
+export const eventVolunteersService = {
+  async getAll(): Promise<EventVolunteer[]> {
+    return cachedRead<EventVolunteer>("event_volunteers", async () => {
+      const { data, error } = await getSupabase()
+        .from("event_volunteers")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.warn(
+          "event_volunteers query error, returning cached/empty:",
+          error.message,
+        );
+        return [];
+      }
+      return (data ?? []).map(mapEventVolunteer);
+    });
+  },
+
+  async getByEventId(eventId: string): Promise<EventVolunteer[]> {
+    const all = await this.getAll();
+    return all.filter((v) => v.eventId === eventId);
+  },
+
+  async getByStudentId(studentId: string): Promise<EventVolunteer[]> {
+    const all = await this.getAll();
+    const cleanId = studentId.trim().toLowerCase();
+    return all.filter((v) => v.studentId.trim().toLowerCase() === cleanId);
+  },
+
+  async assign(input: {
+    eventId: string;
+    eventName: string;
+    studentId: string;
+    studentName: string;
+    program?: string;
+    yearLevel?: number;
+    section?: string;
+    roleOrTask: string;
+  }): Promise<EventVolunteer> {
+    const id = createRecordId();
+    const now = new Date().toISOString();
+    const payload = {
+      id,
+      event_id: input.eventId,
+      event_name: input.eventName,
+      student_id: input.studentId,
+      student_name: input.studentName,
+      program: input.program || "",
+      year_level: input.yearLevel || 0,
+      section: input.section || "",
+      role_or_task: input.roleOrTask,
+      status: "assigned",
+      created_at: now,
+    };
+
+    const result = await offlineSyncService.mutation<EventVolunteer>({
+      table: "event_volunteers",
+      kind: "create",
+      recordId: id,
+      payload,
+      audit: await buildAudit(
+        "EVENT_VOLUNTEER_ASSIGNED",
+        "event_volunteer",
+        `Assigned volunteer ${input.studentName} to event ${input.eventName} (${input.roleOrTask}).`,
+        id,
+        {
+          eventId: input.eventId,
+          studentId: input.studentId,
+          roleOrTask: input.roleOrTask,
+        },
+      ),
+      makeLocal: () => ({
+        id,
+        eventId: input.eventId,
+        eventName: input.eventName,
+        studentId: input.studentId,
+        studentName: input.studentName,
+        program: input.program,
+        yearLevel: input.yearLevel,
+        section: input.section,
+        roleOrTask: input.roleOrTask,
+        status: "assigned",
+        createdAt: now,
+      }),
+      executeOnline: async () => {
+        const { data, error } = await getSupabase()
+          .from("event_volunteers")
+          .insert(payload)
+          .select()
+          .single();
+        if (error) throw error;
+        return mapEventVolunteer(data);
+      },
+    });
+
+    if (!result) throw new Error("Failed to assign event volunteer");
+    return result;
+  },
+
+  async remove(id: string): Promise<void> {
+    const all = await this.getAll();
+    const v = all.find((item) => item.id === id);
+
+    await offlineSyncService.mutation<void>({
+      table: "event_volunteers",
+      kind: "delete",
+      recordId: id,
+      payload: {},
+      audit: await buildAudit(
+        "EVENT_VOLUNTEER_REMOVED",
+        "event_volunteer",
+        `Removed volunteer ${v?.studentName ?? id} from event ${v?.eventName ?? ""}.`,
+        id,
+      ),
+      executeOnline: async () => {
+        const { error } = await getSupabase()
+          .from("event_volunteers")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
       },
     });
   },

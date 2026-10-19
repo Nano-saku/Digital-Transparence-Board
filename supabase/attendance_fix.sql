@@ -139,6 +139,13 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
+  -- Automatic Absent is opt-in per event. Re-read the setting inside the
+  -- security-definer function so a stale client can never enable writes for a
+  -- disabled event, and so disabling an event takes effect immediately.
+  IF COALESCE((to_jsonb(v_event) ->> 'auto_mark_absent')::boolean, false) = false THEN
+    RETURN;
+  END IF;
+
   -- Non-conducting events never take attendance.
   IF COALESCE((to_jsonb(v_event) ->> 'is_non_conducting')::boolean, false) THEN
     RETURN;

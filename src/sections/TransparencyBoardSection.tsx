@@ -145,8 +145,10 @@ export default function TransparencyBoardSection({
     }
   };
 
-  const expectedCollection = (allocationAmount: number) =>
-    (Number(allocationAmount) || 0) * studentCount;
+  const expectedCollection = (allocation: EventAllocation) =>
+    allocation.expectedAmount != null
+      ? Number(allocation.expectedAmount)
+      : (Number(allocation.allocationAmount) || 0) * studentCount;
 
   useSectionEntrance(sectionRef, [
     // Headline entrance
@@ -222,7 +224,7 @@ export default function TransparencyBoardSection({
           (a) => `<tr>
               <td>${escaped(a.eventName)}</td>
               <td class="right">${formatPeso(a.allocationAmount)}</td>
-              <td class="right">${formatPeso(expectedCollection(a.allocationAmount))}</td>
+              <td class="right">${formatPeso(expectedCollection(a))}</td>
               <td class="right">${formatPeso(a.totalCollected)}</td>
               <td class="right">${formatPeso(a.totalSpent)}</td>
               <td class="right">${formatPeso(a.remainingBalance)}</td>
@@ -546,7 +548,7 @@ export default function TransparencyBoardSection({
                           </td>
                           <td className="text-text-secondary">
                             {formatPeso(
-                              expectedCollection(allocation.allocationAmount),
+                              expectedCollection(allocation),
                             )}
                           </td>
                           <td className="text-green-600">

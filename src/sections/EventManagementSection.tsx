@@ -13,6 +13,7 @@ import {
   eventsService,
   studentsService,
   contributionsService,
+  financialReportingService,
   boardMembersService,
   subscribeToTables,
 } from "@/services/db";
@@ -69,6 +70,9 @@ export default function EventManagementSection({
   const [events, setEvents] = useState<Event[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [eventTotals, setEventTotals] = useState<Record<string, number>>({});
+  const [expectedAmounts, setExpectedAmounts] = useState<Record<string, number>>(
+    {},
+  );
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -97,6 +101,7 @@ export default function EventManagementSection({
     allocationAmount: number;
     isNonConducting: boolean;
     isNoContribution: boolean;
+    autoMarkAbsent: boolean;
     date: string;
     contributionDeadline: string;
     schedules: EventSchedule[];
@@ -105,6 +110,7 @@ export default function EventManagementSection({
     allocationAmount: 0,
     isNonConducting: false,
     isNoContribution: false,
+    autoMarkAbsent: false,
     date: "",
     contributionDeadline: "",
     schedules: [],
@@ -122,15 +128,27 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData, totalsData] = await Promise.all([
-        eventsService.getAll(),
-        studentsService.getAll(),
-        contributionsService.getTotalsByEvent(),
-      ]);
+      const [eventsData, studentsData, totalsData, financialReport] =
+        await Promise.all([
+          eventsService.getAll(),
+          studentsService.getAll(),
+          contributionsService.getTotalsByEvent(),
+          financialReportingService.getReport(),
+        ]);
 
       setEvents(eventsData);
       setStudents(studentsData);
       setEventTotals(totalsData);
+      setExpectedAmounts(
+        Object.fromEntries(
+          (financialReport.eventAllocations ?? [])
+            .filter((allocation) => allocation.expectedAmount != null)
+            .map((allocation) => [
+              allocation.eventId,
+              Number(allocation.expectedAmount),
+            ]),
+        ),
+      );
 
       try {
         setBoardMembers(await boardMembersService.listBoardMembers());
@@ -156,7 +174,13 @@ export default function EventManagementSection({
   // Live updates
   useEffect(() => {
     return subscribeToTables(
-      ["events", "students", "contributions", "board_members"],
+      [
+        "events",
+        "students",
+        "lsc_officers",
+        "contributions",
+        "board_members",
+      ],
       () => loadData(false),
       "event-management",
     );
@@ -233,6 +257,7 @@ export default function EventManagementSection({
       allocationAmount: 0,
       isNonConducting: false,
       isNoContribution: false,
+      autoMarkAbsent: false,
       date: "",
       contributionDeadline: "",
       schedules: [],
@@ -251,6 +276,7 @@ export default function EventManagementSection({
       date: event.date && event.date !== "TBD" ? event.date : "",
       isNonConducting: event.isNonConducting ?? false,
       isNoContribution: event.isNoContribution ?? false,
+      autoMarkAbsent: event.autoMarkAbsent ?? false,
       contributionDeadline: event.contributionDeadline ?? "",
       schedules: event.schedules ?? [],
     });
@@ -268,6 +294,7 @@ export default function EventManagementSection({
         allocationAmount: eventForm.allocationAmount,
         isNonConducting: eventForm.isNonConducting,
         isNoContribution: eventForm.isNoContribution,
+        autoMarkAbsent: eventForm.autoMarkAbsent,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -281,6 +308,7 @@ export default function EventManagementSection({
         allocationAmount: 0,
         isNonConducting: false,
         isNoContribution: false,
+        autoMarkAbsent: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -308,6 +336,7 @@ export default function EventManagementSection({
         allocationAmount: eventForm.allocationAmount,
         isNonConducting: eventForm.isNonConducting,
         isNoContribution: eventForm.isNoContribution,
+        autoMarkAbsent: eventForm.autoMarkAbsent,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
@@ -323,6 +352,7 @@ export default function EventManagementSection({
         allocationAmount: 0,
         isNonConducting: false,
         isNoContribution: false,
+        autoMarkAbsent: false,
         date: "",
         contributionDeadline: "",
         schedules: [],
@@ -433,13 +463,12 @@ export default function EventManagementSection({
     }
   };
 
-  // Expected collection:
-  // Allocation per student × total number of students
+  // Expected collection comes from the financial report so currently
+  // appointed LSC officers are excluded. Fall back to the legacy calculation
+  // while an older deployed RPC is still in use.
   const expectedCollection = (event: Event) => {
     const allocation = Number(event.allocationAmount) || 0;
-    const studentCount = students.length;
-
-    return allocation * studentCount;
+    return expectedAmounts[event.id] ?? allocation * students.length;
   };
 
   // Actual collection:
@@ -895,6 +924,49 @@ export default function EventManagementSection({
                 />
               </button>
             </div>
+
+            {canManageEvents && (
+              <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-soft/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-dark">
+                    Auto Mark Absent
+                  </p>
+                  <p className="text-xs text-text-secondary">
+                    After the event day ends, students without attendance are marked absent automatically.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={eventForm.autoMarkAbsent}
+                  aria-label="Toggle automatic absent marking"
+                  onClick={() =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      autoMarkAbsent: !prev.autoMarkAbsent,
+                    }))
+                  }
+                  className={`relative inline-flex min-h-9 w-full shrink-0 items-center justify-center rounded-full px-3 text-xs font-semibold transition-colors sm:w-20 ${
+                    eventForm.autoMarkAbsent
+                      ? "bg-green-600 text-white"
+                      : "bg-gray-300 text-gray-700"
+                  }`}
+                >
+                  <span className="relative z-10">
+                    {eventForm.autoMarkAbsent ? "ON" : "OFF"}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={`absolute inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-[left,right] ${
+                      eventForm.autoMarkAbsent
+                        ? "right-1"
+                        : "left-1"
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
 
             {/* Date */}
             {!eventForm.isNonConducting && (

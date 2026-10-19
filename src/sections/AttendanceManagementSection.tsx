@@ -245,16 +245,21 @@ export default function AttendanceManagementSection({
   ]);
 
   // Whole Day records: every scheduled session of the selected event at once.
-  // The database keeps one attendance row per student + event + date
-  // (attendance_student_event_date_key), which is exactly the Whole Day row.
+  // Attendance is scoped by event + date because one event can have historical
+  // rows from before its date was edited. Automatic Absent also writes against
+  // the event's configured date, so showing every row by event ID could select
+  // an old Present/Late row instead of the current-date Absent row.
   const selectedAttendanceRecords = useMemo(
     () =>
       selectedEventForAttendance
         ? attendanceRecords.filter(
-            (r) => r.eventId === selectedEventForAttendance,
+            (r) =>
+              r.eventId === selectedEventForAttendance &&
+              (!selectedAttendanceEvent?.date ||
+                r.date === selectedAttendanceEvent.date),
           )
         : [],
-    [attendanceRecords, selectedEventForAttendance],
+    [attendanceRecords, selectedAttendanceEvent, selectedEventForAttendance],
   );
 
   const attendanceMap = useMemo(() => {
@@ -744,7 +749,9 @@ export default function AttendanceManagementSection({
     const now = new Date();
     const completedEvents = events.filter(
       (event) =>
-        !event.isNonConducting && hasEventAttendanceDayEnded(event.date, now),
+        event.autoMarkAbsent === true &&
+        !event.isNonConducting &&
+        hasEventAttendanceDayEnded(event.date, now),
     );
     if (completedEvents.length === 0) {
       autoMarkingAbsentRef.current = false;
@@ -924,6 +931,7 @@ export default function AttendanceManagementSection({
             .filter(
               (record) =>
                 record.eventId === event.id &&
+                (!event.date || record.date === event.date) &&
                 registeredStudentIds.has(record.studentId) &&
                 (record.status === "present" || record.status === "late"),
             )

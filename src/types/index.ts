@@ -23,6 +23,8 @@ export interface Student {
   program: string;
   yearLevel: number;
   section: string;
+  isLscOfficer?: boolean;
+  lscPositions?: string[];
 }
 
 export type EventSession = "morning" | "afternoon" | "evening";
@@ -57,6 +59,9 @@ export interface Event {
   /** When true, this event is excluded from Attendance Management. */
   isNonConducting?: boolean;
 
+
+  /** When true, eligible students may be automatically marked absent after the event date ends. */
+  autoMarkAbsent?: boolean;
   /** When true, this event has no contribution requirement and is excluded from Event Collection Performance. */
   isNoContribution?: boolean;
 
@@ -208,6 +213,55 @@ export interface BoardMember {
   accountUserId?: string;
 }
 
+// LSC Officers and Event Volunteers Types
+export const OFFICIAL_LSC_POSITIONS = [
+  "Governor",
+  "Vice Governor",
+  "External Vice Governor",
+  "General Secretary",
+  "Assistant Secretary",
+  "Treasurer",
+  "Auditor",
+  "Assistant Auditor",
+  "Board Member",
+  "Creative Director",
+  "Technical Director",
+  "Creative Head",
+  "Technical Head",
+  "Creatives Committee",
+  "Technical Committee",
+] as const;
+
+export type OfficialLscPosition = (typeof OFFICIAL_LSC_POSITIONS)[number];
+
+export interface LscOfficer {
+  id: string;
+  studentId: string;
+  studentDbId?: string;
+  name: string;
+  previewFileReference?: string;
+  program: string;
+  yearLevel: number;
+  section: string;
+  positions: OfficialLscPosition[] | string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EventVolunteer {
+  id: string;
+  eventId: string;
+  eventName: string;
+  studentId: string;
+  studentName: string;
+  program?: string;
+  yearLevel?: number;
+  section?: string;
+  roleOrTask: string;
+  status: "assigned" | "active" | "completed";
+  createdAt: string;
+}
+
 // Financial Summary Types
 export interface FinancialSummary {
   totalBudget: number;
@@ -221,6 +275,8 @@ export interface EventAllocation {
   eventId: string;
   eventName: string;
   allocationAmount: number;
+  /** Expected total after excluding current LSC officers. */
+  expectedAmount?: number;
   totalCollected: number;
   totalSpent: number;
   remainingBalance: number;
@@ -236,6 +292,7 @@ export interface FinancialReport {
 export type ViewState =
   | "landing"
   | "student-record"
+  | "officer-record"
   | "evaluation-required"
   | "transparency"
   | "inquiry"
@@ -246,6 +303,7 @@ export type ViewState =
   | "admin-reset-password"
   | "admin-dashboard"
   | "student-management"
+  | "officer-volunteers-management"
   | "event-management"
   | "payment-management"
   | "contribution-management"

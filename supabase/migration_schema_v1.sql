@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS public.events (
     afternoon_time_out  TEXT NOT NULL DEFAULT '',
     evening_time_in     TEXT NOT NULL DEFAULT '',
     evening_time_out    TEXT NOT NULL DEFAULT '',
-    schedules           JSONB NOT NULL DEFAULT '[]'::jsonb
+    schedules           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    auto_mark_absent    BOOLEAN NOT NULL DEFAULT false
 );
 
 -- Board Members
