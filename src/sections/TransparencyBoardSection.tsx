@@ -49,6 +49,17 @@ import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import AnimatedNetwork from "@/components/ui/animated-network";
+
+/** Converts a Blob to a base64 data URI for self-contained printable reports. */
+function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read report asset"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 interface TransparencyBoardSectionProps {
   adminMode?: boolean;
   onBack?: () => void;
@@ -213,6 +224,23 @@ export default function TransparencyBoardSection({
   const downloadTransparencyReport = async () => {
     try {
       setDownloadingReport(true);
+
+      const [lscLogoResp, dsscLogoResp] = await Promise.all([
+        fetch("/lsc-logo.jpg"),
+        fetch("/DSSC-logo.png"),
+      ]);
+      if (!lscLogoResp.ok || !dsscLogoResp.ok) {
+        throw new Error("Unable to load report logos");
+      }
+      const [lscBlob, dsscBlob] = await Promise.all([
+        lscLogoResp.blob(),
+        dsscLogoResp.blob(),
+      ]);
+      const [lscDataUri, dsscDataUri] = await Promise.all([
+        blobToDataUri(lscBlob),
+        blobToDataUri(dsscBlob),
+      ]);
+
       const escaped = (value: string) =>
         String(value)
           .replace(/&/g, "&amp;")
@@ -221,7 +249,7 @@ export default function TransparencyBoardSection({
           .replace(/"/g, "&quot;");
       const allocationRows = eventAllocations
         .map(
-          (a) => `<tr>
+          (a, index) => `<tr class="${index % 2 === 0 ? "even" : "odd"}">
               <td>${escaped(a.eventName)}</td>
               <td class="right">${formatPeso(a.allocationAmount)}</td>
               <td class="right">${formatPeso(expectedCollection(a))}</td>
@@ -234,11 +262,11 @@ export default function TransparencyBoardSection({
 
       const transactionRows = transactions
         .map(
-          (t) => `<tr>
-              <td>${escaped(String(t.date))}</td>
+          (t, index) => `<tr class="${index % 2 === 0 ? "even" : "odd"}">
+              <td>${escaped(formatDate(String(t.date)))}</td>
               <td>${escaped(t.description)}</td>
               <td>${escaped(t.eventName || "-")}</td>
-              <td>${t.type === "income" ? "Income" : "Expense"}</td>
+              <td><span class="type-${t.type}">${t.type === "income" ? "Income" : "Expense"}</span></td>
               <td class="right ${t.type === "income" ? "pos" : "neg"}">${t.type === "income" ? "+" : "-"}${formatPeso(t.amount)}</td>
               <td>${escaped(t.responsibleOfficer)}</td>
             </tr>`,
@@ -254,49 +282,29 @@ export default function TransparencyBoardSection({
 
       const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
-<title>Transparency Board Report</title>
+<title>Student Council Financial Report</title>
 <style>
-  body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:32px auto;max-width:960px;padding:0 16px;}
-  h1{font-size:24px;margin:0 0 4px;}
-  .meta{color:#6b7280;font-size:13px;margin-bottom:24px;}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:24px;}
-  .card{border:1px solid #e5e7eb;border-radius:8px;padding:14px;background:#f9fafb;}
-  .card .label{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;}
-  .card .value{font-size:20px;font-weight:700;margin-top:4px;}
-  h2{font-size:16px;margin:28px 0 10px;border-bottom:2px solid #111827;padding-bottom:6px;}
-  table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;}
-  th,td{border:1px solid #e5e7eb;padding:8px 10px;text-align:left;}
-  th{background:#f3f4f6;}
-  .right{text-align:right;}
-  .pos{color:#047857;} .neg{color:#b91c1c;}
-  footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;}
-</style></head>
-<body>
-  <h1>Local Student Council � Digital Transparency Board</h1>
-  <p class="meta">Official financial report � Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</p>
-
-  <div class="cards">
-    <div class="card"><div class="label">Total Contribution Amount</div><div class="value">${formatPeso(financialSummary?.totalBudget ?? 0)}</div></div>
-    <div class="card"><div class="label">Funds Collected</div><div class="value pos">${formatPeso(financialSummary?.totalFundsCollected ?? 0)}</div></div>
-    <div class="card"><div class="label">Funds Spent</div><div class="value neg">${formatPeso(financialSummary?.totalFundsSpent ?? 0)}</div></div>
-    <div class="card"><div class="label">Remaining Budget</div><div class="value">${formatPeso(financialSummary?.remainingBudget ?? 0)}</div></div>
-  </div>
-
+  @page{size:landscape;margin:0}
+  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
+  .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
+  .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:125px}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:20px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.collected{color:#047857}.spent{color:#b91c1c}.remaining{color:#1b2e8c}
+  h2{font-size:15px;color:#1b2e8c;margin:18px 0 8px;border-bottom:2px solid #1b2e8c;padding-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.right{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
+  .pos{color:#047857;font-weight:700}.neg{color:#b91c1c;font-weight:700}.type-income,.type-expense{display:inline-block;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700}.type-income{background:#d1fae5;color:#047857}.type-expense{background:#fee2e2;color:#b91c1c}
+  .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 18px}.total{border:1px solid #e5e7eb;border-radius:7px;padding:8px 10px;background:#f9fafb}.total-label{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.7px}.total-value{font-size:15px;font-weight:800;margin-top:2px}
+  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}.ledger-section{break-before:page;page-break-before:always}.ledger-section h2{break-after:avoid-page;page-break-after:avoid}}
+</style></head><body>
+  <header class="header"><img src="${lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Council Financial Report</h1><div class="sub">Official Financial Record for Verification and Filing</div></div><img src="${dsscDataUri}" alt="DSSC logo"/></header>
+  <section class="metadata"><div><span class="label">Report Type:</span>Official Financial Report</div><div><span class="label">Reporting Scope:</span>All recorded events and transactions</div><div><span class="label">Events Covered:</span>${eventAllocations.length}</div><div><span class="label">Transactions Recorded:</span>${transactions.length}</div></section>
+  <section class="summary"><div class="card"><div class="number">${formatPeso(financialSummary?.totalBudget ?? 0)}</div><div class="caption">Total Contribution Amount</div></div><div class="card"><div class="number collected">${formatPeso(financialSummary?.totalFundsCollected ?? 0)}</div><div class="caption">Funds Collected</div></div><div class="card"><div class="number spent">${formatPeso(financialSummary?.totalFundsSpent ?? 0)}</div><div class="caption">Funds Spent</div></div><div class="card"><div class="number remaining">${formatPeso(financialSummary?.remainingBudget ?? 0)}</div><div class="caption">Remaining Budget</div></div></section>
   <h2>Event Allocations</h2>
-  <table>
-    <thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Expected Collection</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead>
-    <tbody>${allocationRows || '<tr><td colspan="6">No allocations recorded.</td></tr>'}</tbody>
-  </table>
-
-  <h2>Transaction Ledger</h2>
-  <table>
-    <thead><tr><th>Date</th><th>Description</th><th>Event</th><th>Type</th><th class="right">Amount</th><th>Officer</th></tr></thead>
-    <tbody>${transactionRows || '<tr><td colspan="6">No transactions recorded.</td></tr>'}</tbody>
-  </table>
-
-  <p><strong>Totals:</strong> Income ${formatPeso(totalIncome)} � Expenses ${formatPeso(totalExpense)} � Net ${formatPeso(totalIncome - totalExpense)}</p>
-
-  <footer>Generated by the Digital Transparency Board � for questions contact the Local Student Council treasurer or auditor.</footer>
+  <table><thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Expected Collection</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead><tbody>${allocationRows || '<tr><td colspan="6">No allocations recorded.</td></tr>'}</tbody></table>
+  <section class="ledger-section"><h2>Transaction Ledger</h2>
+  <table><thead><tr><th>Date</th><th>Description</th><th>Event</th><th>Type</th><th class="right">Amount</th><th>Officer</th></tr></thead><tbody>${transactionRows || '<tr><td colspan="6">No transactions recorded.</td></tr>'}</tbody></table>
+  <section class="totals"><div class="total"><div class="total-label">Total Income</div><div class="total-value pos">${formatPeso(totalIncome)}</div></div><div class="total"><div class="total-label">Total Expenses</div><div class="total-value neg">${formatPeso(totalExpense)}</div></div><div class="total"><div class="total-label">Net Balance</div><div class="total-value">${formatPeso(totalIncome - totalExpense)}</div></div></section></section>
+  <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
 </body></html>`;
 
       downloadBlob(
