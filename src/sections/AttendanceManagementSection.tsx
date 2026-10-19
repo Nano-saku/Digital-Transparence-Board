@@ -357,6 +357,10 @@ export default function AttendanceManagementSection({
       const saved = existing
         ? await attendanceService.update(existing.id, payload)
         : await attendanceService.create(payload);
+      // A refresh can begin after the write starts but before Supabase returns.
+      // Advance the version again now so that an older snapshot returned by
+      // that refresh cannot replace the row we are about to apply locally.
+      attendanceWriteVersionRef.current += 1;
       setAttendanceRecords((prev) => {
         const index = prev.findIndex(
           (r) =>
@@ -385,6 +389,7 @@ export default function AttendanceManagementSection({
 
     try {
       await attendanceService.delete(attendanceToClear.id);
+      attendanceWriteVersionRef.current += 1;
       setAttendanceRecords((prev) =>
         prev.filter((record) => record.id !== attendanceToClear.id),
       );
@@ -844,6 +849,7 @@ export default function AttendanceManagementSection({
           inserted.forEach((record) => byId.set(record.id, record));
           return [...byId.values()];
         });
+        attendanceWriteVersionRef.current += 1;
       }
       autoAbsentErrorRef.current = null;
     } catch (error) {
