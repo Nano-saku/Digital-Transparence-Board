@@ -34,7 +34,6 @@ import type {
   UserRole,
 } from "@/types";
 import { parseStudentQrText } from "@/lib/qr";
-import { offlineSyncService } from "@/lib/offlineSync";
 import { toast } from "sonner";
 import {
   formatDate,
@@ -157,8 +156,8 @@ export default function AttendanceManagementSection({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastScanRef = useRef({ data: "", at: 0 });
   const autoMarkingAbsentRef = useRef(false);
-  // Last Automatic Absent failure shown, so the 60-second retry does not
-  // repeat the same toast every minute.
+  // Last Automatic Absent failure shown, so a realtime refresh does not
+  // repeat the same toast unnecessarily.
   const autoAbsentErrorRef = useRef<string | null>(null);
   // Latest attendance rows for the Automatic Absent check, read through a
   // ref so its own state updates do not re-trigger the effect.
@@ -758,13 +757,10 @@ export default function AttendanceManagementSection({
       return;
     }
 
-    // Automatic Absent is ONLINE ONLY: a server-side bulk insert that is never
-    // queued through offlineSyncService. While offline it is skipped
-    // silently; the 60-second interval and the "online" listener retry it.
-    if (
-      offlineSyncService.isOffline() ||
-      (typeof navigator !== "undefined" && !navigator.onLine)
-    ) {
+    // Automatic Absent is an online-only server-side bulk insert. It is not
+    // queued for offline replay: enabling the setting or loading the
+    // attendance page performs one attempt for each completed event.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
       autoMarkingAbsentRef.current = false;
       return;
     }
@@ -809,8 +805,8 @@ export default function AttendanceManagementSection({
     } catch (error) {
       const kind = classifyAttendanceError(error);
       if (kind === "network") {
-        // Supabase unreachable (e.g. Wi-Fi without internet). Not an error
-        // for the officer: nothing was written, and the next check retries.
+        // Supabase unreachable (e.g. Wi-Fi without internet). Nothing was
+        // written. The officer can refresh the attendance page to try again.
         console.warn("Automatic Absent skipped; Supabase unreachable:", error);
         return;
       }
@@ -819,7 +815,7 @@ export default function AttendanceManagementSection({
         kind === "auth"
           ? "not authorized. Sign out and sign in again; if it persists, an admin must run supabase/attendance_fix.sql."
           : errorMessage(error);
-      // The check runs every minute; show each distinct failure only once.
+      // Show each distinct failure only once during this page session.
       if (autoAbsentErrorRef.current !== message) {
         autoAbsentErrorRef.current = message;
         toast.error(`Failed to auto-mark absent students — ${message}`);
@@ -830,15 +826,11 @@ export default function AttendanceManagementSection({
   }, [canRecordAttendance, events, students]);
 
   useEffect(() => {
-    autoMarkAbsent();
-    const interval = setInterval(autoMarkAbsent, 60_000);
-    // Run as soon as connectivity returns instead of waiting for the interval.
-    const handleOnline = () => void autoMarkAbsent();
-    window.addEventListener("online", handleOnline);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("online", handleOnline);
-    };
+    // This is intentionally a one-time trigger for the current event data.
+    // Event realtime updates call loadData(), which changes `events` and
+    // triggers this effect again when Automatic Absent is enabled or an event
+    // becomes eligible. There is deliberately no 60-second retry loop.
+    void autoMarkAbsent();
   }, [autoMarkAbsent]);
 
   const attendanceSearchTerm = attendanceSearch.trim().toLowerCase();
