@@ -324,11 +324,6 @@ export default function OfficerVolunteersManagementSection({
       toast.error("Please assign at least one official position or role.");
       return;
     }
-    if (!selectedPreviewFileReference) {
-      toast.error("Please select one existing LSC Preview photo.");
-      return;
-    }
-
     try {
       setSaving(true);
       const saved = await lscOfficersService.assign({
@@ -1018,15 +1013,15 @@ export default function OfficerVolunteersManagementSection({
                 )}
               </div>
 
-              {/* Step 2: Select an existing LSC Preview file (read-only) */}
+              {/* Step 2: Optionally select an existing LSC Preview file (read-only) */}
               <div className="lsc-officer-modal__section w-full min-w-0">
                 <div className="lsc-officer-modal__section-header flex items-start justify-between gap-2">
                   <div>
                     <label className="lsc-officer-modal__section-title block text-xs font-semibold uppercase tracking-[0.03em] text-text-secondary">
-                      2. Select LSC Preview Photo
+                      2. Select LSC Preview Photo (Optional)
                     </label>
                     <p className="mt-1 text-[11px] leading-4 text-text-secondary">
-                      Select an existing photo from the read-only LSC Preview files 1–18. This only stores a reference; it never changes the carousel.
+                      Select an existing photo from the read-only LSC Preview files 1–18, or continue without one. This only stores a reference; it never changes the carousel.
                     </p>
                   </div>
                   {selectedPreviewFileReference && (
@@ -1074,6 +1069,11 @@ export default function OfficerVolunteersManagementSection({
                   >
                     Clear selected photo
                   </button>
+                )}
+                {!selectedPreviewFileReference && (
+                  <p className="mt-2 text-xs text-text-secondary">
+                    No photo selected. The officer will use an initials avatar.
+                  </p>
                 )}
               </div>
 
@@ -1163,8 +1163,7 @@ export default function OfficerVolunteersManagementSection({
                 disabled={
                   saving ||
                   !selectedStudentForOfficer ||
-                  selectedPositions.length === 0 ||
-                  !selectedPreviewFileReference
+                  selectedPositions.length === 0
                 }
                 className="lsc-officer-modal__assign btn-primary inline-flex h-[34px] min-w-[170px] items-center justify-center gap-1.5 rounded-[9px] px-4 text-sm shadow-md"
               >
