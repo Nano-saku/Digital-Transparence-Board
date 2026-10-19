@@ -222,6 +222,11 @@ export default function TransparencyBoardSection({
    * export a PDF copy.
    */
   const downloadTransparencyReport = async () => {
+    if (!canManageLedger) {
+      toast.error("You do not have permission to download this report");
+      return;
+    }
+
     try {
       setDownloadingReport(true);
 
@@ -273,13 +278,6 @@ export default function TransparencyBoardSection({
         )
         .join("");
 
-      const totalIncome = transactions
-        .filter((t) => t.type === "income")
-        .reduce((sum, t) => sum + t.amount, 0);
-      const totalExpense = transactions
-        .filter((t) => t.type === "expense")
-        .reduce((sum, t) => sum + t.amount, 0);
-
       const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <title>Student Council Financial Report</title>
@@ -293,7 +291,6 @@ export default function TransparencyBoardSection({
   h2{font-size:15px;color:#1b2e8c;margin:18px 0 8px;border-bottom:2px solid #1b2e8c;padding-bottom:5px}
   table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.right{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
   .pos{color:#047857;font-weight:700}.neg{color:#b91c1c;font-weight:700}.type-income,.type-expense{display:inline-block;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700}.type-income{background:#d1fae5;color:#047857}.type-expense{background:#fee2e2;color:#b91c1c}
-  .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 18px}.total{border:1px solid #e5e7eb;border-radius:7px;padding:8px 10px;background:#f9fafb}.total-label{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.7px}.total-value{font-size:15px;font-weight:800;margin-top:2px}
   footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}.ledger-section{break-before:page;page-break-before:always}.ledger-section h2{break-after:avoid-page;page-break-after:avoid}}
 </style></head><body>
   <header class="header"><img src="${lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Council Financial Report</h1><div class="sub">Official Financial Record for Verification and Filing</div></div><img src="${dsscDataUri}" alt="DSSC logo"/></header>
@@ -302,8 +299,7 @@ export default function TransparencyBoardSection({
   <h2>Event Allocations</h2>
   <table><thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Expected Collection</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead><tbody>${allocationRows || '<tr><td colspan="6">No allocations recorded.</td></tr>'}</tbody></table>
   <section class="ledger-section"><h2>Transaction Ledger</h2>
-  <table><thead><tr><th>Date</th><th>Description</th><th>Event</th><th>Type</th><th class="right">Amount</th><th>Officer</th></tr></thead><tbody>${transactionRows || '<tr><td colspan="6">No transactions recorded.</td></tr>'}</tbody></table>
-  <section class="totals"><div class="total"><div class="total-label">Total Income</div><div class="total-value pos">${formatPeso(totalIncome)}</div></div><div class="total"><div class="total-label">Total Expenses</div><div class="total-value neg">${formatPeso(totalExpense)}</div></div><div class="total"><div class="total-label">Net Balance</div><div class="total-value">${formatPeso(totalIncome - totalExpense)}</div></div></section></section>
+  <table><thead><tr><th>Date</th><th>Description</th><th>Event</th><th>Type</th><th class="right">Amount</th><th>Officer</th></tr></thead><tbody>${transactionRows || '<tr><td colspan="6">No transactions recorded.</td></tr>'}</tbody></table></section>
   <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
 </body></html>`;
 
@@ -605,18 +601,20 @@ export default function TransparencyBoardSection({
                       className="glass-input pl-10 pr-4 py-2 text-sm w-full sm:w-64"
                     />
                   </div>
-                  <button
-                    onClick={downloadTransparencyReport}
-                    disabled={downloadingReport}
-                    className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm"
-                  >
-                    {downloadingReport ? (
-                      <Skeleton className="h-4 w-4 rounded-full" />
-                    ) : (
-                      <Download className="w-4 h-4" />
-                    )}
-                    <span>Download Report</span>
-                  </button>
+                  {canManageLedger && (
+                    <button
+                      onClick={downloadTransparencyReport}
+                      disabled={downloadingReport}
+                      className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm"
+                    >
+                      {downloadingReport ? (
+                        <Skeleton className="h-4 w-4 rounded-full" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      <span>Download Report</span>
+                    </button>
+                  )}
                   {canManageLedger && (
                     <button
                       onClick={openAddTransaction}
@@ -738,18 +736,6 @@ export default function TransparencyBoardSection({
                 >
                   <MessageCircle className="w-5 h-5" />
                   <span>Submit Inquiry</span>
-                </button>
-                <button
-                  onClick={downloadTransparencyReport}
-                  disabled={downloadingReport}
-                  className="glass-button px-6 py-3 flex items-center gap-2"
-                >
-                  {downloadingReport ? (
-                    <Skeleton className="h-5 w-5 rounded-full" />
-                  ) : (
-                    <Download className="w-5 h-5" />
-                  )}
-                  <span>Download Report</span>
                 </button>
               </div>
             )}
