@@ -99,13 +99,13 @@ export default function AttendanceManagementSection({
     sessionLabel: string;
   } | null>(null);
 
-  // Edit attendance record (Status + Time In + Time Out) via explicit dialog.
-  // Keep the selected row as well as the student so Save always updates the
-  // exact database record that was opened, rather than looking it up again by
-  // student/event/session.
+  // Edit attendance (Status + Time In + Time Out) via an explicit dialog.
+  // Keep the selected row as well as the student so Save updates the exact
+  // database record that was opened. A null record is a new attendance draft
+  // for students who do not have a row yet.
   const [editingAttendance, setEditingAttendance] = useState<{
     student: Student;
-    record: AttendanceRecord;
+    record: AttendanceRecord | null;
   } | null>(null);
   const emptyAttendanceEditForm = {
     status: "present" as "present" | "late" | "absent",
@@ -386,14 +386,14 @@ export default function AttendanceManagementSection({
 
   const openAttendanceEditModal = (student: Student) => {
     const record = attendanceMap.get(student.id);
-    if (!record) {
-      toast.error("No attendance record exists for this student.");
+    if (!selectedAttendanceEvent) {
+      toast.error("Select an event before editing attendance");
       return;
     }
     const timeIn = splitTime24(record?.timeIn);
     const timeOut = splitTime24(record?.timeOut);
     setAttendanceEditForm({
-      status: record?.status ?? "present",
+      status: record?.status ?? "absent",
       timeInHour: timeIn.hour,
       timeInMinute: timeIn.minute,
       timeInPeriod: timeIn.period,
@@ -401,7 +401,7 @@ export default function AttendanceManagementSection({
       timeOutMinute: timeOut.minute,
       timeOutPeriod: timeOut.period,
     });
-    setEditingAttendance({ student, record });
+    setEditingAttendance({ student, record: record ?? null });
   };
 
   const closeAttendanceEditModal = () => {
@@ -444,15 +444,21 @@ export default function AttendanceManagementSection({
 
     setSavingAttendanceEdit(true);
     try {
-      const saved = await persistAttendance(editingAttendance.record.studentId, {
-        status: attendanceEditForm.status,
-        timeIn: parsedTimeIn ?? "",
-        timeOut: parsedTimeOut ?? "",
-      }, editingAttendance.record);
+      const saved = await persistAttendance(
+        editingAttendance.student.id,
+        {
+          status: attendanceEditForm.status,
+          timeIn: parsedTimeIn ?? "",
+          timeOut: parsedTimeOut ?? "",
+        },
+        editingAttendance.record ?? undefined,
+      );
       if (!saved) {
-        throw new Error("No attendance record was returned after the update.");
+        throw new Error("No attendance record was returned after saving.");
       }
-      toast.success(`${editingAttendance.student.name}'s attendance updated.`);
+      toast.success(
+        `${editingAttendance.student.name}'s attendance ${editingAttendance.record ? "updated" : "created"}.`,
+      );
       closeAttendanceEditModal();
     } catch (error) {
       console.error("Error saving attendance:", error);
@@ -1674,7 +1680,7 @@ export default function AttendanceManagementSection({
         <DialogContent className="glass-card-strong max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display font-bold text-xl text-dark">
-              Edit Attendance
+              {editingAttendance?.record ? "Edit Attendance" : "Set Attendance"}
             </DialogTitle>
           </DialogHeader>
 
@@ -1683,7 +1689,7 @@ export default function AttendanceManagementSection({
               <span className="font-semibold text-dark">
                 {editingAttendance?.student.name}
               </span>{" "}
-              — {editingAttendance?.record.eventName ?? "—"}
+              — {editingAttendance?.record?.eventName ?? selectedAttendanceEvent?.name ?? "—"}
             </p>
 
             <div>
