@@ -247,6 +247,15 @@ class OfflineSyncService {
     await transactionDone(transaction);
   }
 
+  /** Remove a cached table after a realtime change made it stale. */
+  async invalidate(table: TableName): Promise<void> {
+    if (!this.isEnabled() || !this.ownerId) return;
+    const database = await this.database();
+    const transaction = database.transaction("tables", "readwrite");
+    transaction.objectStore("tables").delete(cacheKey(this.ownerId, table));
+    await transactionDone(transaction);
+  }
+
   private async mutateCache<T>(
     table: TableName,
     kind: MutationKind,

@@ -417,6 +417,27 @@ async function cachedRead<T>(
   }
 }
 
+// Filtered reads must not overwrite the table-wide cache. The same attendance
+// cache is used by getAll(), StudentRecordSection, and the management screen;
+// storing a student/session subset there makes a later getAll() look incomplete.
+async function cachedFilteredRead<T>(
+  table: OfflineTable,
+  fetcher: () => Promise<T[]>,
+  matches: (record: T) => boolean,
+): Promise<T[]> {
+  if (offlineSyncService.isOffline()) {
+    const cached = await offlineSyncService.read<T>(table);
+    if (cached) return cached.filter(matches);
+  }
+  try {
+    return await fetcher();
+  } catch (error) {
+    const cached = await offlineSyncService.read<T>(table);
+    if (cached) return cached.filter(matches);
+    throw error;
+  }
+}
+
 // Fetches every row from a query by looping with .range() in batches.
 //
 // A plain .select("*") with no .range()/.limit() is silently capped by
@@ -1036,6 +1057,21 @@ const toAttendanceRecord = (item: AttendanceRow): AttendanceRecord => ({
   timeOut: item.time_out ?? undefined,
 });
 
+const isAttendanceNaturalKeyConflict = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  const details = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof details.code === "string" ? details.code : "";
+  const text = [details.message, details.details]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return (
+    code === "23505" &&
+    /attendance_student_event_date_key|student_id[\s_,]+event_id[\s_,]+date/i.test(
+      text,
+    )
+  );
+};
+
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
     return cachedRead<AttendanceRecord>("attendance", async () => {
@@ -1046,27 +1082,14 @@ export const attendanceService = {
         .order("id", { ascending: false });
 
       if (error) throw error;
-      return (
-        data?.map((item: AttendanceRow) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          date: item.date,
-          status: item.status,
-          session: (item.session ?? "morning") as
-            | "morning"
-            | "afternoon"
-            | "evening",
-          timeIn: item.time_in ?? undefined,
-          timeOut: item.time_out ?? undefined,
-        })) || []
+      return (data ?? []).map((item: AttendanceRow) =>
+        toAttendanceRecord(item),
       );
     });
   },
 
   async getByStudentId(studentId: string): Promise<AttendanceRecord[]> {
-    return cachedRead<AttendanceRecord>("attendance", async () => {
+    return cachedFilteredRead<AttendanceRecord>("attendance", async () => {
       const { data, error } = await getSupabase()
         .from("attendance")
         .select("*")
@@ -1075,28 +1098,9 @@ export const attendanceService = {
 
       if (error) throw error;
 
-      return (
-        data?.map((item: AttendanceRow) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          date: item.date,
-          status: item.status,
-          session: (item.session ?? "morning") as
-            | "morning"
-            | "afternoon"
-            | "evening",
-          timeIn: item.time_in ?? undefined,
-          timeOut: item.time_out ?? undefined,
-        })) || []
-      );
-    }).then((records) =>
-      records
-        .filter((record) => record.studentId === studentId)
-        .sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-        ),
+      return (data ?? []).map((item: AttendanceRow) => toAttendanceRecord(item));
+    }, (record) => record.studentId === studentId).then((records) =>
+      records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
     );
   },
 
@@ -1104,7 +1108,7 @@ export const attendanceService = {
     eventId: string,
     session: "morning" | "afternoon" | "evening",
   ): Promise<AttendanceRecord[]> {
-    return cachedRead<AttendanceRecord>("attendance", async () => {
+    return cachedFilteredRead<AttendanceRecord>("attendance", async () => {
       const { data, error } = await getSupabase()
         .from("attendance")
         .select("*")
@@ -1114,30 +1118,9 @@ export const attendanceService = {
 
       if (error) throw error;
 
-      return (
-        data?.map((item: AttendanceRow) => ({
-          id: item.id,
-          studentId: item.student_id,
-          eventId: item.event_id,
-          eventName: item.event_name,
-          date: item.date,
-          status: item.status,
-          session: (item.session ?? session) as
-            | "morning"
-            | "afternoon"
-            | "evening",
-          timeIn: item.time_in ?? undefined,
-          timeOut: item.time_out ?? undefined,
-        })) || []
-      );
-    }).then((records) =>
-      records
-        .filter(
-          (record) => record.eventId === eventId && record.session === session,
-        )
-        .sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-        ),
+      return (data ?? []).map((item: AttendanceRow) => toAttendanceRecord(item));
+    }, (record) => record.eventId === eventId && record.session === session).then((records) =>
+      records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
     );
   },
 
@@ -1154,20 +1137,9 @@ export const attendanceService = {
 
     if (error) throw error;
 
-    return (data ?? []).map((item: AttendanceRow) => ({
-      id: item.id,
-      studentId: item.student_id,
-      eventId: item.event_id,
-      eventName: item.event_name,
-      date: item.date,
-      status: item.status,
-      session: (item.session ?? "morning") as
-        | "morning"
-        | "afternoon"
-        | "evening",
-      timeIn: item.time_in ?? undefined,
-      timeOut: item.time_out ?? undefined,
-    }));
+    return (data ?? []).map((item: AttendanceRow) =>
+      toAttendanceRecord(item),
+    );
   },
 
   async getByStudentEventAndDate(
@@ -1298,6 +1270,13 @@ export const attendanceService = {
       } catch (auditError) {
         console.warn("Could not record Automatic Absent audit:", auditError);
       }
+      // This online-only path bypasses offlineSyncService.mutation(), so it
+      // must explicitly discard any fallback snapshot containing no rows.
+      try {
+        await offlineSyncService.invalidate("attendance");
+      } catch (cacheError) {
+        console.warn("Could not invalidate cached attendance:", cacheError);
+      }
     }
 
     return inserted;
@@ -1333,29 +1312,46 @@ export const attendanceService = {
       makeLocal: () => ({ id, ...record }) as AttendanceRecord,
       executeOnline: async () => {
         const data = await withAttendanceAuthRetry(async () => {
-          const { data: inserted, error } = await getSupabase()
+          const supabase = getSupabase();
+          const { data: inserted, error } = await supabase
             .from("attendance")
             .insert({ id, ...payload })
             .select()
             .single();
-          if (error) throw error;
-          return inserted;
+          if (!error) return inserted;
+          if (!isAttendanceNaturalKeyConflict(error)) throw error;
+
+          // A row can be created by Automatic Absent or another tab after the
+          // caller's lookup but before this INSERT. The unique constraint is
+          // correct; merge the edit into the row that won that race instead
+          // of surfacing an avoidable duplicate-key error.
+          const { data: existing, error: lookupError } = await supabase
+            .from("attendance")
+            .select("*")
+            .eq("student_id", payload.student_id)
+            .eq("event_id", payload.event_id)
+            .eq("date", payload.date)
+            .maybeSingle();
+          if (lookupError) throw lookupError;
+          if (!existing) throw error;
+
+          const { data: updated, error: updateError } = await supabase
+            .from("attendance")
+            .update({
+              event_name: payload.event_name,
+              status: payload.status,
+              session: payload.session,
+              time_in: payload.time_in,
+              time_out: payload.time_out,
+            })
+            .eq("id", existing.id)
+            .select()
+            .single();
+          if (updateError) throw updateError;
+          return updated;
         });
 
-        return {
-          id: data.id,
-          studentId: data.student_id,
-          eventId: data.event_id,
-          eventName: data.event_name,
-          date: data.date,
-          status: data.status,
-          session: (data.session ?? "morning") as
-            | "morning"
-            | "afternoon"
-            | "evening",
-          timeIn: data.time_in ?? undefined,
-          timeOut: data.time_out ?? undefined,
-        };
+        return toAttendanceRecord(data as AttendanceRow);
       },
     });
 
@@ -2985,6 +2981,13 @@ export const subscribeToTables = (
       () => {
         if (table === "students" || table === "events") {
           invalidateReferenceCache(table);
+        }
+        if (table === "attendance") {
+          void offlineSyncService
+            .invalidate("attendance")
+            .catch((cacheError) =>
+              console.warn("Could not invalidate cached attendance:", cacheError),
+            );
         }
         onChange();
       },

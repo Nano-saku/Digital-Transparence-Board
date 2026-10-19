@@ -162,6 +162,11 @@ export default function AttendanceManagementSection({
   // Latest attendance rows for the Automatic Absent check, read through a
   // ref so its own state updates do not re-trigger the effect.
   const attendanceRecordsRef = useRef<AttendanceRecord[]>([]);
+  // Prevent a realtime refresh that started before a save completed from
+  // replacing the just-saved status with an older attendance snapshot.
+  const attendanceWriteVersionRef = useRef(0);
+  // Only the newest overlapping refresh may replace attendance state.
+  const attendanceLoadVersionRef = useRef(0);
   useEffect(() => {
     attendanceRecordsRef.current = attendanceRecords;
   }, [attendanceRecords]);
@@ -199,6 +204,8 @@ export default function AttendanceManagementSection({
   const contentRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async (showLoader = true) => {
+    const attendanceLoadVersion = ++attendanceLoadVersionRef.current;
+    const attendanceVersionAtStart = attendanceWriteVersionRef.current;
     try {
       if (showLoader) {
         setLoading(true);
@@ -212,7 +219,12 @@ export default function AttendanceManagementSection({
 
       setEvents(eventsData);
       setStudents(studentsData);
-      setAttendanceRecords(attendanceData);
+      setAttendanceRecords((current) =>
+        attendanceLoadVersion === attendanceLoadVersionRef.current &&
+        attendanceVersionAtStart === attendanceWriteVersionRef.current
+          ? attendanceData
+          : current,
+      );
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
@@ -287,15 +299,34 @@ export default function AttendanceManagementSection({
       sessionForWrite?: EventSession,
     ): Promise<AttendanceRecord | null> => {
       const event = selectedAttendanceEvent;
-      const existing =
+      const knownExisting =
         recordToUpdate ??
         attendanceMap.get(studentId) ??
         null;
 
-      if (!event && !existing) {
+      if (!event && !knownExisting) {
         toast.error("Select an event before recording attendance");
         return null;
       }
+
+      const eventId = knownExisting?.eventId ?? event!.id;
+      const date =
+        knownExisting?.date ??
+        event!.date ??
+        new Date().toISOString().slice(0, 10);
+
+      // The edit dialog may have opened before Automatic Absent or another
+      // tab created the row. Re-check the natural key immediately before
+      // deciding to INSERT so an edit never creates a second row.
+      const existing =
+        knownExisting ??
+        (typeof navigator === "undefined" || navigator.onLine
+          ? await attendanceService.getByStudentEventAndDate(
+              studentId,
+              eventId,
+              date,
+            )
+          : null);
 
       // Whole Day view: the scheduled session is derived from the event's
       // configured schedules and the recorded time, never from a tab.
@@ -311,12 +342,9 @@ export default function AttendanceManagementSection({
 
       const payload = {
         studentId,
-        eventId: existing?.eventId ?? event!.id,
+        eventId,
         eventName: existing?.eventName ?? event!.name,
-        date:
-          existing?.date ??
-          event!.date ??
-          new Date().toISOString().slice(0, 10),
+        date,
         session: resolvedSession,
         status: patch.status ?? existing?.status ?? "present",
         // Attendance time columns are TEXT NOT NULL. An empty string is the
@@ -325,17 +353,27 @@ export default function AttendanceManagementSection({
         timeOut:
           patch.timeOut !== undefined ? patch.timeOut : existing?.timeOut ?? "",
       };
+      attendanceWriteVersionRef.current += 1;
       const saved = existing
         ? await attendanceService.update(existing.id, payload)
         : await attendanceService.create(payload);
       setAttendanceRecords((prev) => {
-        const index = prev.findIndex((r) => r.id === saved.id);
+        const index = prev.findIndex(
+          (r) =>
+            r.id === saved.id ||
+            (r.studentId === saved.studentId &&
+              r.eventId === saved.eventId &&
+              r.date === saved.date),
+        );
         if (index >= 0) {
           const copy = [...prev];
           copy[index] = saved;
+          attendanceRecordsRef.current = copy;
           return copy;
         }
-        return [...prev, saved];
+        const next = [...prev, saved];
+        attendanceRecordsRef.current = next;
+        return next;
       });
       return saved;
     },
