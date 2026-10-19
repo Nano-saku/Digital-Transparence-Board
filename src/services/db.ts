@@ -875,6 +875,13 @@ export const eventsService = {
   },
 
   async update(id: string, event: Partial<Event>): Promise<Event> {
+    // Automatic Absent is an online server policy. Keep this invariant at the
+    // service boundary as well as in the event form so future callers cannot
+    // accidentally queue/replay a toggle through offlineSyncService.
+    if (event.autoMarkAbsent !== undefined) {
+      return this.updateOnlineOnly(id, event);
+    }
+
     const updateData: Record<string, unknown> = {};
     if (event.name !== undefined) updateData.name = event.name;
     if (event.allocationAmount !== undefined)
@@ -942,6 +949,65 @@ export const eventsService = {
     });
 
     if (!result) throw new Error("Failed to update event");
+    invalidateReferenceCache("events");
+    return result;
+  },
+
+  /**
+   * Update an event without the offline queue. Automatic Absent is a server
+   * policy, so changing its switch must either reach Supabase now or fail;
+   * showing an IndexedDB-local value would make the UI claim that the policy
+   * was saved when it was not.
+   */
+  async updateOnlineOnly(id: string, event: Partial<Event>): Promise<Event> {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      throw new Error(
+        "Automatic Absent settings require an online connection and were not saved.",
+      );
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (event.name !== undefined) updateData.name = event.name;
+    if (event.allocationAmount !== undefined)
+      updateData.allocation_amount = event.allocationAmount;
+    if (event.isNonConducting !== undefined)
+      updateData.is_non_conducting = event.isNonConducting;
+    if (event.isNoContribution !== undefined)
+      updateData.is_no_contribution = event.isNoContribution;
+    if (event.autoMarkAbsent !== undefined)
+      updateData.auto_mark_absent = event.autoMarkAbsent;
+    if (event.schedules !== undefined) updateData.schedules = event.schedules;
+    if (event.date !== undefined) updateData.date = event.date;
+    if (event.contributionDeadline !== undefined)
+      updateData.contribution_deadline = event.contributionDeadline;
+    if (event.evaluationActive !== undefined)
+      updateData.evaluation_active = event.evaluationActive;
+    if (event.evaluationFormUrl !== undefined)
+      updateData.evaluation_form_url = event.evaluationFormUrl;
+    if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
+    if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
+    if (event.morningTimeIn !== undefined)
+      updateData.morning_time_in = event.morningTimeIn;
+    if (event.morningTimeOut !== undefined)
+      updateData.morning_time_out = event.morningTimeOut;
+    if (event.afternoonTimeIn !== undefined)
+      updateData.afternoon_time_in = event.afternoonTimeIn;
+    if (event.afternoonTimeOut !== undefined)
+      updateData.afternoon_time_out = event.afternoonTimeOut;
+    if (event.eveningTimeIn !== undefined)
+      updateData.evening_time_in = event.eveningTimeIn;
+    if (event.eveningTimeOut !== undefined)
+      updateData.evening_time_out = event.eveningTimeOut;
+
+    const { data, error } = await getSupabase()
+      .from("events")
+      .update(updateData)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+
+    const result = mapEvent(data);
     invalidateReferenceCache("events");
     return result;
   },
@@ -1162,16 +1228,14 @@ export const attendanceService = {
    * again on the next check".
    *
    * Uses the mark_absent_if_missing RPC (supabase/attendance_fix.sql), which
-   * authorizes admin/secretary itself and inserts in one statement. If that
-   * RPC is not installed yet, falls back to a single RLS-checked bulk
-   * INSERT ... ON CONFLICT DO NOTHING on attendance_student_event_date_key.
+   * authorizes admin/secretary itself and reads the event and student set from
+   * the database in one statement. There is intentionally no direct-insert
+   * fallback: a missing RPC must fail instead of weakening the server-side
+   * event/date policy.
    */
   async markAbsentIfMissing(params: {
     eventId: string;
-    eventName: string;
-    date: string;
     session: EventSessionValue;
-    studentIds: string[];
   }): Promise<AttendanceRecord[]> {
     const supabase = getSupabase();
 
@@ -1197,89 +1261,21 @@ export const attendanceService = {
       );
     }
 
-    try {
-      return await withAttendanceAuthRetry(async () => {
-        const { data, error } = await supabase.rpc("mark_absent_if_missing", {
-          p_event_id: params.eventId,
-          p_session: params.session,
-        });
-        if (error) throw error;
-        return ((data ?? []) as AttendanceRow[]).map(toAttendanceRecord);
+    return withAttendanceAuthRetry(async () => {
+      const { data, error } = await supabase.rpc("mark_absent_if_missing", {
+        p_event_id: params.eventId,
+        p_session: params.session,
       });
-    } catch (error) {
-      if (!isMissingRpc(error)) throw error;
-      console.warn(
-        "mark_absent_if_missing RPC is not installed; using direct insert. Run supabase/attendance_fix.sql.",
-      );
-    }
-
-    const existing = await this.getByEventIdAndDate(
-      params.eventId,
-      params.date,
-    );
-    const { data: eventSetting, error: eventSettingError } = await supabase
-      .from("events")
-      .select("auto_mark_absent")
-      .eq("id", params.eventId)
-      .maybeSingle();
-    if (eventSettingError) throw eventSettingError;
-    if (eventSetting?.auto_mark_absent !== true) return [];
-
-    const recorded = new Set(existing.map((record) => record.studentId));
-    const rows = params.studentIds
-      .filter((studentId) => !recorded.has(studentId))
-      .map((studentId) => ({
-        id: createRecordId(),
-        student_id: studentId,
-        event_id: params.eventId,
-        event_name: params.eventName,
-        date: params.date,
-        status: "absent" as const,
-        session: params.session,
-        time_in: "",
-        time_out: "",
-      }));
-    if (rows.length === 0) return [];
-
-    const inserted = await withAttendanceAuthRetry(async () => {
-      const { data, error } = await supabase
-        .from("attendance")
-        .upsert(rows, {
-          onConflict: "student_id,event_id,date",
-          ignoreDuplicates: true,
-        })
-        .select();
-      if (error) throw error;
+      if (error) {
+        if (isMissingRpc(error)) {
+          throw new Error(
+            "Automatic Absent is not deployed. Run supabase/attendance_fix.sql before enabling it.",
+          );
+        }
+        throw error;
+      }
       return ((data ?? []) as AttendanceRow[]).map(toAttendanceRecord);
     });
-
-    // The RPC writes its own audit entry; this fallback writes one directly
-    // (never through the offline queue). Audit failure must not undo the
-    // attendance rows that were already saved.
-    if (inserted.length > 0) {
-      try {
-        await auditLogsService.create(
-          await buildAudit(
-            "ATTENDANCE_AUTO_ABSENT",
-            "attendance",
-            `Automatically marked ${inserted.length} student(s) absent for ${params.eventName}.`,
-            params.eventId,
-            { eventId: params.eventId, date: params.date, count: inserted.length },
-          ),
-        );
-      } catch (auditError) {
-        console.warn("Could not record Automatic Absent audit:", auditError);
-      }
-      // This online-only path bypasses offlineSyncService.mutation(), so it
-      // must explicitly discard any fallback snapshot containing no rows.
-      try {
-        await offlineSyncService.invalidate("attendance");
-      } catch (cacheError) {
-        console.warn("Could not invalidate cached attendance:", cacheError);
-      }
-    }
-
-    return inserted;
   },
 
   async create(

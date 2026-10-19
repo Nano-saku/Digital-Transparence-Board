@@ -331,16 +331,24 @@ export default function EventManagementSection({
     try {
       setSaving(true);
 
-      const updated = await eventsService.update(editingEvent.id, {
+      const eventChanges: Partial<Event> = {
         name: eventForm.name,
         allocationAmount: eventForm.allocationAmount,
         isNonConducting: eventForm.isNonConducting,
         isNoContribution: eventForm.isNoContribution,
-        autoMarkAbsent: eventForm.autoMarkAbsent,
         date: eventDateTbd ? "TBD" : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
-      });
+      };
+      const autoMarkAbsentChanged =
+        editingEvent.autoMarkAbsent !== eventForm.autoMarkAbsent;
+      if (autoMarkAbsentChanged) {
+        eventChanges.autoMarkAbsent = eventForm.autoMarkAbsent;
+      }
+
+      const updated = autoMarkAbsentChanged
+        ? await eventsService.updateOnlineOnly(editingEvent.id, eventChanges)
+        : await eventsService.update(editingEvent.id, eventChanges);
 
       setEvents(events.map((e) => (e.id === editingEvent.id ? updated : e)));
 

@@ -28,9 +28,9 @@ the service layer in `src/services/db.ts`.
         event's date (`ON CONFLICT DO NOTHING`), never overwriting Present,
         Late, or Absent, and only after the event day has ended in
         Asia/Manila. Re-running it is a no-op.
-      - Until the RPC is installed, the app falls back to one bulk
-        `INSERT ... ON CONFLICT (student_id, event_id, date) DO NOTHING`
-        through the normal RLS policy.
+      - The app does not fall back to a direct insert when the RPC is missing.
+        Automatic Absent must be deployed through this RPC so the event setting,
+        date cutoff, authorization, and concurrency checks cannot be bypassed.
       - On a `42501`, the app refreshes the Supabase session once and retries
         (an expired access token makes requests run as `anon`). If it still
         fails, the message names the real cause: expired session, an account

@@ -67,6 +67,30 @@ CREATE TABLE IF NOT EXISTS public.attendance (
     time_out   TEXT NOT NULL DEFAULT ''
 );
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM public.attendance
+        GROUP BY student_id, event_id, date
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'Cannot create attendance_student_event_date_key: duplicate student/event/date rows exist.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'attendance_student_event_date_key'
+          AND conrelid = 'public.attendance'::regclass
+    ) AND to_regclass('public.attendance_student_event_date_key') IS NULL THEN
+        ALTER TABLE public.attendance
+            ADD CONSTRAINT attendance_student_event_date_key
+            UNIQUE (student_id, event_id, date);
+    END IF;
+END $$;
+
 -- Contributions
 CREATE TABLE IF NOT EXISTS public.contributions (
     id                TEXT PRIMARY KEY,

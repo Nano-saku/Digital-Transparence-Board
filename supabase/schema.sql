@@ -1190,6 +1190,14 @@ ALTER TABLE ONLY public.attendance
 
 
 --
+-- Name: attendance attendance_student_event_date_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.attendance
+    ADD CONSTRAINT attendance_student_event_date_key UNIQUE (student_id, event_id, date);
+
+
+--
 -- Name: board_members board_members_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 

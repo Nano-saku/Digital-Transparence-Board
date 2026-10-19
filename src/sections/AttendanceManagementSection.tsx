@@ -159,18 +159,13 @@ export default function AttendanceManagementSection({
   // Last Automatic Absent failure shown, so a realtime refresh does not
   // repeat the same toast unnecessarily.
   const autoAbsentErrorRef = useRef<string | null>(null);
-  // Latest attendance rows for the Automatic Absent check, read through a
-  // ref so its own state updates do not re-trigger the effect.
-  const attendanceRecordsRef = useRef<AttendanceRecord[]>([]);
+  // Automatic Absent is decided by the authoritative database RPC, not by a
+  // potentially stale client attendance snapshot.
   // Prevent a realtime refresh that started before a save completed from
   // replacing the just-saved status with an older attendance snapshot.
   const attendanceWriteVersionRef = useRef(0);
   // Only the newest overlapping refresh may replace attendance state.
   const attendanceLoadVersionRef = useRef(0);
-  useEffect(() => {
-    attendanceRecordsRef.current = attendanceRecords;
-  }, [attendanceRecords]);
-
   const selectedAttendanceEvent = events.find(
     (e) => e.id === selectedEventForAttendance,
   );
@@ -372,11 +367,9 @@ export default function AttendanceManagementSection({
         if (index >= 0) {
           const copy = [...prev];
           copy[index] = saved;
-          attendanceRecordsRef.current = copy;
           return copy;
         }
         const next = [...prev, saved];
-        attendanceRecordsRef.current = next;
         return next;
       });
       return saved;
@@ -814,33 +807,14 @@ export default function AttendanceManagementSection({
       return;
     }
 
-    // Students already holding a row (any status, any session) for an event's
-    // date. Present/Late/Absent rows are never overwritten.
-    const recordedKeys = new Set(
-      attendanceRecordsRef.current.map(
-        (record) => `${record.eventId}|${record.date}|${record.studentId}`,
-      ),
-    );
-
     try {
       for (const event of completedEvents) {
         const sessions = getScheduledEventSessions(event);
         if (!event.date || sessions.length === 0) continue;
 
-        const missing = students.filter(
-          (student) =>
-            !recordedKeys.has(`${event.id}|${event.date}|${student.id}`),
-        );
-        if (missing.length === 0) continue;
-
         const inserted = await attendanceService.markAbsentIfMissing({
           eventId: event.id,
-          eventName: event.name,
-          date: event.date,
-          // A single row is required by attendance_student_event_date_key.
-          // Use the first configured session for newly-created absent rows.
           session: sessions[0],
-          studentIds: missing.map((student) => student.id),
         });
         if (inserted.length === 0) continue;
 
@@ -873,7 +847,7 @@ export default function AttendanceManagementSection({
     } finally {
       autoMarkingAbsentRef.current = false;
     }
-  }, [canRecordAttendance, events, students]);
+  }, [canRecordAttendance, events]);
 
   useEffect(() => {
     // This is intentionally a one-time trigger for the current event data.

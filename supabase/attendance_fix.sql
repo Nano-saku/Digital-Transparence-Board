@@ -87,7 +87,8 @@ BEGIN
       GROUP BY student_id, event_id, date
       HAVING count(*) > 1
     ) THEN
-      RAISE NOTICE 'attendance_student_event_date_key not created: duplicate student/event/date rows exist.';
+      RAISE EXCEPTION
+        'Cannot create attendance_student_event_date_key: duplicate student/event/date rows exist.';
     ELSE
       ALTER TABLE public.attendance
         ADD CONSTRAINT attendance_student_event_date_key
