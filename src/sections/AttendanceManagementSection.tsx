@@ -166,6 +166,12 @@ export default function AttendanceManagementSection({
   const attendanceWriteVersionRef = useRef(0);
   // Only the newest overlapping refresh may replace attendance state.
   const attendanceLoadVersionRef = useRef(0);
+  // Timestamp (Date.now()) of the last completed attendance write. A
+  // background loadData that started within a short window after a write may
+  // receive a stale Supabase snapshot before the WAL change is readable via
+  // the REST layer. Guarding on this timestamp prevents that stale fetch from
+  // overwriting the correct optimistic update.
+  const lastAttendanceWriteAtRef = useRef(0);
   const selectedAttendanceEvent = events.find(
     (e) => e.id === selectedEventForAttendance,
   );
@@ -201,6 +207,18 @@ export default function AttendanceManagementSection({
   const loadData = useCallback(async (showLoader = true) => {
     const attendanceLoadVersion = ++attendanceLoadVersionRef.current;
     const attendanceVersionAtStart = attendanceWriteVersionRef.current;
+    // Snapshot the last-write timestamp so the guard below can detect if a
+    // new write was committed after this load started (which would mean
+    // Supabase may not have reflected the change yet in the REST response).
+    const writeTimestampAtStart = lastAttendanceWriteAtRef.current;
+    // Grace-period: if a background realtime load started within 4 s of the
+    // last write, skip replacing attendance. Supabase's REST layer can lag
+    // slightly behind the WAL-replicated realtime event, so the first one or
+    // two background fetches after a write may return a stale snapshot that
+    // predates the committed row — overwriting the correct optimistic update.
+    // Explicit loads (showLoader=true) always apply regardless of this guard.
+    const WRITE_GRACE_MS = 4_000;
+    const loadStartedAt = Date.now();
     try {
       if (showLoader) {
         setLoading(true);
@@ -214,12 +232,26 @@ export default function AttendanceManagementSection({
 
       setEvents(eventsData);
       setStudents(studentsData);
-      setAttendanceRecords((current) =>
-        attendanceLoadVersion === attendanceLoadVersionRef.current &&
-        attendanceVersionAtStart === attendanceWriteVersionRef.current
-          ? attendanceData
-          : current,
-      );
+      setAttendanceRecords((current) => {
+        // Block if a newer load was started (stale race).
+        if (attendanceLoadVersion !== attendanceLoadVersionRef.current)
+          return current;
+        // Block if a write was in-flight when this load started (version guard).
+        if (attendanceVersionAtStart !== attendanceWriteVersionRef.current)
+          return current;
+        // For background (realtime-triggered) loads only:
+        if (!showLoader) {
+          // Block if the write timestamp changed mid-load (a write completed
+          // after this fetch started, so Supabase data may predate that write).
+          if (writeTimestampAtStart !== lastAttendanceWriteAtRef.current)
+            return current;
+          // Block if this load started within the grace period of the last
+          // write (REST layer may not have caught up to the committed row yet).
+          if (loadStartedAt - lastAttendanceWriteAtRef.current < WRITE_GRACE_MS)
+            return current;
+        }
+        return attendanceData;
+      });
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
@@ -356,6 +388,10 @@ export default function AttendanceManagementSection({
       // Advance the version again now so that an older snapshot returned by
       // that refresh cannot replace the row we are about to apply locally.
       attendanceWriteVersionRef.current += 1;
+      // Record the exact moment this write finished so loadData can honour the
+      // grace period and avoid replacing the optimistic update with a stale
+      // Supabase REST snapshot that predates the WAL propagation.
+      lastAttendanceWriteAtRef.current = Date.now();
       setAttendanceRecords((prev) => {
         const index = prev.findIndex(
           (r) =>
@@ -383,6 +419,7 @@ export default function AttendanceManagementSection({
     try {
       await attendanceService.delete(attendanceToClear.id);
       attendanceWriteVersionRef.current += 1;
+      lastAttendanceWriteAtRef.current = Date.now();
       setAttendanceRecords((prev) =>
         prev.filter((record) => record.id !== attendanceToClear.id),
       );
@@ -824,6 +861,7 @@ export default function AttendanceManagementSection({
           return [...byId.values()];
         });
         attendanceWriteVersionRef.current += 1;
+        lastAttendanceWriteAtRef.current = Date.now();
       }
       autoAbsentErrorRef.current = null;
     } catch (error) {

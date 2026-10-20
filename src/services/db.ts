@@ -1141,16 +1141,17 @@ const isAttendanceNaturalKeyConflict = (error: unknown): boolean => {
 export const attendanceService = {
   async getAll(): Promise<AttendanceRecord[]> {
     return cachedRead<AttendanceRecord>("attendance", async () => {
-      const { data, error } = await getSupabase()
-        .from("attendance")
-        .select("*")
-        .order("date", { ascending: false })
-        .order("id", { ascending: false });
-
-      if (error) throw error;
-      return (data ?? []).map((item: AttendanceRow) =>
-        toAttendanceRecord(item),
+      // Use fetchAllRows so a project-level PostgREST "Max Rows" setting never
+      // silently truncates the result the way a plain .select("*") can.
+      const data = await fetchAllRows<AttendanceRow>((from, to) =>
+        getSupabase()
+          .from("attendance")
+          .select("*")
+          .order("date", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
       );
+      return data.map(toAttendanceRecord);
     });
   },
 

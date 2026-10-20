@@ -13,6 +13,7 @@ import {
   studentsService,
   attendanceService,
   contributionsService,
+  subscribeToTables,
 } from "@/services/db";
 import type {
   Event,
@@ -21,7 +22,6 @@ import type {
   ContributionRecord,
 } from "@/types";
 import {
-  compareTime24,
   formatPeso,
   formatTime12,
   getOrdinalSuffix,
@@ -130,6 +130,18 @@ export default function ReportManagementSection({
     loadData();
   }, [loadData]);
 
+  // Keep the Attendance Report in sync with Attendance Tracking by subscribing
+  // to realtime changes on the same source tables. Any attendance write
+  // (QR scan, manual edit, Automatic Absent) triggers a fresh fetch so the
+  // report always reflects the latest saved database values.
+  useEffect(() => {
+    return subscribeToTables(
+      ["attendance", "events", "students"],
+      () => loadData(),
+      "report-management",
+    );
+  }, [loadData]);
+
   // Contribution report data is loaded independently so a contribution-data
   // issue cannot prevent the existing attendance report from rendering.
   const loadContributionData = useCallback(async () => {
@@ -207,8 +219,15 @@ export default function ReportManagementSection({
         s.section === selectedSection,
     );
 
+    // Filter attendance records by both eventId and date so we always read
+    // the same data slice as Attendance Tracking. Without the date filter,
+    // stale rows from a previous event date (e.g. before the date was
+    // corrected) can shadow the current records and make the report
+    // inconsistent with the attendance list.
     const eventRecords = attendanceRecords.filter(
-      (r) => r.eventId === selectedEventId,
+      (r) =>
+        r.eventId === selectedEventId &&
+        (!selectedEvent.date || r.date === selectedEvent.date),
     );
 
     // studentId -> best record (prefer present/late over absent)
@@ -247,22 +266,20 @@ export default function ReportManagementSection({
             timeOut: "—",
           };
         }
-        // Recalculate the status from the event's configured session start
-        // time, matching the real-time attendance workflow. The stored status
-        // remains a fallback when an older event has no configured threshold.
-        const sessionStart = selectedEvent.schedules?.find(
-          (schedule) => schedule.period === record.session,
-        )?.timeIn;
-        const isLate = record.timeIn && sessionStart
-          ? compareTime24(record.timeIn, sessionStart) > 0
-          : record.status === "late";
+        // Use the stored status as the authoritative value. It is set
+        // explicitly by QR scan logic (present/late based on session time)
+        // and by manual edits (where the admin deliberately chose a status).
+        // Recomputing from timeIn would override a manually set status and
+        // cause the report to disagree with Attendance Tracking.
+        const displayStatus: "Present" | "Late" =
+          record.status === "late" ? "Late" : "Present";
 
         return {
           studentName: student.name,
           yearLevel: student.yearLevel,
           course: student.program,
           section: student.section,
-          status: isLate ? "Late" : "Present",
+          status: displayStatus,
           eventName: selectedEvent.name,
           timeIn: record.timeIn ? formatTime12(record.timeIn) : "—",
           timeOut: record.timeOut ? formatTime12(record.timeOut) : "—",
