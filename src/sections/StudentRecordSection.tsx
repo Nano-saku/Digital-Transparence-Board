@@ -521,6 +521,12 @@ export default function StudentRecordSection({
                                 Absent
                               </span>
                             )}
+                            {record.status === "excuse" && (
+                              <span className="flex items-center gap-1 text-purple-600">
+                                <CheckCircle className="w-4 h-4" />
+                                Excuse
+                              </span>
+                            )}
                           </td>
                           <td className="text-text-secondary whitespace-nowrap">
                             {record.status !== "absent" && record.timeIn

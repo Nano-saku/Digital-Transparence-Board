@@ -104,7 +104,7 @@ export interface AttendanceRecord {
   eventId: string;
   eventName: string;
   date: string;
-  status: "present" | "late" | "absent";
+  status: "present" | "late" | "absent" | "excuse";
   /**
    * Session for the attendance record: 'morning', 'afternoon', or 'evening'.
    * Each event has separate attendance tracking for Morning, Afternoon,

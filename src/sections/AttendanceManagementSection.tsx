@@ -108,7 +108,7 @@ export default function AttendanceManagementSection({
     record: AttendanceRecord | null;
   } | null>(null);
   const emptyAttendanceEditForm = {
-    status: "present" as "present" | "late" | "absent",
+    status: "present" as "present" | "late" | "absent" | "excuse",
     timeInHour: "",
     timeInMinute: "",
     timeInPeriod: "AM" as "AM" | "PM",
@@ -129,7 +129,7 @@ export default function AttendanceManagementSection({
     useState("");
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<
-    "all" | "present" | "late" | "absent"
+    "all" | "present" | "late" | "absent" | "excuse"
   >("all");
   const [attendancePage, setAttendancePage] = useState(1);
 
@@ -1439,7 +1439,8 @@ export default function AttendanceManagementSection({
                             | "all"
                             | "present"
                             | "late"
-                            | "absent",
+                            | "absent"
+                            | "excuse",
                         )
                       }
                       className="glass-input min-w-[180px] rounded-xl px-4 py-3 text-sm sm:text-base"
@@ -1448,6 +1449,7 @@ export default function AttendanceManagementSection({
                       <option value="present">Present</option>
                       <option value="late">Late</option>
                       <option value="absent">Absent</option>
+                      <option value="excuse">Excuse</option>
                     </select>
                   </div>
                 </div>
@@ -1590,14 +1592,18 @@ export default function AttendanceManagementSection({
                                         ? "bg-amber-100 text-amber-700"
                                         : record.status === "present"
                                           ? "bg-green-100 text-green-600"
-                                          : "bg-red/10 text-red-500"
+                                          : record.status === "excuse"
+                                            ? "bg-purple-100 text-purple-700"
+                                            : "bg-red/10 text-red-500"
                                     }`}
                                   >
                                     {record.status === "late"
                                       ? "Late"
                                       : record.status === "present"
                                         ? "Present"
-                                        : "Absent"}
+                                        : record.status === "excuse"
+                                          ? "Excuse"
+                                          : "Absent"}
                                   </span>
                                 ) : (
                                   <span className="text-text-secondary text-xs">
@@ -1757,7 +1763,7 @@ export default function AttendanceManagementSection({
                 onChange={(e) =>
                   setAttendanceEditForm({
                     ...attendanceEditForm,
-                    status: e.target.value as "present" | "late" | "absent",
+                    status: e.target.value as "present" | "late" | "absent" | "excuse",
                   })
                 }
                 className="glass-input w-full px-4 py-2"
@@ -1766,6 +1772,7 @@ export default function AttendanceManagementSection({
                 <option value="present">Present</option>
                 <option value="late">Late</option>
                 <option value="absent">Absent</option>
+                <option value="excuse">Excuse</option>
               </select>
             </div>
 

@@ -45,7 +45,7 @@ interface ReportRow {
   yearLevel: number;
   course: string;
   section: string;
-  status: "Present" | "Late" | "Absent";
+  status: "Present" | "Late" | "Absent" | "Excuse";
   eventName: string;
   timeIn: string;
   timeOut: string;
@@ -238,7 +238,7 @@ export default function ReportManagementSection({
         studentRecordMap.set(record.studentId, record);
       } else {
         const priorityOf = (s: string) =>
-          s === "present" ? 2 : s === "late" ? 1 : 0;
+          s === "present" ? 3 : s === "late" ? 2 : s === "excuse" ? 1 : 0;
         if (priorityOf(record.status) > priorityOf(existing.status)) {
           studentRecordMap.set(record.studentId, record);
         } else if (
@@ -271,8 +271,12 @@ export default function ReportManagementSection({
         // and by manual edits (where the admin deliberately chose a status).
         // Recomputing from timeIn would override a manually set status and
         // cause the report to disagree with Attendance Tracking.
-        const displayStatus: "Present" | "Late" =
-          record.status === "late" ? "Late" : "Present";
+        const displayStatus: "Present" | "Late" | "Excuse" =
+          record.status === "late"
+            ? "Late"
+            : record.status === "excuse"
+              ? "Excuse"
+              : "Present";
 
         return {
           studentName: student.name,
@@ -894,7 +898,9 @@ function StatusBadge({ status }: { status: ReportRow["status"] }) {
       ? "bg-amber-100 text-amber-700"
       : status === "Present"
         ? "bg-green-100 text-green-600"
-        : "bg-red-100 text-red-500";
+        : status === "Excuse"
+          ? "bg-purple-100 text-purple-700"
+          : "bg-red-100 text-red-500";
   return (
     <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${className}`}>
       {status}
@@ -960,7 +966,7 @@ function buildReportHtml(report: PrintableReport): string {
   .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
   .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:21px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.present{color:#047857}.late{color:#b45309}.absent{color:#b91c1c}.percent{color:#1b2e8c}
   table{width:100%;border-collapse:collapse;font-size:12px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 9px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:7px 9px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.odd{background:#f9fafb}.even{background:#fff}
-  .s-present,.s-late,.s-absent{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-late{background:#fef3c7;color:#b45309}.s-absent{background:#fee2e2;color:#b91c1c}
+  .s-present,.s-late,.s-absent,.s-excuse{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-late{background:#fef3c7;color:#b45309}.s-absent{background:#fee2e2;color:#b91c1c}.s-excuse{background:#f3e8ff;color:#7e22ce}
   footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
 </style></head><body>
   <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Attendance Report</h1><div class="sub">Official Attendance Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
