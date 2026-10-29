@@ -12,7 +12,7 @@
 --     public.user_roles role is 'admin' or 'secretary' may write;
 --   * installs public.mark_absent_if_missing(p_event_id, p_session), a
 --     role-checked RPC that inserts "absent" rows ONLY for students who have
---     no attendance row for the event's date (Present/Late/Absent rows are
+--     no attendance row for the event's date (Present/Excused/Absent rows are
 --     never modified).
 --
 -- This script never deletes attendance rows, never creates or modifies
@@ -165,7 +165,7 @@ BEGIN
   -- Serialize concurrent runs (several open tabs/devices) per event.
   PERFORM pg_advisory_xact_lock(hashtext('attendance-auto-absent:' || p_event_id));
 
-  -- NOT EXISTS skips students with ANY row for the date (Present, Late,
+  -- NOT EXISTS skips students with ANY row for the date (Present, Excused,
   -- Absent, any session). ON CONFLICT DO NOTHING keeps it idempotent if a
   -- scan lands between the check and the insert: the scanned row wins.
   RETURN QUERY
@@ -215,7 +215,39 @@ REVOKE ALL ON FUNCTION public.mark_absent_if_missing(text, text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.mark_absent_if_missing(text, text) TO authenticated;
 
 -- ------------------------------------------------------------
--- 5. Attendance officer roles
+-- 5. New attendance status validation
+-- ------------------------------------------------------------
+-- Existing legacy `late` rows are preserved. New inserts and status updates
+-- accept only present, absent, or excuse.
+CREATE OR REPLACE FUNCTION public.validate_attendance_status()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status NOT IN ('present', 'absent', 'excuse') THEN
+    -- Preserve an existing historical legacy row when an unrelated field is
+    -- edited. Any new row or explicit status change to `late` is rejected.
+    IF TG_OP = 'UPDATE' AND OLD.status = 'late' AND NEW.status = OLD.status THEN
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION
+      'Invalid attendance status: %. Use present, absent, or excuse.', NEW.status
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_attendance_status ON public.attendance;
+CREATE TRIGGER trg_validate_attendance_status
+  BEFORE INSERT OR UPDATE OF status ON public.attendance
+  FOR EACH ROW
+  EXECUTE FUNCTION public.validate_attendance_status();
+
+GRANT EXECUTE ON FUNCTION public.validate_attendance_status() TO authenticated;
+
+-- ------------------------------------------------------------
+-- 6. Attendance officer roles
 -- ------------------------------------------------------------
 -- Adds the missing public.user_roles row for the standard attendance
 -- officer accounts only when the auth user exists and has no role yet.

@@ -47,7 +47,6 @@ import type {
   OfficialLscPosition,
 } from "@/types";
 import { toast } from "sonner";
-import { LSC_PREVIEW_FILES } from "@/lib/lscPreview";
 
 interface OfficerVolunteersManagementSectionProps {
   onBack: () => void;
@@ -94,6 +93,11 @@ const POSITION_CATEGORIES: {
     description: "Committee membership exists only when explicitly assigned.",
     positions: ["Creatives Committee", "Technical Committee"],
   },
+  {
+    category: "Marshall Unit",
+    description: "Student safety and event-floor coordination roles.",
+    positions: ["Marshall Head", "Marshall Committee"],
+  },
 ];
 
 const PRESET_VOLUNTEER_TASKS = [
@@ -132,7 +136,6 @@ export default function OfficerVolunteersManagementSection({
   const [isAssignOfficerOpen, setIsAssignOfficerOpen] = useState(false);
   const [selectedStudentForOfficer, setSelectedStudentForOfficer] = useState<Student | null>(null);
   const [selectedPositions, setSelectedPositions] = useState<string[]>([]);
-  const [selectedPreviewFileReference, setSelectedPreviewFileReference] = useState<string | undefined>();
   const [studentSearchInModal, setStudentSearchInModal] = useState("");
 
   // Assign Volunteer Modal
@@ -187,6 +190,11 @@ export default function OfficerVolunteersManagementSection({
     return map;
   }, [officers]);
 
+  const studentByStudentId = useMemo(
+    () => new Map(students.map((student) => [student.studentId.trim().toLowerCase(), student])),
+    [students],
+  );
+
   const filteredOfficers = useMemo(() => {
     return officers.filter((officer) => {
       const q = officerSearch.trim().toLowerCase();
@@ -216,20 +224,33 @@ export default function OfficerVolunteersManagementSection({
     return Array.from(set).sort();
   }, [officers]);
 
+  const studentMap = useMemo(() => {
+    const map = new Map<string, Student>();
+    for (const s of students) {
+      map.set(s.id, s);
+      map.set(s.studentId, s);
+    }
+    return map;
+  }, [students]);
+
   const filteredVolunteers = useMemo(() => {
     return volunteers.filter((v) => {
       const q = volunteerSearch.trim().toLowerCase();
+      const s = studentMap.get(v.studentId);
+      const studentNum = (s?.studentId || "").toLowerCase();
       const matchesSearch =
         !q ||
         v.studentName.toLowerCase().includes(q) ||
         v.studentId.toLowerCase().includes(q) ||
-        v.roleOrTask.toLowerCase().includes(q);
+        studentNum.includes(q) ||
+        v.roleOrTask.toLowerCase().includes(q) ||
+        (v.program || "").toLowerCase().includes(q);
 
       const matchesEvent = eventFilter === "all" || v.eventId === eventFilter;
 
       return matchesSearch && matchesEvent;
     });
-  }, [volunteers, volunteerSearch, eventFilter]);
+  }, [volunteers, volunteerSearch, eventFilter, studentMap]);
 
   const searchedStudentsForOfficer = useMemo(() => {
     const q = studentSearchInModal.trim().toLowerCase();
@@ -294,12 +315,10 @@ export default function OfficerVolunteersManagementSection({
         },
       );
       setSelectedPositions([...(existingOfficer.positions as string[])]);
-      setSelectedPreviewFileReference(existingOfficer.previewFileReference);
       setStudentSearchInModal("");
     } else {
       setSelectedStudentForOfficer(null);
       setSelectedPositions([]);
-      setSelectedPreviewFileReference(undefined);
       setStudentSearchInModal("");
     }
     setIsAssignOfficerOpen(true);
@@ -340,7 +359,6 @@ export default function OfficerVolunteersManagementSection({
         yearLevel: selectedStudentForOfficer.yearLevel,
         section: selectedStudentForOfficer.section,
         positions: selectedPositions,
-        previewFileReference: selectedPreviewFileReference,
       });
 
       setOfficers((prev) => {
@@ -359,7 +377,6 @@ export default function OfficerVolunteersManagementSection({
       setIsAssignOfficerOpen(false);
       setSelectedStudentForOfficer(null);
       setSelectedPositions([]);
-      setSelectedPreviewFileReference(undefined);
     } catch (err) {
       console.error("Failed to assign LSC officer:", err);
       const message =
@@ -437,6 +454,8 @@ export default function OfficerVolunteersManagementSection({
   };
 
   const handleConfirmVolunteerAssignment = async () => {
+    if (saving) return;
+
     if (!volunteerEventId) {
       toast.error("Please select an event.");
       return;
@@ -456,18 +475,38 @@ export default function OfficerVolunteersManagementSection({
     }
 
     const targetEvent = events.find((e) => e.id === volunteerEventId);
+    if (!targetEvent) {
+      toast.error("Selected event not found.");
+      return;
+    }
+
+    // Guard against duplicate volunteer assignment for the same event
+    const isAlreadyAssigned = volunteers.some(
+      (v) =>
+        v.eventId === volunteerEventId &&
+        (v.studentId === selectedStudentForVolunteer.id ||
+          v.studentId === selectedStudentForVolunteer.studentId),
+    );
+    if (isAlreadyAssigned) {
+      toast.error(
+        `${selectedStudentForVolunteer.name} is already assigned as a volunteer for ${targetEvent.name}.`,
+      );
+      return;
+    }
 
     try {
       setSaving(true);
       const saved = await eventVolunteersService.assign({
-        eventId: volunteerEventId,
-        eventName: targetEvent?.name || "Event",
-        studentId: selectedStudentForVolunteer.studentId,
+        eventId: targetEvent.id,
+        eventName: targetEvent.name,
+        // MUST use student's database primary key UUID referencing public.students(id)
+        studentId: selectedStudentForVolunteer.id,
         studentName: selectedStudentForVolunteer.name,
         program: selectedStudentForVolunteer.program,
         yearLevel: selectedStudentForVolunteer.yearLevel,
         section: selectedStudentForVolunteer.section,
         roleOrTask: finalTask,
+        eventDate: targetEvent.date,
       });
 
       setVolunteers((prev) => [saved, ...prev]);
@@ -475,16 +514,22 @@ export default function OfficerVolunteersManagementSection({
         `Assigned ${saved.studentName} as volunteer for ${saved.eventName} (${finalTask})`,
       );
       setIsAssignVolunteerOpen(false);
+      setSelectedStudentForVolunteer(null);
+      setCustomVolunteerTask("");
     } catch (err) {
       console.error("Failed to assign volunteer:", err);
-      toast.error("Failed to assign volunteer.");
+      const message =
+        err instanceof Error
+          ? err.message
+          : (err as { message?: string })?.message || "Failed to assign volunteer.";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleConfirmDeleteVolunteer = async () => {
-    if (!confirmDeleteVolunteer) return;
+    if (!confirmDeleteVolunteer || saving) return;
 
     try {
       setSaving(true);
@@ -498,7 +543,11 @@ export default function OfficerVolunteersManagementSection({
       setConfirmDeleteVolunteer(null);
     } catch (err) {
       console.error("Failed to remove volunteer:", err);
-      toast.error("Failed to remove volunteer.");
+      const message =
+        err instanceof Error
+          ? err.message
+          : (err as { message?: string })?.message || "Failed to remove volunteer.";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -714,10 +763,10 @@ export default function OfficerVolunteersManagementSection({
                       {/* Officer Header */}
                       <div className="flex items-start gap-3 mb-3">
                         <div className="w-12 h-12 rounded-full overflow-hidden border border-white/20 bg-navy-card shrink-0 flex items-center justify-center">
-                          {officer.previewFileReference ? (
+                          {studentByStudentId.get(officer.studentId.trim().toLowerCase())?.profilePhotoUrl ? (
                             <img
-                              src={officer.previewFileReference}
-                              alt={`${officer.name}'s selected LSC Preview photo`}
+                              src={studentByStudentId.get(officer.studentId.trim().toLowerCase())?.profilePhotoUrl}
+                              alt={`${officer.name}'s profile`}
                               className="h-full w-full object-cover"
                               draggable={false}
                             />
@@ -859,41 +908,45 @@ export default function OfficerVolunteersManagementSection({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5 font-normal">
-                      {filteredVolunteers.map((vol) => (
-                        <tr key={vol.id} className="hover:bg-white/5 transition-colors">
-                          <td className="p-4">
-                            <div className="font-semibold text-dark">{vol.studentName}</div>
-                            <div className="text-xs font-mono text-text-secondary">
-                              {vol.studentId}
-                            </div>
-                          </td>
-                          <td className="p-4 text-text-secondary text-xs">
-                            {vol.program || "N/A"}{" "}
-                            {vol.yearLevel ? `-${vol.yearLevel}` : ""} {vol.section || ""}
-                          </td>
-                          <td className="p-4">
-                            <span className="font-medium text-dark">{vol.eventName}</span>
-                          </td>
-                          <td className="p-4">
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                              <Sparkles className="w-3 h-3" />
-                              {vol.roleOrTask}
-                            </span>
-                          </td>
-                          <td className="p-4 text-xs text-text-secondary">
-                            {new Date(vol.createdAt).toLocaleDateString()}
-                          </td>
-                          <td className="p-4 text-right">
-                            <button
-                              onClick={() => setConfirmDeleteVolunteer(vol)}
-                              className="p-1.5 rounded-lg text-text-secondary hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                              title="Remove Volunteer Assignment"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredVolunteers.map((vol) => {
+                        const studentInfo = studentMap.get(vol.studentId);
+                        const displayStudentId = studentInfo?.studentId || vol.studentId;
+                        return (
+                          <tr key={vol.id} className="hover:bg-white/5 transition-colors">
+                            <td className="p-4">
+                              <div className="font-semibold text-dark">{vol.studentName}</div>
+                              <div className="text-xs font-mono text-text-secondary">
+                                {displayStudentId}
+                              </div>
+                            </td>
+                            <td className="p-4 text-text-secondary text-xs">
+                              {vol.program || "N/A"}{" "}
+                              {vol.yearLevel ? `-${vol.yearLevel}` : ""} {vol.section || ""}
+                            </td>
+                            <td className="p-4">
+                              <span className="font-medium text-dark">{vol.eventName}</span>
+                            </td>
+                            <td className="p-4">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                                <Sparkles className="w-3 h-3" />
+                                {vol.roleOrTask}
+                              </span>
+                            </td>
+                            <td className="p-4 text-xs text-text-secondary">
+                              {new Date(vol.createdAt).toLocaleDateString()}
+                            </td>
+                            <td className="p-4 text-right">
+                              <button
+                                onClick={() => setConfirmDeleteVolunteer(vol)}
+                                className="p-1.5 rounded-lg text-text-secondary hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                title="Remove Volunteer Assignment"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -949,7 +1002,6 @@ export default function OfficerVolunteersManagementSection({
                       onClick={() => {
                         setSelectedStudentForOfficer(null);
                         setSelectedPositions([]);
-                        setSelectedPreviewFileReference(undefined);
                       }}
                       className="text-xs text-text-secondary hover:text-red-400 p-1 shrink-0 font-medium transition-colors"
                     >
@@ -987,10 +1039,8 @@ export default function OfficerVolunteersManagementSection({
                                 );
                                 if (existing) {
                                   setSelectedPositions([...(existing.positions as string[])]);
-                                  setSelectedPreviewFileReference(existing.previewFileReference);
                                 } else {
                                   setSelectedPositions([]);
-                                  setSelectedPreviewFileReference(undefined);
                                 }
                               }}
                               className="w-full text-left p-2.5 hover:bg-white/5 flex items-center justify-between transition-colors"
@@ -1013,71 +1063,7 @@ export default function OfficerVolunteersManagementSection({
                 )}
               </div>
 
-              {/* Step 2: Optionally select an existing LSC Preview file (read-only) */}
-              <div className="lsc-officer-modal__section w-full min-w-0">
-                <div className="lsc-officer-modal__section-header flex items-start justify-between gap-2">
-                  <div>
-                    <label className="lsc-officer-modal__section-title block text-xs font-semibold uppercase tracking-[0.03em] text-text-secondary">
-                      2. Select LSC Preview Photo (Optional)
-                    </label>
-                    <p className="mt-1 text-[11px] leading-4 text-text-secondary">
-                      Select an existing photo from the read-only LSC Preview files 1–18, or continue without one. This only stores a reference; it never changes the carousel.
-                    </p>
-                  </div>
-                  {selectedPreviewFileReference && (
-                    <span className="shrink-0 text-[11px] font-medium text-lsc-gold">
-                      File {selectedPreviewFileReference.slice(1, -4)} selected
-                    </span>
-                  )}
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                  {LSC_PREVIEW_FILES.map((src, index) => {
-                    const isSelected = selectedPreviewFileReference === src;
-                    return (
-                      <button
-                        key={src}
-                        type="button"
-                        aria-label={`Select LSC Preview file ${index + 1}`}
-                        aria-pressed={isSelected}
-                        onClick={() => setSelectedPreviewFileReference(src)}
-                        className={`group overflow-hidden rounded-lg border bg-white/5 text-left transition-all ${
-                          isSelected
-                            ? "border-lsc-gold ring-2 ring-lsc-gold/50"
-                            : "border-white/10 hover:border-white/40"
-                        }`}
-                      >
-                        <img
-                          src={src}
-                          alt={`LSC Preview file ${index + 1}`}
-                          className="aspect-[3/4] w-full object-cover"
-                          draggable={false}
-                        />
-                        <span className={`block px-1.5 py-1 text-center text-[10px] font-semibold ${
-                          isSelected ? "text-lsc-gold" : "text-text-secondary"
-                        }`}>
-                          File {index + 1}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedPreviewFileReference && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPreviewFileReference(undefined)}
-                    className="mt-2 text-xs font-medium text-text-secondary transition-colors hover:text-red-400"
-                  >
-                    Clear selected photo
-                  </button>
-                )}
-                {!selectedPreviewFileReference && (
-                  <p className="mt-2 text-xs text-text-secondary">
-                    No photo selected. The officer will use an initials avatar.
-                  </p>
-                )}
-              </div>
-
-              {/* Step 3: Assign Official Roles (Multi-select) */}
+              {/* Assign Official Roles (Multi-select) */}
               <div className="lsc-officer-modal__section w-full min-w-0">
                 <div className="lsc-officer-modal__section-header flex items-center justify-between gap-2">
                   <label className="lsc-officer-modal__section-title block text-xs font-semibold uppercase tracking-[0.03em] text-text-secondary">

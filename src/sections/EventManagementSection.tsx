@@ -121,8 +121,16 @@ export default function EventManagementSection({
 
   const sectionRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const isLoadingRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
 
   const loadData = useCallback(async (showLoader = true) => {
+    if (isLoadingRef.current) {
+      pendingRefreshRef.current = true;
+      return;
+    }
+    isLoadingRef.current = true;
+
     try {
       if (showLoader) {
         setLoading(true);
@@ -132,8 +140,23 @@ export default function EventManagementSection({
         await Promise.all([
           eventsService.getAll(),
           studentsService.getAll(),
-          contributionsService.getTotalsByEvent(),
-          financialReportingService.getReport(),
+          contributionsService.getTotalsByEvent().catch((err) => {
+            console.warn("Could not load contribution totals:", err);
+            return {};
+          }),
+          financialReportingService.getReport().catch((err) => {
+            console.warn("Could not load financial report:", err);
+            return {
+              summary: {
+                totalBudget: 0,
+                totalFundsCollected: 0,
+                totalFundsSpent: 0,
+                remainingBudget: 0,
+                totalExpectedContributions: 0,
+              },
+              eventAllocations: [],
+            };
+          }),
         ]);
 
       setEvents(eventsData);
@@ -158,10 +181,17 @@ export default function EventManagementSection({
       }
     } catch (error) {
       console.error("Error loading data:", error);
-      toast.error("Failed to load data");
+      if (showLoader) {
+        toast.error("Failed to load data");
+      }
     } finally {
+      isLoadingRef.current = false;
       if (showLoader) {
         setLoading(false);
+      }
+      if (pendingRefreshRef.current) {
+        pendingRefreshRef.current = false;
+        void loadData(false);
       }
     }
   }, []);
@@ -286,21 +316,53 @@ export default function EventManagementSection({
   };
 
   const handleAddEvent = async () => {
+    if (saving) return;
+
+    const trimmedName = eventForm.name.trim();
+    if (!trimmedName) {
+      toast.error("Please enter an event name.");
+      return;
+    }
+
+    if (!eventForm.isNonConducting && !eventDateTbd && !eventForm.date) {
+      toast.error("Please specify an event date or mark date as To Be Determined.");
+      return;
+    }
+
+    // Prevent duplicate event creation
+    const duplicate = events.some(
+      (e) => e.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+    );
+    if (duplicate) {
+      toast.error(`An event named "${trimmedName}" already exists.`);
+      return;
+    }
+
     try {
       setSaving(true);
 
+      const assignedMembers = boardMembers.map((m) => ({
+        memberId: m.id,
+        memberName: m.name,
+      }));
+
       const newEvent = await eventsService.create({
-        name: eventForm.name,
-        allocationAmount: eventForm.allocationAmount,
+        name: trimmedName,
+        allocationAmount: Number(eventForm.allocationAmount) || 0,
         isNonConducting: eventForm.isNonConducting,
         isNoContribution: eventForm.isNoContribution,
         autoMarkAbsent: eventForm.autoMarkAbsent,
-        date: eventDateTbd ? "TBD" : eventForm.date,
+        date: eventForm.isNonConducting
+          ? ""
+          : eventDateTbd
+          ? "TBD"
+          : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
+        assignedMembers,
       });
 
-      setEvents([...events, newEvent]);
+      setEvents((prev) => [...prev, newEvent]);
       setShowEventModal(false);
 
       setEventForm({
@@ -319,26 +381,54 @@ export default function EventManagementSection({
       toast.success("Event created successfully");
     } catch (error) {
       console.error("Error creating event:", error);
-      toast.error("Failed to create event");
+      const message =
+        error instanceof Error
+          ? error.message
+          : (error as { message?: string })?.message || "Failed to create event";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleUpdateEvent = async () => {
-    if (!editingEvent) return;
+    if (!editingEvent || saving) return;
+
+    const trimmedName = eventForm.name.trim();
+    if (!trimmedName) {
+      toast.error("Please enter an event name.");
+      return;
+    }
+
+    if (!eventForm.isNonConducting && !eventDateTbd && !eventForm.date) {
+      toast.error("Please specify an event date or mark date as To Be Determined.");
+      return;
+    }
 
     try {
       setSaving(true);
 
+      const assignedMembers =
+        editingEvent.assignedMembers && editingEvent.assignedMembers.length > 0
+          ? editingEvent.assignedMembers
+          : boardMembers.map((m) => ({
+              memberId: m.id,
+              memberName: m.name,
+            }));
+
       const eventChanges: Partial<Event> = {
-        name: eventForm.name,
-        allocationAmount: eventForm.allocationAmount,
+        name: trimmedName,
+        allocationAmount: Number(eventForm.allocationAmount) || 0,
         isNonConducting: eventForm.isNonConducting,
         isNoContribution: eventForm.isNoContribution,
-        date: eventDateTbd ? "TBD" : eventForm.date,
+        date: eventForm.isNonConducting
+          ? ""
+          : eventDateTbd
+          ? "TBD"
+          : eventForm.date,
         contributionDeadline: eventForm.contributionDeadline,
         schedules: eventForm.schedules,
+        assignedMembers,
       };
       const autoMarkAbsentChanged =
         editingEvent.autoMarkAbsent !== eventForm.autoMarkAbsent;
@@ -371,7 +461,11 @@ export default function EventManagementSection({
       toast.success("Event updated successfully");
     } catch (error) {
       console.error("Error updating event:", error);
-      toast.error("Failed to update event");
+      const message =
+        error instanceof Error
+          ? error.message
+          : (error as { message?: string })?.message || "Failed to update event";
+      toast.error(message);
     } finally {
       setSaving(false);
     }

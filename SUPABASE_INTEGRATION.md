@@ -88,22 +88,19 @@ INSERT INTO public.user_roles (user_id, role, name)
 VALUES ('<the auth user id>', 'admin', 'Display Name');
 ```
 
-### Temporary officer identity display
+### Student and officer profile photos
 
-Officer profile images are not stored in Supabase. The dashboard always renders
-the local application asset `/DSSC_logo.png`, and displays the authenticated
-Supabase user's actual `auth.users.email` below it. `public.user_roles` stores
-only the account's role and display name used by application workflows.
+Profile photos are stored on `public.students.profile_photo_url` and uploaded
+to the public `profile-photos` Storage bucket at `<student-row-id>/profile`.
+The student row is the single source of truth for both Student Records and LSC
+Officer displays. The application validates JPG, PNG, and WebP files up to 5 MB
+before upload and uses the `set_student_profile_photo` RPC to enforce ownership.
 
-`supabase/security.sql` includes `DROP COLUMN IF EXISTS profile_image_url` to
-remove the image field left by an earlier version. It does not modify
-`auth.users`, passwords, role assignments, or permissions. Do not add a profile
-image column, profile-picture record, upload flow, or Supabase Storage object
-for this temporary display.
-
-The repository includes the local asset at `public/DSSC_logo.png`. Keep that
-file available at the deployed application's site root. The older
-`DSSC-logo.png` filename remains only for receipt-generation compatibility.
+Student self-service requires the student's Supabase Auth user to be linked in
+`public.students.account_user_id`. Administrators and secretaries may manage a
+photo from Student Management; anonymous public record lookup remains read-only.
+The migration is idempotent and does not alter existing auth accounts, roles, or
+student records.
 
 ## Production data cleanup
 
@@ -178,18 +175,14 @@ event and student:
 - **Attendance is saved automatically** — every QR scan, status toggle, and
   time edit persists to the `attendance` table immediately (upsert) and the
   table shows the saved row instantly. There is no "Save Attendance" button.
-- **Status is auto-derived from the event's Morning / Afternoon schedule**
-  (`events.morning_time_in` + `afternoon_time_in`, set on the event create/edit
-  form which has a Morning Schedule and an Afternoon Schedule, both 12-hour
-  inputs):
-  - **Present** – scanned on/before the applicable session's Time In (the
-    Morning Time In until the Afternoon session begins, then the Afternoon
-    Time In).
-  - **Late** – scanned after that session's Time In.
-  - **Absent** – never scanned; the system automatically marks the student
-    Absent when the event's configured calendar day ends at 12:00 AM in
-    Philippine Time (checks on the Attendance tab and on a 1-minute timer,
-    idempotent so it never duplicates saved scans/edits).
+- **Status rules:** a valid QR scan always records **Present**, regardless of
+  whether it occurs before, during, or after the configured schedule. The
+  schedule identifies the session for display and Time In/Time Out only.
+  - **Excused** remains available through authorized manual attendance editing.
+  - **Absent** is reserved for students who have not scanned; when an event's
+    Auto Mark Absent switch is enabled, the system marks them Absent after the
+    event calendar day ends at 12:00 AM in Philippine Time. The online RPC is
+    idempotent and never overwrites saved Present or Excused records.
 - `supabase/security.sql` adds the new `morning_time_in`/`morning_time_out` and
   `afternoon_time_in`/`afternoon_time_out` columns to an existing `events`
   table non-destructively (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, along

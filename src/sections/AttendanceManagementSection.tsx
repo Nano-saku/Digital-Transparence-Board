@@ -38,7 +38,6 @@ import { toast } from "sonner";
 import {
   formatDate,
   formatTime12,
-  compareTime24,
   splitTime24,
   composeTime12,
 } from "@/lib/format";
@@ -46,7 +45,6 @@ import { matchesSearchWords } from "@/lib/utils";
 import {
   EVENT_SESSION_ICONS,
   EVENT_SESSION_LABELS,
-  getEventSessionWindow,
   getEventSessionWindows,
   getScheduledEventSessions,
   hasEventAttendanceDayEnded,
@@ -108,7 +106,7 @@ export default function AttendanceManagementSection({
     record: AttendanceRecord | null;
   } | null>(null);
   const emptyAttendanceEditForm = {
-    status: "present" as "present" | "late" | "absent" | "excuse",
+    status: "present" as "present" | "absent" | "excuse",
     timeInHour: "",
     timeInMinute: "",
     timeInPeriod: "AM" as "AM" | "PM",
@@ -129,7 +127,7 @@ export default function AttendanceManagementSection({
     useState("");
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<
-    "all" | "present" | "late" | "absent" | "excuse"
+    "all" | "present" | "absent" | "excuse"
   >("all");
   const [attendancePage, setAttendancePage] = useState(1);
 
@@ -286,7 +284,7 @@ export default function AttendanceManagementSection({
   // Attendance is scoped by event + date because one event can have historical
   // rows from before its date was edited. Automatic Absent also writes against
   // the event's configured date, so showing every row by event ID could select
-  // an old Present/Late row instead of the current-date Absent row.
+  // an old attendance row instead of the current-date Absent row.
   const selectedAttendanceRecords = useMemo(
     () =>
       selectedEventForAttendance
@@ -541,17 +539,7 @@ export default function AttendanceManagementSection({
     }
   };
 
-  const deriveScanStatus = (
-    scanTimeHM: string,
-    event?: Event,
-    session?: EventSession | null,
-  ): "present" | "late" => {
-    if (!event || !session) return "present";
-    const sessionIn = getEventSessionWindow(event, session).timeIn;
-    return sessionIn && compareTime24(scanTimeHM, sessionIn) > 0
-      ? "late"
-      : "present";
-  };
+  const deriveScanStatus = (): "present" => "present";
 
   const errorMessage = (error: unknown): string => {
     const details =
@@ -620,7 +608,7 @@ export default function AttendanceManagementSection({
         await persistAttendance(
           student.id,
           {
-            status: deriveScanStatus(scanTime, event, session),
+            status: deriveScanStatus(),
             timeIn: scanTime,
           },
           existing ?? undefined,
@@ -846,12 +834,15 @@ export default function AttendanceManagementSection({
 
     try {
       for (const event of completedEvents) {
-        const sessions = getScheduledEventSessions(event);
-        if (!event.date || sessions.length === 0) continue;
+        if (!event.date) continue;
 
+        // Automatic Absent is an event-date cutoff, not a schedule-window
+        // cutoff. Use the first configured session when available, otherwise
+        // retain the database function's valid morning default.
+        const session = getScheduledEventSessions(event)[0] ?? "morning";
         const inserted = await attendanceService.markAbsentIfMissing({
           eventId: event.id,
-          session: sessions[0],
+          session,
         });
         if (inserted.length === 0) continue;
 
@@ -888,11 +879,18 @@ export default function AttendanceManagementSection({
   }, [canRecordAttendance, events]);
 
   useEffect(() => {
-    // This is intentionally a one-time trigger for the current event data.
-    // Event realtime updates call loadData(), which changes `events` and
-    // triggers this effect again when Automatic Absent is enabled or an event
-    // becomes eligible. There is deliberately no 60-second retry loop.
+    // Recheck once on load/event changes, periodically while the page is open,
+    // and immediately after reconnecting. The RPC rereads auto_mark_absent and
+    // the event date, so retries remain safe when settings or attendance rows
+    // changed in another tab.
     void autoMarkAbsent();
+    const retry = () => void autoMarkAbsent();
+    const interval = window.setInterval(retry, 60_000);
+    window.addEventListener("online", retry);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("online", retry);
+    };
   }, [autoMarkAbsent]);
 
   const attendanceSearchTerm = attendanceSearch.trim().toLowerCase();
@@ -987,7 +985,7 @@ export default function AttendanceManagementSection({
                 record.eventId === event.id &&
                 (!event.date || record.date === event.date) &&
                 registeredStudentIds.has(record.studentId) &&
-                (record.status === "present" || record.status === "late"),
+                (record.status === "present" || record.status === "excuse"),
             )
             .map((record) => record.studentId),
         );
@@ -1172,8 +1170,8 @@ export default function AttendanceManagementSection({
                         const presentCount = sessionRecords.filter(
                           (record) => record.status === "present",
                         ).length;
-                        const lateCount = sessionRecords.filter(
-                          (record) => record.status === "late",
+                        const excuseCount = sessionRecords.filter(
+                          (record) => record.status === "excuse",
                         ).length;
                         const absentCount = sessionRecords.filter(
                           (record) => record.status === "absent",
@@ -1225,8 +1223,8 @@ export default function AttendanceManagementSection({
                               <span className="rounded-full bg-success/15 px-2 py-0.5 text-success">
                                 Present {presentCount}
                               </span>
-                              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
-                                Late {lateCount}
+                              <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-purple-600">
+                                Excused {excuseCount}
                               </span>
                               <span className="rounded-full bg-danger/15 px-2 py-0.5 text-danger">
                                 Absent {absentCount}
@@ -1255,9 +1253,8 @@ export default function AttendanceManagementSection({
                     Attendance rules
                   </span>
                   <span className="text-xs text-text-secondary">
-                    Present = recorded on/before the detected session's
-                    scheduled Time In | Late = recorded after that scheduled
-                    Time In | Absent = never recorded (auto-marked at 12:00 AM)
+                    Present = successfully scanned QR code for this event |
+                    Absent = no scan recorded (auto-marked at 12:00 AM when Auto Mark Absent is ON)
                   </span>
                 </div>
               </div>
@@ -1438,7 +1435,6 @@ export default function AttendanceManagementSection({
                           e.target.value as
                             | "all"
                             | "present"
-                            | "late"
                             | "absent"
                             | "excuse",
                         )
@@ -1447,9 +1443,8 @@ export default function AttendanceManagementSection({
                     >
                       <option value="all">All Students</option>
                       <option value="present">Present</option>
-                      <option value="late">Late</option>
                       <option value="absent">Absent</option>
-                      <option value="excuse">Excuse</option>
+                      <option value="excuse">Excused</option>
                     </select>
                   </div>
                 </div>
@@ -1505,17 +1500,9 @@ export default function AttendanceManagementSection({
                           <span className="inline-flex items-center gap-1 text-sm">
                             <span className="text-text-secondary">Status:</span>
                             <span
-                              className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                                attendanceMap.get(lastScannedStudentId!)
-                                  ?.status === "late"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-green-100 text-green-600"
-                              }`}
+                              className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-600"
                             >
-                              {attendanceMap.get(lastScannedStudentId!)
-                                ?.status === "late"
-                                ? "Late"
-                                : "Present"}
+                              Present
                             </span>
                           </span>
                           <span className="text-sm text-text-secondary">
@@ -1588,22 +1575,18 @@ export default function AttendanceManagementSection({
                                 {record ? (
                                   <span
                                     className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                                      record.status === "late"
-                                        ? "bg-amber-100 text-amber-700"
-                                        : record.status === "present"
-                                          ? "bg-green-100 text-green-600"
-                                          : record.status === "excuse"
-                                            ? "bg-purple-100 text-purple-700"
-                                            : "bg-red/10 text-red-500"
+                                      record.status === "present"
+                                        ? "bg-green-100 text-green-600"
+                                        : record.status === "excuse"
+                                          ? "bg-purple-100 text-purple-700"
+                                          : "bg-red/10 text-red-500"
                                     }`}
                                   >
-                                    {record.status === "late"
-                                      ? "Late"
-                                      : record.status === "present"
-                                        ? "Present"
-                                        : record.status === "excuse"
-                                          ? "Excuse"
-                                          : "Absent"}
+                                    {record.status === "present"
+                                      ? "Present"
+                                      : record.status === "excuse"
+                                        ? "Excused"
+                                        : "Absent"}
                                   </span>
                                 ) : (
                                   <span className="text-text-secondary text-xs">
@@ -1763,16 +1746,15 @@ export default function AttendanceManagementSection({
                 onChange={(e) =>
                   setAttendanceEditForm({
                     ...attendanceEditForm,
-                    status: e.target.value as "present" | "late" | "absent" | "excuse",
+                    status: e.target.value as "present" | "absent" | "excuse",
                   })
                 }
                 className="glass-input w-full px-4 py-2"
                 disabled={savingAttendanceEdit}
               >
                 <option value="present">Present</option>
-                <option value="late">Late</option>
                 <option value="absent">Absent</option>
-                <option value="excuse">Excuse</option>
+                <option value="excuse">Excused</option>
               </select>
             </div>
 

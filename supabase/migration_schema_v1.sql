@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS public.students (
     name       TEXT NOT NULL,
     program    TEXT NOT NULL,
     year_level INTEGER NOT NULL DEFAULT 0,
-    section    TEXT NOT NULL DEFAULT ''
+    section    TEXT NOT NULL DEFAULT '',
+    profile_photo_url TEXT,
+    account_user_id UUID REFERENCES auth.users (id) ON DELETE SET NULL
 );
 
 -- Events

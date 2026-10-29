@@ -23,6 +23,9 @@ export interface Student {
   program: string;
   yearLevel: number;
   section: string;
+  profilePhotoUrl?: string;
+  /** Supabase Auth user linked to this student for secure self-service updates. */
+  accountUserId?: string;
   isLscOfficer?: boolean;
   lscPositions?: string[];
 }
@@ -75,6 +78,9 @@ export interface Event {
 
   schedules?: EventSchedule[];
 
+  /** Board members assigned to oversee this event. */
+  assignedMembers?: { memberId: string; memberName: string }[];
+
   // Legacy fields - keep temporarily for older events
   morningTimeIn?: string;
   morningTimeOut?: string;
@@ -104,7 +110,7 @@ export interface AttendanceRecord {
   eventId: string;
   eventName: string;
   date: string;
-  status: "present" | "late" | "absent" | "excuse";
+  status: "present" | "absent" | "excuse";
   /**
    * Session for the attendance record: 'morning', 'afternoon', or 'evening'.
    * Each event has separate attendance tracking for Morning, Afternoon,
@@ -230,6 +236,8 @@ export const OFFICIAL_LSC_POSITIONS = [
   "Technical Head",
   "Creatives Committee",
   "Technical Committee",
+  "Marshall Head",
+  "Marshall Committee",
 ] as const;
 
 export type OfficialLscPosition = (typeof OFFICIAL_LSC_POSITIONS)[number];
@@ -239,7 +247,6 @@ export interface LscOfficer {
   studentId: string;
   studentDbId?: string;
   name: string;
-  previewFileReference?: string;
   program: string;
   yearLevel: number;
   section: string;
@@ -259,6 +266,7 @@ export interface EventVolunteer {
   section?: string;
   roleOrTask: string;
   status: "assigned" | "active" | "completed";
+  expiresAt?: string;
   createdAt: string;
 }
 

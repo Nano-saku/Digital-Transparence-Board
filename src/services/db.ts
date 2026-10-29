@@ -3,7 +3,6 @@ import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
 import { autoCreateReceipt } from "../lib/receipts";
 import { today } from "../lib/format";
-import { normalizeLscPreviewFileReference } from "../lib/lscPreview";
 import {
   normalizeStudentName,
   splitSearchWords,
@@ -511,6 +510,18 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     }
   }
 
+  const memberIds = Array.isArray(item.assigned_member_ids)
+    ? (item.assigned_member_ids as string[])
+    : [];
+  const memberNames = Array.isArray(item.assigned_member_names)
+    ? (item.assigned_member_names as string[])
+    : [];
+
+  const assignedMembers = memberIds.map((memberId, idx) => ({
+    memberId,
+    memberName: memberNames[idx] || "Board Member",
+  }));
+
   return {
     id: item.id as string,
     name: item.name as string,
@@ -524,6 +535,7 @@ const mapEvent = (item: Record<string, unknown>): Event => {
     evaluationActive: Boolean(item.evaluation_active),
     evaluationFormUrl: (item.evaluation_form_url as string | null) || undefined,
     schedules,
+    assignedMembers,
     timeIn: (item.time_in as string | null) || undefined,
     timeOut: (item.time_out as string | null) || undefined,
     morningTimeIn: (item.morning_time_in as string | null) || undefined,
@@ -559,6 +571,8 @@ export const studentsService = {
         program: item.program as string,
         yearLevel: item.year_level as number,
         section: item.section as string,
+        profilePhotoUrl: (item.profile_photo_url as string | null) || undefined,
+        accountUserId: (item.account_user_id as string | null) || undefined,
       }));
     });
 
@@ -632,6 +646,8 @@ export const studentsService = {
           program: data.program,
           yearLevel: data.year_level,
           section: data.section,
+          profilePhotoUrl: data.profile_photo_url || undefined,
+          accountUserId: data.account_user_id || undefined,
         };
       },
     });
@@ -694,6 +710,8 @@ export const studentsService = {
           program: data.program,
           yearLevel: data.year_level,
           section: data.section,
+          profilePhotoUrl: data.profile_photo_url || undefined,
+          accountUserId: data.account_user_id || undefined,
         };
       },
     });
@@ -793,7 +811,52 @@ export const studentsService = {
       program: item.program as string,
       yearLevel: item.year_level as number,
       section: item.section as string,
+      profilePhotoUrl: (item.profile_photo_url as string | null) || undefined,
+      accountUserId: (item.account_user_id as string | null) || undefined,
     }));
+  },
+};
+
+// ============================================
+// STUDENT PROFILE PHOTO SERVICE
+// ============================================
+const PROFILE_PHOTO_BUCKET = "profile-photos";
+const MAX_PROFILE_PHOTO_BYTES = 5 * 1024 * 1024;
+const PROFILE_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+export const profilePhotoService = {
+  maxBytes: MAX_PROFILE_PHOTO_BYTES,
+  supportedTypes: PROFILE_PHOTO_TYPES,
+
+  async upload(studentId: string, file: File): Promise<string> {
+    if (!PROFILE_PHOTO_TYPES.has(file.type)) {
+      throw new Error("Please choose a JPG, PNG, or WebP image.");
+    }
+    if (file.size > MAX_PROFILE_PHOTO_BYTES) {
+      throw new Error("Profile photos must be 5 MB or smaller.");
+    }
+
+    // One stable object per student lets replacement overwrite the previous
+    // photo instead of leaving orphaned files in Storage.
+    const path = `${studentId}/profile`;
+    const supabase = getSupabase();
+    const { error: uploadError } = await supabase.storage
+      .from(PROFILE_PHOTO_BUCKET)
+      .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
+    if (uploadError) throw new Error(uploadError.message);
+
+    const { data: urlData } = supabase.storage
+      .from(PROFILE_PHOTO_BUCKET)
+      .getPublicUrl(path);
+    const versionedUrl = `${urlData.publicUrl}?v=${Date.now()}`;
+    const { data, error } = await supabase.rpc("set_student_profile_photo", {
+      target_student_id: studentId,
+      next_profile_photo_url: versionedUrl,
+    });
+    if (error) throw new Error(error.message);
+
+    invalidateReferenceCache("students");
+    return (data as string | null) || versionedUrl;
   },
 };
 
@@ -823,25 +886,24 @@ export const eventsService = {
 
   async create(event: Omit<Event, "id">): Promise<Event> {
     const id = createRecordId();
-    const payload = {
-      name: event.name,
-      allocation_amount: event.allocationAmount,
-      is_non_conducting: event.isNonConducting ?? false,
-      is_no_contribution: event.isNoContribution ?? false,
-      auto_mark_absent: event.autoMarkAbsent ?? false,
-      date: event.date,
+    const assignedMemberIds =
+      event.assignedMembers?.map((m) => m.memberId) ?? [];
+    const assignedMemberNames =
+      event.assignedMembers?.map((m) => m.memberName) ?? [];
+
+    const payload: Record<string, unknown> = {
+      name: event.name.trim(),
+      allocation_amount: Number(event.allocationAmount) || 0,
+      is_non_conducting: Boolean(event.isNonConducting),
+      is_no_contribution: Boolean(event.isNoContribution),
+      auto_mark_absent: Boolean(event.autoMarkAbsent),
+      date: event.date ?? null,
       contribution_deadline: event.contributionDeadline ?? "",
-      evaluation_active: event.evaluationActive ?? false,
+      evaluation_active: Boolean(event.evaluationActive),
       evaluation_form_url: event.evaluationFormUrl ?? "",
       schedules: event.schedules ?? [],
-      time_in: event.timeIn ?? "",
-      time_out: event.timeOut ?? "",
-      morning_time_in: event.morningTimeIn ?? "",
-      morning_time_out: event.morningTimeOut ?? "",
-      afternoon_time_in: event.afternoonTimeIn ?? "",
-      afternoon_time_out: event.afternoonTimeOut ?? "",
-      evening_time_in: event.eveningTimeIn ?? "",
-      evening_time_out: event.eveningTimeOut ?? "",
+      assigned_member_ids: assignedMemberIds,
+      assigned_member_names: assignedMemberNames,
     };
 
     const result = await offlineSyncService.mutation<Event>({
@@ -864,7 +926,17 @@ export const eventsService = {
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          if (error.code === "23505") {
+            throw new Error(`An event named "${event.name}" already exists.`);
+          }
+          if (error.code === "42501") {
+            throw new Error(
+              "You do not have permission to create events. Officer access required.",
+            );
+          }
+          throw error;
+        }
         return mapEvent(data);
       },
     });
@@ -883,43 +955,39 @@ export const eventsService = {
     }
 
     const updateData: Record<string, unknown> = {};
-    if (event.name !== undefined) updateData.name = event.name;
+    if (event.name !== undefined) updateData.name = event.name.trim();
     if (event.allocationAmount !== undefined)
-      updateData.allocation_amount = event.allocationAmount;
+      updateData.allocation_amount = Number(event.allocationAmount) || 0;
 
     if (event.isNonConducting !== undefined)
-      updateData.is_non_conducting = event.isNonConducting;
+      updateData.is_non_conducting = Boolean(event.isNonConducting);
 
     if (event.isNoContribution !== undefined)
-      updateData.is_no_contribution = event.isNoContribution;
+      updateData.is_no_contribution = Boolean(event.isNoContribution);
 
     if (event.autoMarkAbsent !== undefined)
-      updateData.auto_mark_absent = event.autoMarkAbsent;
+      updateData.auto_mark_absent = Boolean(event.autoMarkAbsent);
 
-    if (event.schedules !== undefined) {
-      updateData.schedules = event.schedules;
-    }
     if (event.date !== undefined) updateData.date = event.date;
     if (event.contributionDeadline !== undefined)
       updateData.contribution_deadline = event.contributionDeadline;
     if (event.evaluationActive !== undefined)
-      updateData.evaluation_active = event.evaluationActive;
+      updateData.evaluation_active = Boolean(event.evaluationActive);
     if (event.evaluationFormUrl !== undefined)
       updateData.evaluation_form_url = event.evaluationFormUrl;
-    if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
-    if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
-    if (event.morningTimeIn !== undefined)
-      updateData.morning_time_in = event.morningTimeIn;
-    if (event.morningTimeOut !== undefined)
-      updateData.morning_time_out = event.morningTimeOut;
-    if (event.afternoonTimeIn !== undefined)
-      updateData.afternoon_time_in = event.afternoonTimeIn;
-    if (event.afternoonTimeOut !== undefined)
-      updateData.afternoon_time_out = event.afternoonTimeOut;
-    if (event.eveningTimeIn !== undefined)
-      updateData.evening_time_in = event.eveningTimeIn;
-    if (event.eveningTimeOut !== undefined)
-      updateData.evening_time_out = event.eveningTimeOut;
+
+    if (event.schedules !== undefined) {
+      updateData.schedules = event.schedules;
+    }
+
+    if (event.assignedMembers !== undefined) {
+      updateData.assigned_member_ids = event.assignedMembers.map(
+        (m) => m.memberId,
+      );
+      updateData.assigned_member_names = event.assignedMembers.map(
+        (m) => m.memberName,
+      );
+    }
 
     const result = await offlineSyncService.mutation<Event>({
       table: "events",
@@ -943,7 +1011,17 @@ export const eventsService = {
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          if (error.code === "23505") {
+            throw new Error(`An event named "${event.name}" already exists.`);
+          }
+          if (error.code === "42501") {
+            throw new Error(
+              "You do not have permission to update events. Officer access required.",
+            );
+          }
+          throw error;
+        }
         return mapEvent(data);
       },
     });
@@ -967,37 +1045,35 @@ export const eventsService = {
     }
 
     const updateData: Record<string, unknown> = {};
-    if (event.name !== undefined) updateData.name = event.name;
+    if (event.name !== undefined) updateData.name = event.name.trim();
     if (event.allocationAmount !== undefined)
-      updateData.allocation_amount = event.allocationAmount;
+      updateData.allocation_amount = Number(event.allocationAmount) || 0;
     if (event.isNonConducting !== undefined)
-      updateData.is_non_conducting = event.isNonConducting;
+      updateData.is_non_conducting = Boolean(event.isNonConducting);
     if (event.isNoContribution !== undefined)
-      updateData.is_no_contribution = event.isNoContribution;
+      updateData.is_no_contribution = Boolean(event.isNoContribution);
     if (event.autoMarkAbsent !== undefined)
-      updateData.auto_mark_absent = event.autoMarkAbsent;
-    if (event.schedules !== undefined) updateData.schedules = event.schedules;
+      updateData.auto_mark_absent = Boolean(event.autoMarkAbsent);
     if (event.date !== undefined) updateData.date = event.date;
     if (event.contributionDeadline !== undefined)
       updateData.contribution_deadline = event.contributionDeadline;
     if (event.evaluationActive !== undefined)
-      updateData.evaluation_active = event.evaluationActive;
+      updateData.evaluation_active = Boolean(event.evaluationActive);
     if (event.evaluationFormUrl !== undefined)
       updateData.evaluation_form_url = event.evaluationFormUrl;
-    if (event.timeIn !== undefined) updateData.time_in = event.timeIn;
-    if (event.timeOut !== undefined) updateData.time_out = event.timeOut;
-    if (event.morningTimeIn !== undefined)
-      updateData.morning_time_in = event.morningTimeIn;
-    if (event.morningTimeOut !== undefined)
-      updateData.morning_time_out = event.morningTimeOut;
-    if (event.afternoonTimeIn !== undefined)
-      updateData.afternoon_time_in = event.afternoonTimeIn;
-    if (event.afternoonTimeOut !== undefined)
-      updateData.afternoon_time_out = event.afternoonTimeOut;
-    if (event.eveningTimeIn !== undefined)
-      updateData.evening_time_in = event.eveningTimeIn;
-    if (event.eveningTimeOut !== undefined)
-      updateData.evening_time_out = event.eveningTimeOut;
+
+    if (event.schedules !== undefined) {
+      updateData.schedules = event.schedules;
+    }
+
+    if (event.assignedMembers !== undefined) {
+      updateData.assigned_member_ids = event.assignedMembers.map(
+        (m) => m.memberId,
+      );
+      updateData.assigned_member_names = event.assignedMembers.map(
+        (m) => m.memberName,
+      );
+    }
 
     const { data, error } = await getSupabase()
       .from("events")
@@ -1005,7 +1081,17 @@ export const eventsService = {
       .eq("id", id)
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === "23505") {
+        throw new Error(`An event named "${event.name}" already exists.`);
+      }
+      if (error.code === "42501") {
+        throw new Error(
+          "You do not have permission to update events. Officer access required.",
+        );
+      }
+      throw error;
+    }
 
     const result = mapEvent(data);
     invalidateReferenceCache("events");
@@ -1111,13 +1197,20 @@ type AttendanceRow = {
 
 type EventSessionValue = "morning" | "afternoon" | "evening";
 
+const normalizeAttendanceStatus = (
+  status: unknown,
+): AttendanceRecord["status"] =>
+  status === "absent" || status === "excuse" ? status : "present";
+
 const toAttendanceRecord = (item: AttendanceRow): AttendanceRecord => ({
   id: item.id,
   studentId: item.student_id,
   eventId: item.event_id,
   eventName: item.event_name,
   date: item.date,
-  status: item.status,
+  // Legacy `late` rows remain in the database for historical integrity, but
+  // are represented as Present in the current three-status application model.
+  status: normalizeAttendanceStatus(item.status),
   session: (item.session ?? "morning") as EventSessionValue,
   timeIn: item.time_in ?? undefined,
   timeOut: item.time_out ?? undefined,
@@ -1220,7 +1313,7 @@ export const attendanceService = {
 
   /**
    * Automatic Absent: inserts an "absent" row for every student without an
-   * attendance row for the event's date. Existing rows (Present, Late,
+   * attendance row for the event's date. Existing rows (Present, Excused,
    * Absent) are never modified. Returns only the newly inserted rows.
    *
    * ONLINE ONLY. This deliberately bypasses offlineSyncService: it is never
@@ -2970,6 +3063,14 @@ export const subscribeToTables = (
 ): (() => void) => {
   const sb = getSupabase();
   const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const debouncedOnChange = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      onChange();
+    }, 400);
+  };
 
   for (const table of tables) {
     channel.on(
@@ -2986,13 +3087,14 @@ export const subscribeToTables = (
               console.warn("Could not invalidate cached attendance:", cacheError),
             );
         }
-        onChange();
+        debouncedOnChange();
       },
     );
   }
 
   channel.subscribe();
   return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     void sb.removeChannel(channel);
   };
 };
@@ -3472,9 +3574,6 @@ const mapLscOfficer = (item: Record<string, unknown>): LscOfficer => {
     studentId: (item.student_id as string) || "",
     studentDbId: (item.student_db_id as string) || undefined,
     name: (item.name as string) || "",
-    previewFileReference: normalizeLscPreviewFileReference(
-      item.preview_file_reference,
-    ),
     program: (item.program as string) || "",
     yearLevel: Number(item.year_level) || 1,
     section: (item.section as string) || "",
@@ -3580,7 +3679,6 @@ export const lscOfficersService = {
     yearLevel?: number;
     section?: string;
     positions: string[];
-    previewFileReference?: string;
   }): Promise<LscOfficer> {
     const existing = await this.getByStudentId(input.studentId);
     const id = existing ? existing.id : createRecordId();
@@ -3589,13 +3687,6 @@ export const lscOfficersService = {
     const cleanedPositions = Array.from(
       new Set(input.positions.map((p) => p.trim()).filter(Boolean)),
     );
-    const previewFileReference = normalizeLscPreviewFileReference(
-      input.previewFileReference,
-    );
-    if (input.previewFileReference && !previewFileReference) {
-      throw new Error("Invalid LSC Preview file reference");
-    }
-
     const payload = {
       id,
       student_id: input.studentId,
@@ -3605,7 +3696,6 @@ export const lscOfficersService = {
       year_level: input.yearLevel ?? 1,
       section: input.section ?? "",
       positions: cleanedPositions,
-      preview_file_reference: previewFileReference ?? null,
       updated_at: now,
       ...(existing ? {} : { created_at: now }),
     };
@@ -3629,7 +3719,6 @@ export const lscOfficersService = {
           studentId: input.studentId,
           name: input.name,
           positions: cleanedPositions,
-          previewFileReference,
         },
       ),
       makeLocal: () => ({
@@ -3641,7 +3730,6 @@ export const lscOfficersService = {
         yearLevel: input.yearLevel ?? 1,
         section: input.section ?? "",
         positions: cleanedPositions,
-        previewFileReference,
         createdAt: existing ? existing.createdAt : now,
         updatedAt: now,
       }),
@@ -3681,7 +3769,6 @@ export const lscOfficersService = {
       yearLevel: officer.yearLevel,
       section: officer.section,
       positions: newPositions,
-      previewFileReference: officer.previewFileReference,
     });
   },
 
@@ -3709,7 +3796,6 @@ export const lscOfficersService = {
       yearLevel: officer.yearLevel,
       section: officer.section,
       positions: newPositions,
-      previewFileReference: officer.previewFileReference,
     });
   },
 
@@ -3757,6 +3843,7 @@ const mapEventVolunteer = (
   section: (item.section as string) || undefined,
   roleOrTask: (item.role_or_task as string) || "Volunteer",
   status: (item.status as EventVolunteer["status"]) || "assigned",
+  expiresAt: (item.expires_at as string) || undefined,
   createdAt: (item.created_at as string) || new Date().toISOString(),
 });
 
@@ -3783,10 +3870,34 @@ export const eventVolunteersService = {
     return all.filter((v) => v.eventId === eventId);
   },
 
-  async getByStudentId(studentId: string): Promise<EventVolunteer[]> {
+  async getByStudentId(studentIdentifier: string): Promise<EventVolunteer[]> {
     const all = await this.getAll();
-    const cleanId = studentId.trim().toLowerCase();
-    return all.filter((v) => v.studentId.trim().toLowerCase() === cleanId);
+    const cleanId = studentIdentifier.trim().toLowerCase();
+    const direct = all.filter(
+      (v) => v.studentId.trim().toLowerCase() === cleanId,
+    );
+    if (direct.length > 0) return direct;
+
+    try {
+      const students = await studentsService.getAll();
+      const matched = students.find(
+        (s) =>
+          s.id.toLowerCase() === cleanId ||
+          s.studentId.trim().toLowerCase() === cleanId,
+      );
+      if (matched) {
+        const targetIds = new Set([
+          matched.id.toLowerCase(),
+          matched.studentId.trim().toLowerCase(),
+        ]);
+        return all.filter((v) =>
+          targetIds.has(v.studentId.trim().toLowerCase()),
+        );
+      }
+    } catch {
+      // Ignore cache or network lookup failure; return direct
+    }
+    return direct;
   },
 
   async assign(input: {
@@ -3798,9 +3909,30 @@ export const eventVolunteersService = {
     yearLevel?: number;
     section?: string;
     roleOrTask: string;
+    eventDate?: string;
+    expiresAt?: string;
   }): Promise<EventVolunteer> {
     const id = createRecordId();
     const now = new Date().toISOString();
+
+    let expiresAt = input.expiresAt;
+    if (!expiresAt) {
+      if (
+        input.eventDate &&
+        input.eventDate !== "TBD" &&
+        !isNaN(Date.parse(input.eventDate))
+      ) {
+        const d = new Date(input.eventDate);
+        d.setHours(23, 59, 59, 999);
+        d.setDate(d.getDate() + 7);
+        expiresAt = d.toISOString();
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() + 90);
+        expiresAt = d.toISOString();
+      }
+    }
+
     const payload = {
       id,
       event_id: input.eventId,
@@ -3812,6 +3944,7 @@ export const eventVolunteersService = {
       section: input.section || "",
       role_or_task: input.roleOrTask,
       status: "assigned",
+      expires_at: expiresAt,
       created_at: now,
     };
 
@@ -3842,6 +3975,7 @@ export const eventVolunteersService = {
         section: input.section,
         roleOrTask: input.roleOrTask,
         status: "assigned",
+        expiresAt,
         createdAt: now,
       }),
       executeOnline: async () => {
@@ -3850,7 +3984,24 @@ export const eventVolunteersService = {
           .insert(payload)
           .select()
           .single();
-        if (error) throw error;
+        if (error) {
+          if (error.code === "23505") {
+            throw new Error(
+              `${input.studentName} is already assigned as a volunteer for this event.`,
+            );
+          }
+          if (error.code === "23503") {
+            throw new Error(
+              "Invalid event or student selected. The record does not exist in the database.",
+            );
+          }
+          if (error.code === "42501") {
+            throw new Error(
+              "You do not have permission to assign volunteers. Officer admin access required.",
+            );
+          }
+          throw error;
+        }
         return mapEventVolunteer(data);
       },
     });

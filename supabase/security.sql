@@ -24,7 +24,8 @@
 --   1. Creates public.user_roles          (maps Supabase auth user -> role)
 --   2. Creates role helper functions      (public.has_role / public.is_staff)
 --   3. Creates a public "receipts" storage bucket + upload/read policies
---   4. REPLACES the open RLS policies with strict, role-aware policies:
+--   4. Creates profile-photo storage and replaces the open RLS policies with
+--      strict, role-aware policies:
 --        - public (students, anon)      -> SELECT only (read the board)
 --        - admin     -> can write to every table
 --        - secretary -> can write attendance records only
@@ -41,8 +42,8 @@
 --      scripts/create-officers.mjs only synchronize roles for accounts that
 --      already exist. Alternative path: Dashboard "Authentication > Users >
 --      Add user" (enable "Auto Confirm User").
---   6. Removes the obsolete profile_image_url column from user_roles. Officer
---      images are local application assets, never Supabase data.
+--   6. Removes the obsolete profile_image_url column from user_roles. Student
+--      profile photos are stored on the students table and profile-photos bucket.
 --
 --  ⚠️ SECURITY NOTE
 --  ---------------
@@ -167,6 +168,98 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS assigned_member_ids   TEXT[] NOT NUL
 ALTER TABLE events ADD COLUMN IF NOT EXISTS assigned_member_names TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE events ADD COLUMN IF NOT EXISTS auto_mark_absent       BOOLEAN NOT NULL DEFAULT false;
 
+-- Student profile photos are owned by the student record. account_user_id is
+-- nullable so existing records and public record lookup remain unchanged.
+ALTER TABLE public.students
+  ADD COLUMN IF NOT EXISTS profile_photo_url TEXT,
+  ADD COLUMN IF NOT EXISTS account_user_id UUID REFERENCES auth.users (id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_students_account_user_id
+  ON public.students (account_user_id)
+  WHERE account_user_id IS NOT NULL;
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('profile-photos', 'profile-photos', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS profile_photos_public_read ON storage.objects;
+CREATE POLICY profile_photos_public_read ON storage.objects
+  FOR SELECT TO public USING (bucket_id = 'profile-photos');
+
+DROP POLICY IF EXISTS profile_photos_authenticated_upload ON storage.objects;
+CREATE POLICY profile_photos_authenticated_upload ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'profile-photos'
+    AND split_part(name, '/', 2) = 'profile'
+    AND (
+      public.has_role('admin') OR public.has_role('secretary')
+      OR EXISTS (
+        SELECT 1 FROM public.students s
+        WHERE s.id = split_part(name, '/', 1)
+          AND s.account_user_id = auth.uid()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS profile_photos_authenticated_update ON storage.objects;
+CREATE POLICY profile_photos_authenticated_update ON storage.objects
+  FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'profile-photos'
+    AND split_part(name, '/', 2) = 'profile'
+    AND (
+      public.has_role('admin') OR public.has_role('secretary')
+      OR EXISTS (
+        SELECT 1 FROM public.students s
+        WHERE s.id = split_part(name, '/', 1)
+          AND s.account_user_id = auth.uid()
+      )
+    )
+  )
+  WITH CHECK (
+    bucket_id = 'profile-photos'
+    AND split_part(name, '/', 2) = 'profile'
+  );
+
+CREATE OR REPLACE FUNCTION public.set_student_profile_photo(
+  target_student_id TEXT,
+  next_profile_photo_url TEXT
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE saved_url TEXT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Authentication is required to update a profile photo';
+  END IF;
+  IF NOT (
+    public.has_role('admin') OR public.has_role('secretary')
+    OR EXISTS (
+      SELECT 1 FROM public.students
+      WHERE id = target_student_id AND account_user_id = auth.uid()
+    )
+  ) THEN
+    RAISE EXCEPTION 'You are not authorized to update this student profile photo';
+  END IF;
+  IF next_profile_photo_url IS NULL
+     OR next_profile_photo_url NOT LIKE '%/storage/v1/object/public/profile-photos/' || target_student_id || '/profile%'
+  THEN
+    RAISE EXCEPTION 'Invalid profile photo storage path';
+  END IF;
+  UPDATE public.students
+     SET profile_photo_url = next_profile_photo_url
+   WHERE id = target_student_id
+   RETURNING profile_photo_url INTO saved_url;
+  IF saved_url IS NULL THEN RAISE EXCEPTION 'Student record not found'; END IF;
+  RETURN saved_url;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.set_student_profile_photo(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.set_student_profile_photo(TEXT, TEXT) TO authenticated;
+
 ALTER TABLE public.board_members ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "board_members_read_public" ON public.board_members;
 CREATE POLICY "board_members_read_public" ON public.board_members FOR SELECT TO public USING (true);
@@ -175,8 +268,9 @@ CREATE POLICY "board_members_write_admin" ON public.board_members FOR ALL TO aut
   USING (public.has_role('admin')) WITH CHECK (public.has_role('admin'));
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.board_members TO anon, authenticated;
 
--- Scheduled attendance windows per event (24h HH:MM). The QR scanner compares
--- the actual scan time against these to auto-derive Present / Late / Absent.
+-- Scheduled attendance windows per event (24h HH:MM). QR scans record Present
+-- regardless of the configured clock window; schedules are used for session
+-- display and event-date Automatic Absent handling.
 -- Each event has a Morning session and an Afternoon session (both optional).
 ALTER TABLE events ADD COLUMN IF NOT EXISTS time_in            TEXT NOT NULL DEFAULT '';
 ALTER TABLE events ADD COLUMN IF NOT EXISTS time_out           TEXT NOT NULL DEFAULT '';

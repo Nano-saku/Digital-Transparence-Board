@@ -163,18 +163,6 @@ export function timeToMinutes(value?: string): number | null {
 }
 
 /**
- * Compares two 24h `HH:MM` times: negative when `a` is earlier than `b`, `0`
- * when equal (or either is unparseable), positive when `a` is later. Used to
- * decide attendance status from a QR scan time vs. the event's scheduled time.
- */
-export function compareTime24(a?: string, b?: string): number {
-  const minutesA = timeToMinutes(a);
-  const minutesB = timeToMinutes(b);
-  if (minutesA === null || minutesB === null) return 0;
-  return minutesA - minutesB;
-}
-
-/**
  * Splits a 24h `"HH:MM"` time into typeable 12-hour Hour / Minute / AM·PM
  * parts for editable time fields (separate hour and minute inputs plus an
  * AM/PM dropdown, with the `:` rendered between them rather than typed).

@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
 import { pickField } from "@/lib/spreadsheet";
 import { ATTENDANCE_COURSES } from "@/lib/kmeans";
 import { useSearch } from "@/hooks/useSearch";
@@ -454,7 +455,11 @@ export default function StudentManagementSection({
                         <div className="flex items-center gap-10">
                           {/* Avatar */}
                           <div className="w-9 h-9 shrink-0 rounded-full bg-red/10 flex items-center justify-center">
-                            <User className="w-4 h-4 text-red" />
+                            {student.profilePhotoUrl ? (
+                              <img src={student.profilePhotoUrl} alt="" className="h-full w-full rounded-full object-cover" />
+                            ) : (
+                              <User className="w-4 h-4 text-red" />
+                            )}
                           </div>
 
                           {/* Name + Student ID */}
@@ -577,6 +582,22 @@ export default function StudentManagementSection({
           </DialogHeader>
 
           <div className="space-y-4 mt-4">
+            {editingStudent && (
+              <div className="flex items-center gap-4 rounded-lg border border-border/60 bg-white/30 p-3">
+                <ProfilePhotoUploader
+                  studentId={editingStudent.id}
+                  photoUrl={editingStudent.profilePhotoUrl}
+                  name={editingStudent.name}
+                  onUploaded={(profilePhotoUrl) => {
+                    const updatedStudent = { ...editingStudent, profilePhotoUrl };
+                    setEditingStudent(updatedStudent);
+                    setStudents((current) => current.map((item) => item.id === updatedStudent.id ? updatedStudent : item));
+                  }}
+                  sizeClassName="h-16 w-16"
+                />
+                <p className="text-xs text-text-secondary">This photo is saved to the student record and is also used for LSC officer displays.</p>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-dark mb-1">
                 Student ID

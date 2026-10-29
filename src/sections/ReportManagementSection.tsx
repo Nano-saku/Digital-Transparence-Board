@@ -4,7 +4,6 @@ import {
   Download,
   Users,
   CheckCircle,
-  Clock,
   XCircle,
   Filter,
 } from "lucide-react";
@@ -45,7 +44,7 @@ interface ReportRow {
   yearLevel: number;
   course: string;
   section: string;
-  status: "Present" | "Late" | "Absent" | "Excuse";
+  status: "Present" | "Absent" | "Excused";
   eventName: string;
   timeIn: string;
   timeOut: string;
@@ -230,7 +229,7 @@ export default function ReportManagementSection({
         (!selectedEvent.date || r.date === selectedEvent.date),
     );
 
-    // studentId -> best record (prefer present/late over absent)
+    // studentId -> best record (prefer Present over Excused over Absent)
     const studentRecordMap = new Map<string, AttendanceRecord>();
     for (const record of eventRecords) {
       const existing = studentRecordMap.get(record.studentId);
@@ -238,7 +237,7 @@ export default function ReportManagementSection({
         studentRecordMap.set(record.studentId, record);
       } else {
         const priorityOf = (s: string) =>
-          s === "present" ? 3 : s === "late" ? 2 : s === "excuse" ? 1 : 0;
+          s === "present" ? 3 : s === "excuse" ? 2 : 0;
         if (priorityOf(record.status) > priorityOf(existing.status)) {
           studentRecordMap.set(record.studentId, record);
         } else if (
@@ -266,17 +265,10 @@ export default function ReportManagementSection({
             timeOut: "—",
           };
         }
-        // Use the stored status as the authoritative value. It is set
-        // explicitly by QR scan logic (present/late based on session time)
-        // and by manual edits (where the admin deliberately chose a status).
-        // Recomputing from timeIn would override a manually set status and
-        // cause the report to disagree with Attendance Tracking.
-        const displayStatus: "Present" | "Late" | "Excuse" =
-          record.status === "late"
-            ? "Late"
-            : record.status === "excuse"
-              ? "Excuse"
-              : "Present";
+        // Use the stored status as the authoritative value. QR scans always
+        // write Present; manual edits may select Present or Excuse.
+        const displayStatus: "Present" | "Excused" =
+          record.status === "excuse" ? "Excused" : "Present";
 
         return {
           studentName: student.name,
@@ -303,11 +295,10 @@ export default function ReportManagementSection({
 
   const totalStudents = reportRows.length;
   const totalPresent = reportRows.filter((r) => r.status === "Present").length;
-  const totalLate = reportRows.filter((r) => r.status === "Late").length;
   const totalAbsent = reportRows.filter((r) => r.status === "Absent").length;
   const attendancePercentage =
     totalStudents > 0
-      ? (((totalPresent + totalLate) / totalStudents) * 100).toFixed(1)
+      ? ((totalPresent / totalStudents) * 100).toFixed(1)
       : "0.0";
 
   const contributionEvents = useMemo(
@@ -499,7 +490,6 @@ export default function ReportManagementSection({
         section: esc(selectedSection),
         totalStudents,
         totalPresent,
-        totalLate,
         totalAbsent,
         attendancePercentage,
         tableRows,
@@ -694,10 +684,9 @@ export default function ReportManagementSection({
             </div>
 
             {reportType === "attendance" && filtersComplete && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">
                 <SummaryCard icon={Users} color="blue" value={totalStudents} label="Total Students" />
                 <SummaryCard icon={CheckCircle} color="green" value={totalPresent} label="Present" />
-                <SummaryCard icon={Clock} color="amber" value={totalLate} label="Late" />
                 <SummaryCard icon={XCircle} color="red" value={totalAbsent} label="Absent" />
                 <div className="glass-card p-4 text-center col-span-2 sm:col-span-1">
                   <div className="w-9 h-9 rounded-lg bg-royal-blue/10 flex items-center justify-center mx-auto mb-2">
@@ -894,13 +883,11 @@ export default function ReportManagementSection({
 
 function StatusBadge({ status }: { status: ReportRow["status"] }) {
   const className =
-    status === "Late"
-      ? "bg-amber-100 text-amber-700"
-      : status === "Present"
-        ? "bg-green-100 text-green-600"
-        : status === "Excuse"
-          ? "bg-purple-100 text-purple-700"
-          : "bg-red-100 text-red-500";
+    status === "Present"
+      ? "bg-green-100 text-green-600"
+      : status === "Excused"
+        ? "bg-purple-100 text-purple-700"
+        : "bg-red-100 text-red-500";
   return (
     <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${className}`}>
       {status}
@@ -936,7 +923,6 @@ interface PrintableReport {
   section: string;
   totalStudents: number;
   totalPresent: number;
-  totalLate: number;
   totalAbsent: number;
   attendancePercentage: string;
   tableRows: string;
@@ -964,14 +950,14 @@ function buildReportHtml(report: PrintableReport): string {
   .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
   .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
   .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
-  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:21px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.present{color:#047857}.late{color:#b45309}.absent{color:#b91c1c}.percent{color:#1b2e8c}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:21px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.present{color:#047857}.absent{color:#b91c1c}.percent{color:#1b2e8c}
   table{width:100%;border-collapse:collapse;font-size:12px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 9px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:7px 9px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.odd{background:#f9fafb}.even{background:#fff}
-  .s-present,.s-late,.s-absent,.s-excuse{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-late{background:#fef3c7;color:#b45309}.s-absent{background:#fee2e2;color:#b91c1c}.s-excuse{background:#f3e8ff;color:#7e22ce}
+  .s-present,.s-absent,.s-excused{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-absent{background:#fee2e2;color:#b91c1c}.s-excused{background:#f3e8ff;color:#7e22ce}
   footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
 </style></head><body>
   <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Attendance Report</h1><div class="sub">Official Attendance Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
   <section class="metadata"><div><span class="label">Event:</span>${report.eventName}</div><div><span class="label">Year Level:</span>${report.yearLabel}</div><div><span class="label">Course:</span>${report.course}</div><div><span class="label">Section:</span>${report.section}</div></section>
-  <section class="summary"><div class="card"><div class="number">${report.totalStudents}</div><div class="caption">Total Students</div></div><div class="card"><div class="number present">${report.totalPresent}</div><div class="caption">Total Present</div></div><div class="card"><div class="number late">${report.totalLate}</div><div class="caption">Total Late</div></div><div class="card"><div class="number absent">${report.totalAbsent}</div><div class="caption">Total Absent</div></div><div class="card"><div class="number percent">${report.attendancePercentage}%</div><div class="caption">Attendance</div></div></section>
+  <section class="summary"><div class="card"><div class="number">${report.totalStudents}</div><div class="caption">Total Students</div></div><div class="card"><div class="number present">${report.totalPresent}</div><div class="caption">Total Present</div></div><div class="card"><div class="number absent">${report.totalAbsent}</div><div class="caption">Total Absent</div></div><div class="card"><div class="number percent">${report.attendancePercentage}%</div><div class="caption">Attendance</div></div></section>
   <table><thead><tr><th>Student</th><th class="center">Year</th><th class="center">Course</th><th class="center">Section</th><th class="center">Status</th><th>Event</th><th class="center">Time In</th><th class="center">Time Out</th></tr></thead><tbody>${report.tableRows}</tbody></table>
   <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
 </body></html>`;

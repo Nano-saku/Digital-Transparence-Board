@@ -4,9 +4,8 @@ import {
   HeartHandshake,
   QrCode,
   ShieldCheck,
-  User,
 } from "lucide-react";
-import type { Event, EventVolunteer, LscOfficer, Student } from "@/types";
+import type { Event, EventVolunteer, LscOfficer, Student, UserRole } from "@/types";
 import {
   eventVolunteersService,
   eventsService,
@@ -20,11 +19,14 @@ import AnimatedNetwork from "@/components/ui/animated-network";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import { getOrdinalSuffix } from "@/lib/format";
 import { toast } from "sonner";
+import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
 
 interface OfficerRecordSectionProps {
   student: Student;
   appointments: LscOfficer[];
   onBack: () => void;
+  currentUserId?: string;
+  currentUserRole?: UserRole | null;
 }
 
 /** The dedicated record view shown only after App verifies an appointment. */
@@ -32,6 +34,8 @@ export default function OfficerRecordSection({
   student,
   appointments,
   onBack,
+  currentUserId,
+  currentUserRole,
 }: OfficerRecordSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -39,6 +43,15 @@ export default function OfficerRecordSection({
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<Event[]>([]);
   const [volunteers, setVolunteers] = useState<EventVolunteer[]>([]);
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState(student.profilePhotoUrl);
+  const canEditProfilePhoto =
+    currentUserRole === "admin" ||
+    currentUserRole === "secretary" ||
+    currentUserId === student.accountUserId;
+
+  useEffect(() => {
+    setProfilePhotoUrl(student.profilePhotoUrl);
+  }, [student.id, student.profilePhotoUrl]);
 
   const loadActivities = useCallback(async () => {
     try {
@@ -82,11 +95,6 @@ export default function OfficerRecordSection({
         .join(" / "),
     [appointments],
   );
-  const profileFileReference = useMemo(
-    () => appointments.find((appointment) => appointment.previewFileReference)?.previewFileReference,
-    [appointments],
-  );
-
   return (
     <section
       ref={sectionRef}
@@ -108,18 +116,14 @@ export default function OfficerRecordSection({
             <div ref={profileRef} className="glass-card p-5 lg:p-6 mb-8">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-full overflow-hidden bg-red/10 flex items-center justify-center shrink-0">
-                    {profileFileReference ? (
-                      <img
-                        src={profileFileReference}
-                        alt={`${student.name}'s selected LSC profile`}
-                        className="h-full w-full object-cover"
-                        draggable={false}
-                      />
-                    ) : (
-                      <User className="w-8 h-8 text-red" />
-                    )}
-                  </div>
+                  <ProfilePhotoUploader
+                    studentId={student.id}
+                    photoUrl={profilePhotoUrl}
+                    name={student.name}
+                    editable={canEditProfilePhoto}
+                    sizeClassName="h-16 w-16"
+                    onUploaded={setProfilePhotoUrl}
+                  />
                   <div>
                     <p className="text-xs text-text-secondary uppercase tracking-wider">
                       Verified LSC Officer Record

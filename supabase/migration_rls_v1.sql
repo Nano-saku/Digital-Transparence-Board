@@ -12,6 +12,17 @@
 
 BEGIN;
 
+-- Profile-photo schema additions must exist before the Storage policies below
+-- reference students.account_user_id. This keeps the baseline RLS script safe
+-- to run against databases created before the profile-photo migration.
+ALTER TABLE public.students
+    ADD COLUMN IF NOT EXISTS profile_photo_url TEXT,
+    ADD COLUMN IF NOT EXISTS account_user_id UUID REFERENCES auth.users (id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_students_account_user_id
+    ON public.students (account_user_id)
+    WHERE account_user_id IS NOT NULL;
+
 -- ============================================================
 -- 1. ENABLE RLS ON ALL TABLES
 -- ============================================================
@@ -237,6 +248,41 @@ CREATE POLICY "user_roles_read_board_members"
 -- ============================================================
 -- 8. STORAGE POLICIES
 -- ============================================================
+
+-- Profile photos: public read, but only administrators, secretaries, or the
+-- authenticated user linked to the student row may write that student's object.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('profile-photos', 'profile-photos', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS "profile_photos_public_read" ON storage.objects;
+CREATE POLICY "profile_photos_public_read" ON storage.objects
+    FOR SELECT TO public USING (bucket_id = 'profile-photos');
+
+DROP POLICY IF EXISTS "profile_photos_authenticated_upload" ON storage.objects;
+CREATE POLICY "profile_photos_authenticated_upload" ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        bucket_id = 'profile-photos'
+        AND split_part(name, '/', 2) = 'profile'
+        AND (public.has_role('admin') OR public.has_role('secretary') OR EXISTS (
+            SELECT 1 FROM public.students s
+            WHERE s.id = split_part(name, '/', 1) AND s.account_user_id = auth.uid()
+        ))
+    );
+
+DROP POLICY IF EXISTS "profile_photos_authenticated_update" ON storage.objects;
+CREATE POLICY "profile_photos_authenticated_update" ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (
+        bucket_id = 'profile-photos'
+        AND split_part(name, '/', 2) = 'profile'
+        AND (public.has_role('admin') OR public.has_role('secretary') OR EXISTS (
+            SELECT 1 FROM public.students s
+            WHERE s.id = split_part(name, '/', 1) AND s.account_user_id = auth.uid()
+        ))
+    )
+    WITH CHECK (bucket_id = 'profile-photos' AND split_part(name, '/', 2) = 'profile');
 
 -- Receipts bucket
 DROP POLICY IF EXISTS "receipts_public_read" ON storage.objects;

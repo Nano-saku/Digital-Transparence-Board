@@ -1140,11 +1140,15 @@ CREATE TABLE public.students (
     name text NOT NULL,
     program text NOT NULL,
     year_level integer DEFAULT 0 NOT NULL,
-    section text DEFAULT ''::text NOT NULL
+    section text DEFAULT ''::text NOT NULL,
+    profile_photo_url text,
+    account_user_id uuid
 );
 
 
 ALTER TABLE public.students OWNER TO postgres;
+
+CREATE UNIQUE INDEX idx_students_account_user_id ON public.students USING btree (account_user_id) WHERE (account_user_id IS NOT NULL);
 
 --
 -- Name: transactions; Type: TABLE; Schema: public; Owner: postgres
@@ -1580,6 +1584,10 @@ ALTER TABLE ONLY public.attendance
 
 ALTER TABLE ONLY public.board_members
     ADD CONSTRAINT board_members_account_user_id_fkey FOREIGN KEY (account_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+
+-- Student self-service account link (nullable for existing/public records).
+ALTER TABLE ONLY public.students
+    ADD CONSTRAINT students_account_user_id_fkey FOREIGN KEY (account_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 
 
 --

@@ -1,6 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  User,
   Calendar,
   CheckCircle,
   XCircle,
@@ -9,9 +8,10 @@ import {
   Download,
   QrCode,
   ChevronDown,
-  Clock,
   FolderOpen,
   Eye,
+  HeartHandshake,
+  Sparkles,
 } from "lucide-react";
 import type {
   Student,
@@ -20,6 +20,8 @@ import type {
   ContributionRecord,
   PaymentRecord,
   StudentRequirementFile,
+  EventVolunteer,
+  UserRole,
 } from "@/types";
 import {
   attendanceService,
@@ -27,6 +29,8 @@ import {
   eventsService,
   paymentsService,
   studentRequirementFilesService,
+  eventVolunteersService,
+  subscribeToTables,
 } from "@/services/db";
 import {
   Dialog,
@@ -68,10 +72,13 @@ import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import Pagination from "@/components/common/Pagination";
 import AnimatedNetwork from "@/components/ui/animated-network";
+import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
 
 interface StudentRecordSectionProps {
   student: Student;
   onBack: () => void;
+  currentUserId?: string;
+  currentUserRole?: UserRole | null;
 }
 
 const RECORDS_PAGE_SIZE = 5;
@@ -92,6 +99,8 @@ function formatFileSize(bytes?: number): string {
 export default function StudentRecordSection({
   student,
   onBack,
+  currentUserId,
+  currentUserRole,
 }: StudentRecordSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -103,6 +112,15 @@ export default function StudentRecordSection({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState(student.profilePhotoUrl);
+  const canEditProfilePhoto =
+    currentUserRole === "admin" ||
+    currentUserRole === "secretary" ||
+    currentUserId === student.accountUserId;
+
+  useEffect(() => {
+    setProfilePhotoUrl(student.profilePhotoUrl);
+  }, [student.id, student.profilePhotoUrl]);
 
   // Data states
   const [attendanceRecords, setAttendanceRecords] = useState<
@@ -114,6 +132,9 @@ export default function StudentRecordSection({
   >([]);
   const [contributionPage, setContributionPage] = useState(1);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
+  const [volunteerRecords, setVolunteerRecords] = useState<EventVolunteer[]>(
+    [],
+  );
 
   // Published Student Requirement Files (Student Viewer)
   const [publishedFiles, setPublishedFiles] = useState<
@@ -133,12 +154,14 @@ export default function StudentRecordSection({
         eventsData,
         paymentsData,
         publishedData,
+        volunteersData,
       ] = await Promise.all([
         attendanceService.getByStudentId(student.id),
         contributionsService.getByStudentId(student.id),
         eventsService.getAll(),
         paymentsService.getByStudentId(student.id),
         studentRequirementFilesService.getVisibleForStudent(student.id),
+        eventVolunteersService.getByStudentId(student.id),
       ]);
 
       // A contribution row is created when a payment or contribution is
@@ -181,6 +204,7 @@ export default function StudentRecordSection({
       setPaymentRecords(paymentsData);
       // Published requirement files shown to the student (Student Viewer).
       setPublishedFiles(publishedData);
+      setVolunteerRecords(volunteersData);
     } catch (error) {
       console.error("Error loading student data:", error);
       toast.error("Failed to load student records");
@@ -190,8 +214,20 @@ export default function StudentRecordSection({
   }, [student.id]);
 
   useEffect(() => {
-    loadStudentData();
-  }, [loadStudentData]);
+    void loadStudentData();
+    return subscribeToTables(
+      [
+        "attendance",
+        "contributions",
+        "payments",
+        "events",
+        "event_volunteers",
+        "student_requirement_files",
+      ],
+      () => void loadStudentData(),
+      `student-record-${student.id}`,
+    );
+  }, [loadStudentData, student.id]);
 
   // Payment receipts are grouped by event once (memoized) instead of being
   // re-filtered for every row on every render.
@@ -377,7 +413,6 @@ export default function StudentRecordSection({
   const presentCount = attendanceRecords.filter(
     (r) => r.status === "present",
   ).length;
-  const lateCount = attendanceRecords.filter((r) => r.status === "late").length;
   const absentCount = attendanceRecords.filter(
     (r) => r.status === "absent",
   ).length;
@@ -409,9 +444,13 @@ export default function StudentRecordSection({
             {/* Profile Card */}
             <div ref={profileRef} className="glass-card-strong p-6 lg:p-8 mb-8">
               <div className="flex flex-col lg:flex-row lg:items-center gap-6">
-                <div className="w-24 h-24 rounded-full bg-red/10 flex items-center justify-center flex-shrink-0">
-                  <User className="w-12 h-12 text-red" />
-                </div>
+                <ProfilePhotoUploader
+                  studentId={student.id}
+                  photoUrl={profilePhotoUrl}
+                  name={student.name}
+                  editable={canEditProfilePhoto}
+                  onUploaded={setProfilePhotoUrl}
+                />
                 <div className="flex-1">
                   <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark mb-2">
                     {student.name}
@@ -448,12 +487,6 @@ export default function StudentRecordSection({
                     <p className="text-xs text-text-secondary">Present</p>
                   </div>
                   <div className="glass-card px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-amber-500">
-                      {lateCount}
-                    </p>
-                    <p className="text-xs text-text-secondary">Late</p>
-                  </div>
-                  <div className="glass-card px-4 py-3 text-center">
                     <p className="text-2xl font-bold text-red-500">
                       {absentCount}
                     </p>
@@ -465,6 +498,16 @@ export default function StudentRecordSection({
                     </p>
                     <p className="text-xs text-text-secondary">Total Paid</p>
                   </div>
+                  {volunteerRecords.length > 0 && (
+                    <div className="glass-card px-4 py-3 text-center border border-emerald-500/30 bg-emerald-50/50">
+                      <p className="text-2xl font-bold text-emerald-600">
+                        {volunteerRecords.length}
+                      </p>
+                      <p className="text-xs text-text-secondary font-medium">
+                        Volunteer Roles
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -509,12 +552,6 @@ export default function StudentRecordSection({
                                 Present
                               </span>
                             )}
-                            {record.status === "late" && (
-                              <span className="flex items-center gap-1 text-amber-500">
-                                <Clock className="w-4 h-4" />
-                                Late
-                              </span>
-                            )}
                             {record.status === "absent" && (
                               <span className="flex items-center gap-1 text-red-500">
                                 <XCircle className="w-4 h-4" />
@@ -524,7 +561,7 @@ export default function StudentRecordSection({
                             {record.status === "excuse" && (
                               <span className="flex items-center gap-1 text-purple-600">
                                 <CheckCircle className="w-4 h-4" />
-                                Excuse
+                                Excused
                               </span>
                             )}
                           </td>
@@ -757,6 +794,64 @@ export default function StudentRecordSection({
                 )}
               </div>
             </div>
+
+            {/* Event Volunteer History */}
+            {volunteerRecords.length > 0 && (
+              <div className="glass-card p-5 lg:p-6 mb-8 border border-emerald-500/30 bg-white/70">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                    <HeartHandshake className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-semibold text-lg text-dark">
+                      Event Volunteer History
+                    </h3>
+                    <p className="text-xs text-text-secondary">
+                      Official student volunteer assignments and service records (
+                      {volunteerRecords.length})
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="glass-table">
+                    <thead>
+                      <tr>
+                        <th>Event</th>
+                        <th>Assigned Task / Role</th>
+                        <th>Status</th>
+                        <th>Date Assigned</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {volunteerRecords.map((vol) => (
+                        <tr key={vol.id}>
+                          <td className="font-medium text-dark">
+                            <span className="font-semibold">
+                              {vol.eventName}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-700 border border-emerald-500/20">
+                              <Sparkles className="w-3 h-3 text-emerald-600" />
+                              {vol.roleOrTask}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 capitalize inline-block">
+                              {vol.status || "Assigned"}
+                            </span>
+                          </td>
+                          <td className="text-text-secondary text-xs whitespace-nowrap">
+                            {formatDate(vol.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Student Requirement Files (published files visible to students) */}
             <div id="requirement-files" className="glass-card p-5 lg:p-6 mb-8">

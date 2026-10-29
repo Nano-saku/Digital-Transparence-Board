@@ -585,18 +585,37 @@ class OfflineSyncService {
     }
 
     const query = getSupabase().from(mutation.table);
+    const cleanPayload = { ...mutation.payload };
+    if (mutation.table === "events") {
+      // Strip columns that do not exist in the live database schema.
+      // schedules IS a valid column — keep it so schedule removals persist.
+      delete cleanPayload.time_in;
+      delete cleanPayload.time_out;
+      delete cleanPayload.morning_time_in;
+      delete cleanPayload.morning_time_out;
+      delete cleanPayload.afternoon_time_in;
+      delete cleanPayload.afternoon_time_out;
+      delete cleanPayload.evening_time_in;
+      delete cleanPayload.evening_time_out;
+    }
+    if (mutation.table === "event_volunteers" && !cleanPayload.expires_at) {
+      cleanPayload.expires_at = new Date(
+        Date.now() + 90 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+    }
+
     let error: { message?: string } | null = null;
     if (mutation.kind === "create") {
       // Client-created ids are primary keys. Upsert makes an interrupted replay
       // idempotent: if Supabase accepted a prior request but the response was
       // lost, this retry updates that exact same row instead of creating a copy.
       ({ error } = await query.upsert(
-        { id: mutation.recordId, ...mutation.payload },
+        { id: mutation.recordId, ...cleanPayload },
         { onConflict: "id" },
       ));
     } else if (mutation.kind === "update") {
       ({ error } = await query
-        .update(mutation.payload)
+        .update(cleanPayload)
         .eq("id", mutation.recordId));
     } else {
       ({ error } = await query.delete().eq("id", mutation.recordId));

@@ -482,6 +482,8 @@ function App() {
             <StudentRecordSection
               student={selectedStudent}
               onBack={() => navigateTo("landing")}
+              currentUserId={auth?.user.id}
+              currentUserRole={role}
             />
           )
         );
@@ -494,11 +496,15 @@ function App() {
             student={selectedStudent}
             appointments={appointmentVerification.appointments}
             onBack={() => navigateTo("landing")}
+            currentUserId={auth?.user.id}
+            currentUserRole={role}
           />
         ) : selectedStudent ? (
           <StudentRecordSection
             student={selectedStudent}
             onBack={() => navigateTo("landing")}
+            currentUserId={auth?.user.id}
+            currentUserRole={role}
           />
         ) : (
           <LandingSection
