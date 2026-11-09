@@ -13,12 +13,8 @@ interface NavigationProps {
   studentId?: string;
 }
 
+/** A navigation link item used for both main and management menus. */
 type NavItem = {
-  label: string;
-  view: ViewState;
-};
-
-type ManagementNavItem = {
   label: string;
   view: ViewState;
 };
@@ -58,9 +54,9 @@ const PUBLIC_NAV_ITEMS: NavItem[] = [
 // Nav items are filtered by the officer's role.
 function buildAdminNavItems(role: UserRole | null): {
   main: NavItem[];
-  management: ManagementNavItem[];
+  management: NavItem[];
 } {
-  const management: ManagementNavItem[] = [
+  const management: NavItem[] = [
     ...(role
       ? [{ label: "Events", view: "event-management" as ViewState }]
       : []),

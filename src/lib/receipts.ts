@@ -40,6 +40,21 @@ export async function uploadReceiptFile(file: File): Promise<string> {
   return data.publicUrl;
 }
 
+/**
+ * Converts a Blob to a base64 data URI. Shared by TransparencyBoardSection
+ * and ReportManagementSection for self-contained printable HTML reports —
+ * previously a local copy existed in each section.
+ */
+export function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read blob"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+
 // ----------------------------------------------------------------------
 // Logo data URI cache (browser-only, fetched once then reused)
 // ----------------------------------------------------------------------

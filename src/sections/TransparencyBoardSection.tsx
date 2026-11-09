@@ -31,6 +31,7 @@ import {
 import {
   downloadBlob,
   uploadReceiptFile,
+  blobToDataUri,
 } from "@/lib/receipts";
 import ReceiptViewer from "@/components/ReceiptViewer";
 import {
@@ -48,16 +49,6 @@ import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
 import SectionBackButton from "@/components/SectionBackButton";
 import AnimatedNetwork from "@/components/ui/animated-network";
-
-/** Converts a Blob to a base64 data URI for self-contained printable reports. */
-function blobToDataUri(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("Failed to read report asset"));
-    reader.readAsDataURL(blob);
-  });
-}
 
 interface TransparencyBoardSectionProps {
   adminMode?: boolean;

@@ -28,7 +28,7 @@ import {
 } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
-import { downloadBlob } from "@/lib/receipts";
+import { downloadBlob, blobToDataUri } from "@/lib/receipts";
 import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
 import SectionEmptyState from "@/components/SectionEmptyState";
@@ -69,16 +69,6 @@ interface ContributionReportRow {
   remainingBalance: number;
   status: "Unpaid" | "Partial Payment" | "Fully Paid";
   statusValue: Exclude<ContributionReportStatus, "">;
-}
-
-/** Converts a Blob to a base64 data URI. */
-function blobToDataUri(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("Failed to read blob"));
-    reader.readAsDataURL(blob);
-  });
 }
 
 export default function ReportManagementSection({
