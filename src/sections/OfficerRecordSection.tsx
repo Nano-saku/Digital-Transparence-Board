@@ -10,8 +10,8 @@ import {
   eventVolunteersService,
   eventsService,
   formatLscPositions,
-  subscribeToTables,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import StudentQrModal from "@/components/StudentQrModal";
 import SectionBackButton from "@/components/SectionBackButton";
 import SectionLoader from "@/components/SectionLoader";
@@ -72,12 +72,14 @@ export default function OfficerRecordSection({
 
   useEffect(() => {
     void loadActivities();
-    return subscribeToTables(
-      ["event_volunteers", "events"],
-      () => void loadActivities(),
-      `officer-record-${student.id}`,
-    );
-  }, [loadActivities, student.id]);
+  }, [loadActivities]);
+
+  // useRealtimeSync handles reconnection recovery for volunteer/event updates.
+  useRealtimeSync({
+    tables: ["event_volunteers", "events"],
+    onChange: () => void loadActivities(),
+    channelPrefix: `officer-record-${student.id}`,
+  });
 
   useSectionEntrance(sectionRef, [
     {

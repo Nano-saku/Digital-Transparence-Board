@@ -23,9 +23,10 @@ import {
   eventsService,
   studentsService,
   attendanceService,
-  subscribeToTables,
   classifyAttendanceError,
+  lscOfficersService,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import type {
   Event,
   EventSession,
@@ -50,6 +51,7 @@ import {
   hasEventAttendanceDayEnded,
   resolveEventSessionForTime,
 } from "@/lib/attendance";
+import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
 import SectionLoader from "@/components/SectionLoader";
 import SectionEmptyState from "@/components/SectionEmptyState";
@@ -84,6 +86,9 @@ export default function AttendanceManagementSection({
     [events],
   );
   const [students, setStudents] = useState<Student[]>([]);
+  const [officerStudentIds, setOfficerStudentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [attendanceRecords, setAttendanceRecords] = useState<
     AttendanceRecord[]
   >([]);
@@ -222,14 +227,16 @@ export default function AttendanceManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData, attendanceData] = await Promise.all([
+      const [eventsData, studentsData, attendanceData, officersData] = await Promise.all([
         eventsService.getAll(),
         studentsService.getAll(),
         attendanceService.getAll(),
+        lscOfficersService.getAll(),
       ]);
 
       setEvents(eventsData);
       setStudents(studentsData);
+      setOfficerStudentIds(activeLscOfficerStudentIds(studentsData, officersData));
       setAttendanceRecords((current) => {
         // Block if a newer load was started (stale race).
         if (attendanceLoadVersion !== attendanceLoadVersionRef.current)
@@ -264,13 +271,13 @@ export default function AttendanceManagementSection({
     loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    return subscribeToTables(
-      ["events", "students", "attendance"],
-      () => loadData(false),
-      "attendance-management",
-    );
-  }, [loadData]);
+  // useRealtimeSync handles reconnection recovery to prevent missed
+  // attendance, exemption, and officer-change events.
+  useRealtimeSync({
+    tables: ["events", "students", "attendance", "lsc_officers"],
+    onChange: () => loadData(false),
+    channelPrefix: "attendance-management",
+  });
 
   useSectionEntrance(sectionRef, [
     {
@@ -593,6 +600,13 @@ export default function AttendanceManagementSection({
     }
     const existing = attendanceMap.get(student.id) ?? null;
 
+    if (officerStudentIds.has(student.id)) {
+      toast.info(
+        `${student.name} is an active LSC officer and is exempt from this attendance requirement.`,
+      );
+      return;
+    }
+
     if (action === "timeIn") {
       if (existing?.timeIn) {
         toast.info(`${student.name} already has Time In recorded`);
@@ -895,7 +909,7 @@ export default function AttendanceManagementSection({
 
   const attendanceSearchTerm = attendanceSearch.trim().toLowerCase();
   const filteredStudents = useMemo(() => {
-    let result = students;
+    let result = students.filter((student) => !officerStudentIds.has(student.id));
 
     if (scannedCourse && scannedSection) {
       result = result.filter(
@@ -929,6 +943,7 @@ export default function AttendanceManagementSection({
     return result;
   }, [
     students,
+    officerStudentIds,
     attendanceSearchTerm,
     attendanceStatusFilter,
     attendanceMap,
@@ -971,7 +986,11 @@ export default function AttendanceManagementSection({
     : null;
 
   const attendanceAnalysisData = useMemo(() => {
-    const registeredStudentIds = new Set(students.map((student) => student.id));
+    const registeredStudentIds = new Set(
+      students
+        .filter((student) => !officerStudentIds.has(student.id))
+        .map((student) => student.id),
+    );
     const totalPopulation = registeredStudentIds.size;
 
     return [...events]
@@ -1005,7 +1024,7 @@ export default function AttendanceManagementSection({
           ),
         };
       });
-  }, [attendanceRecords, events, students]);
+  }, [attendanceRecords, events, officerStudentIds, students]);
 
   if (!canRecordAttendance) {
     return (

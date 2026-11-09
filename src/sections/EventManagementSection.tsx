@@ -11,18 +11,16 @@ import {
 } from "lucide-react";
 import {
   eventsService,
-  studentsService,
   contributionsService,
   financialReportingService,
   boardMembersService,
-  subscribeToTables,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { notificationsService } from "@/services/notificationsService";
 import type {
   Event,
   EventSchedule,
   EventSession,
-  Student,
   UserRole,
   BoardMember,
 } from "@/types";
@@ -68,7 +66,6 @@ export default function EventManagementSection({
   role,
 }: EventManagementSectionProps) {
   const [events, setEvents] = useState<Event[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
   const [eventTotals, setEventTotals] = useState<Record<string, number>>({});
   const [expectedAmounts, setExpectedAmounts] = useState<Record<string, number>>(
     {},
@@ -136,10 +133,9 @@ export default function EventManagementSection({
         setLoading(true);
       }
 
-      const [eventsData, studentsData, totalsData, financialReport] =
+      const [eventsData, totalsData, financialReport] =
         await Promise.all([
           eventsService.getAll(),
-          studentsService.getAll(),
           contributionsService.getTotalsByEvent().catch((err) => {
             console.warn("Could not load contribution totals:", err);
             return {};
@@ -160,7 +156,6 @@ export default function EventManagementSection({
         ]);
 
       setEvents(eventsData);
-      setStudents(studentsData);
       setEventTotals(totalsData);
       setExpectedAmounts(
         Object.fromEntries(
@@ -201,20 +196,19 @@ export default function EventManagementSection({
     loadData();
   }, [loadData]);
 
-  // Live updates
-  useEffect(() => {
-    return subscribeToTables(
-      [
-        "events",
-        "students",
-        "lsc_officers",
-        "contributions",
-        "board_members",
-      ],
-      () => loadData(false),
-      "event-management",
-    );
-  }, [loadData]);
+  // Live updates — useRealtimeSync handles reconnection recovery to prevent
+  // missed officer-exemption, event-allocation, or financial changes.
+  useRealtimeSync({
+    tables: [
+      "events",
+      "students",
+      "lsc_officers",
+      "contributions",
+      "board_members",
+    ],
+    onChange: () => loadData(false),
+    channelPrefix: "event-management",
+  });
 
   useSectionEntrance(sectionRef, [
     {
@@ -569,8 +563,7 @@ export default function EventManagementSection({
   // appointed LSC officers are excluded. Fall back to the legacy calculation
   // while an older deployed RPC is still in use.
   const expectedCollection = (event: Event) => {
-    const allocation = Number(event.allocationAmount) || 0;
-    return expectedAmounts[event.id] ?? allocation * students.length;
+    return expectedAmounts[event.id] ?? 0;
   };
 
   // Actual collection:

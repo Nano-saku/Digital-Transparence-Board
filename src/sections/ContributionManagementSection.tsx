@@ -9,6 +9,7 @@ import {
   Coins,
   FileText,
   CreditCard,
+  RefreshCw,
 } from "lucide-react";
 import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
@@ -22,9 +23,10 @@ import {
   studentsService,
   eventsService,
   paymentsService,
-  subscribeToTables,
   checkSupabaseConnection,
+  lscOfficersService,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import type {
   ContributionRecord,
   PaymentRecord,
@@ -46,6 +48,7 @@ import {
   today,
 } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
+import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
 import {
   pickField,
@@ -109,7 +112,11 @@ export default function ContributionManagementSection({
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [officerStudentIds, setOfficerStudentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingRecord, setEditingRecord] = useState<ContributionRecord | null>(
@@ -170,14 +177,16 @@ export default function ContributionManagementSection({
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(null);
 
       const [
-        contributionsPage,
-        contributionTotalsData,
-        allStudents,
-        allEvents,
-        paymentsData,
-      ] = await Promise.all([
+        contributionsResult,
+        totalsResult,
+        studentsResult,
+        eventsResult,
+        paymentsResult,
+        officersResult,
+      ] = await Promise.allSettled([
         contributionsService.getPage(
           currentPage - 1,
           PAGE_SIZE,
@@ -189,19 +198,61 @@ export default function ContributionManagementSection({
         studentsService.getAll(),
         eventsService.getAll(),
         paymentsService.getAll(),
+        lscOfficersService.getAll(),
       ]);
+
+      if (contributionsResult.status === "rejected") {
+        const err = contributionsResult.reason;
+        console.error("Critical error loading contribution page:", err);
+        const errorMsg =
+          err instanceof Error
+            ? err.message
+            : "Failed to retrieve contribution records from database.";
+        setLoadError(errorMsg);
+        toast.error("Failed to load contribution records");
+        return;
+      }
+
+      const contributionsPage = contributionsResult.value;
+      const allStudents =
+        studentsResult.status === "fulfilled" ? studentsResult.value : [];
+      const allEvents =
+        eventsResult.status === "fulfilled" ? eventsResult.value : [];
+      const paymentsData =
+        paymentsResult.status === "fulfilled" ? paymentsResult.value : [];
+      const officersData =
+        officersResult.status === "fulfilled" ? officersResult.value : [];
+
+      if (totalsResult.status === "rejected") {
+        console.warn("Could not load contribution totals:", totalsResult.reason);
+      }
+      const contributionTotalsData =
+        totalsResult.status === "fulfilled"
+          ? totalsResult.value
+          : { totalRequired: 0, totalPaid: 0, totalBalance: 0 };
+
+      const activeOfficerIds = activeLscOfficerStudentIds(allStudents, officersData);
 
       const studentById = new Map(allStudents.map((s) => [s.id, s]));
 
-      const rows: ContributionRow[] = contributionsPage.data.map((record) => {
-        const student = studentById.get(record.studentId);
+      const rows: ContributionRow[] = contributionsPage.data
+        .filter((record) => {
+          // If the student is an active LSC officer and has amountPaid <= 0,
+          // do not display as an unpaid contributor
+          if (activeOfficerIds.has(record.studentId) && record.amountPaid <= 0) {
+            return false;
+          }
+          return true;
+        })
+        .map((record) => {
+          const student = studentById.get(record.studentId);
 
-        return {
-          ...record,
-          studentName: student?.name ?? "Unknown Student",
-          studentDisplayId: student?.studentId ?? "—",
-        };
-      });
+          return {
+            ...record,
+            studentName: student?.name ?? "Unknown Student",
+            studentDisplayId: student?.studentId ?? "—",
+          };
+        });
 
       setRecords(rows);
       setContributions(contributionsPage.data);
@@ -209,9 +260,15 @@ export default function ContributionManagementSection({
       setContributionTotals(contributionTotalsData);
       setStudents(allStudents);
       setEvents(allEvents);
+      setOfficerStudentIds(activeOfficerIds);
       setPayments(paymentsData);
     } catch (error) {
       console.error("Error loading contribution records:", error);
+      const errorMsg =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred while loading records.";
+      setLoadError(errorMsg);
       toast.error("Failed to load contribution records");
     } finally {
       setLoading(false);
@@ -222,25 +279,35 @@ export default function ContributionManagementSection({
     loadData();
   }, [loadData]);
 
-  // Records are always read from Supabase again after a related change, rather
-  // than retaining a separate client-side copy of contribution data.
+  const loadDataRef = useRef(loadData);
   useEffect(() => {
-    return subscribeToTables(
-      ["contributions", "students", "events", "payments"],
-      () => {
-        if (isImportingRef.current) return; // see isImportingRef above
-        loadData();
-      },
-      "contribution-management",
-    );
+    loadDataRef.current = loadData;
   }, [loadData]);
 
+  // Records are always read from Supabase again after a related change, rather
+  // than retaining a separate client-side copy of contribution data.
+  // useRealtimeSync handles reconnection recovery to prevent missed updates.
+  useRealtimeSync({
+    tables: ["contributions", "students", "events", "payments", "lsc_officers"],
+    onChange: () => {
+      if (isImportingRef.current) return; // skip during bulk import
+      loadDataRef.current();
+    },
+    channelPrefix: "contribution-management",
+  });
+
   const sortedStudents = useMemo(
-    () => [...students].sort((a, b) => a.name.localeCompare(b.name)),
-    [students],
+    () =>
+      students
+        .filter((student) => !officerStudentIds.has(student.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [officerStudentIds, students],
   );
   const contributionEvents = useMemo(
-    () => events.filter((event) => event.allocationAmount > 0),
+    () =>
+      events.filter(
+        (event) => event.allocationAmount > 0 && !event.isNoContribution,
+      ),
     [events],
   );
 
@@ -272,11 +339,12 @@ export default function ContributionManagementSection({
     return students
       .filter(
         (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.studentId.toLowerCase().includes(query),
+          !officerStudentIds.has(s.id) &&
+          (s.name.toLowerCase().includes(query) ||
+            s.studentId.toLowerCase().includes(query)),
       )
       .slice(0, 8);
-  }, [paymentStudentSearch, students]);
+  }, [officerStudentIds, paymentStudentSearch, students]);
 
   const selectedPaymentEvent = events.find(
     (event) => event.id === paymentForm.eventId,
@@ -368,6 +436,13 @@ export default function ContributionManagementSection({
       mode,
       imported = false,
     } = options;
+
+    if (officerStudentIds.has(student.id)) {
+      throw new Error(
+        `${student.name} is an active LSC officer and is exempt from event contributions.`,
+      );
+    }
+
     const canIssueReceipts =
       role === "admin" || role === "treasurer" || role === "auditor";
     let contribution = await contributionsService.getByStudentAndEvent(
@@ -588,6 +663,12 @@ export default function ContributionManagementSection({
       toast.error("Selected student or event no longer exists");
       return;
     }
+    if (!editingRecord && officerStudentIds.has(student.id)) {
+      toast.error(
+        `${student.name} is an active LSC officer and is exempt from event contribution requirements.`,
+      );
+      return;
+    }
 
     // One contribution record per student + event combination. `records`
     // only holds the current table page, so it can't reliably catch a
@@ -779,6 +860,12 @@ export default function ContributionManagementSection({
       const student = matchStudent(fileStudentId, fileStudentName);
       if (!student) {
         problems.push(`${rowLabel}: student not found`);
+        continue;
+      }
+      if (officerStudentIds.has(student.id)) {
+        problems.push(
+          `${student.name}: active LSC officer (exempt from contributions)`,
+        );
         continue;
       }
       matchedStudents++;
@@ -1149,8 +1236,30 @@ export default function ContributionManagementSection({
       {/* Loading State */}
       {loading && <SectionLoader message="Loading contribution records..." />}
 
+      {/* Error State with Retry Action */}
+      {!loading && loadError && (
+        <div className="glass-card p-8 text-center space-y-4 my-4">
+          <div className="w-12 h-12 rounded-full bg-status-danger/10 text-status-danger flex items-center justify-center mx-auto">
+            <Coins className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-semibold text-dark text-lg">Unable to Load Contribution Records</h3>
+            <p className="text-sm text-text-secondary max-w-md mx-auto">
+              {loadError}
+            </p>
+          </div>
+          <button
+            onClick={() => void loadData()}
+            className="btn-primary px-4 py-2 text-sm inline-flex items-center gap-2 mx-auto"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
       {/* Records Table */}
-      {!loading && (
+      {!loading && !loadError && (
         <div className="glass-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="glass-table">
@@ -1251,26 +1360,30 @@ export default function ContributionManagementSection({
       )}
 
       {/* Stats */}
-      <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
-        <span>
-          Total Records:{" "}
-          <strong className="text-dark">{totalContributions}</strong>
-        </span>
-        <span>
-          Filtered: <strong className="text-dark">{records.length}</strong>
-        </span>
-      </div>
+      {!loading && !loadError && (
+        <div className="mt-4 flex flex-wrap gap-4 text-sm text-text-secondary">
+          <span>
+            Total Records:{" "}
+            <strong className="text-dark">{totalContributions}</strong>
+          </span>
+          <span>
+            Filtered: <strong className="text-dark">{records.length}</strong>
+          </span>
+        </div>
+      )}
 
-      <Pagination
-        page={currentPage}
-        totalPages={totalPages}
-        totalItems={totalContributions}
-        startIndex={(currentPage - 1) * PAGE_SIZE}
-        endIndex={(currentPage - 1) * PAGE_SIZE + paginatedRecords.length}
-        onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))}
-        onNext={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-        onJump={setCurrentPage}
-      />
+      {!loading && !loadError && (
+        <Pagination
+          page={currentPage}
+          totalPages={totalPages}
+          totalItems={totalContributions}
+          startIndex={(currentPage - 1) * PAGE_SIZE}
+          endIndex={(currentPage - 1) * PAGE_SIZE + paginatedRecords.length}
+          onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          onNext={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+          onJump={setCurrentPage}
+        />
+      )}
 
       {/* Add/Edit Modal */}
       <Dialog

@@ -182,6 +182,7 @@ BEGIN
           AND x.event_id = v_event.id
           AND x.date = v_event.date
       )
+      AND NOT public.is_lsc_officer(s.id)
       ON CONFLICT DO NOTHING
       RETURNING *
     )

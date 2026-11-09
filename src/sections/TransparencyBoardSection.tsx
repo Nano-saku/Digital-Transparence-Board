@@ -27,7 +27,6 @@ import {
   transactionsService,
   financialReportingService,
   eventsService,
-  studentsService,
 } from "@/services/db";
 import {
   downloadBlob,
@@ -96,7 +95,6 @@ export default function TransparencyBoardSection({
   );
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const [studentCount, setStudentCount] = useState(0);
 
   // Transaction ledger CRUD state (admin mode only)
   const [showTransactionModal, setShowTransactionModal] = useState(false);
@@ -136,18 +134,16 @@ export default function TransparencyBoardSection({
   const loadData = async () => {
     try {
       setLoading(true);
-      const [report, transactionsData, eventsData, studentsData] =
+      const [report, transactionsData, eventsData] =
         await Promise.all([
           financialReportingService.getReport(),
           transactionsService.getAll(),
           eventsService.getAll(),
-          studentsService.getAll(),
         ]);
       setFinancialSummary(report.summary);
       setEventAllocations(report.eventAllocations);
       setTransactions(transactionsData);
       setEvents(eventsData);
-      setStudentCount(studentsData.length);
     } catch (error) {
       console.error("Error loading transparency data:", error);
       toast.error("Failed to load financial data");
@@ -157,9 +153,7 @@ export default function TransparencyBoardSection({
   };
 
   const expectedCollection = (allocation: EventAllocation) =>
-    allocation.expectedAmount != null
-      ? Number(allocation.expectedAmount)
-      : (Number(allocation.allocationAmount) || 0) * studentCount;
+    allocation.expectedAmount != null ? Number(allocation.expectedAmount) : 0;
 
   useSectionEntrance(sectionRef, [
     // Headline entrance

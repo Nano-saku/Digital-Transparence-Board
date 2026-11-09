@@ -21,6 +21,7 @@ import {
   parseCalendarDate,
 } from "@/lib/format";
 import { useSectionEntrance } from "@/hooks/useSectionEntrance";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import SectionLoader from "@/components/SectionLoader";
 import FinancialSummaryCard from "@/components/common/FinancialSummaryCard";
 import type {
@@ -37,7 +38,6 @@ import {
   eventsService,
   feedbackService,
   transactionsService,
-  subscribeToTables,
 } from "@/services/db";
 import { toast } from "sonner";
 
@@ -140,23 +140,22 @@ export default function AdminDashboardSection({
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Re-query every source table on change
-  useEffect(() => {
-    return subscribeToTables(
-      [
-        "students",
-        "events",
-        "lsc_officers",
-        "contributions",
-        "payments",
-        "transactions",
-        "feedback",
-        "board_members",
-      ],
-      loadDashboardData,
-      "dashboard",
-    );
-  }, [loadDashboardData]);
+  // Re-query every source table on change using the enhanced hook that
+  // handles reconnection recovery and prevents duplicate refetches.
+  useRealtimeSync({
+    tables: [
+      "students",
+      "events",
+      "lsc_officers",
+      "contributions",
+      "payments",
+      "transactions",
+      "feedback",
+      "board_members",
+    ],
+    onChange: loadDashboardData,
+    channelPrefix: "dashboard",
+  });
 
   useSectionEntrance(sectionRef, [
     // Headline entrance

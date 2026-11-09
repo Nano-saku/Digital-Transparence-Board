@@ -12,8 +12,9 @@ import {
   studentsService,
   attendanceService,
   contributionsService,
-  subscribeToTables,
+  lscOfficersService,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import type {
   Event,
   Student,
@@ -26,6 +27,7 @@ import {
   getOrdinalSuffix,
 } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
+import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
 import { downloadBlob } from "@/lib/receipts";
 import SectionLoader from "@/components/SectionLoader";
 import Skeleton from "@/components/Skeleton";
@@ -94,6 +96,9 @@ export default function ReportManagementSection({
     ContributionRecord[]
   >([]);
   const [contributionLoading, setContributionLoading] = useState(true);
+  const [officerStudentIds, setOfficerStudentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Filters
   const [reportType, setReportType] = useState<ReportType>("attendance");
@@ -109,14 +114,16 @@ export default function ReportManagementSection({
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [eventsData, studentsData, attendanceData] = await Promise.all([
+      const [eventsData, studentsData, attendanceData, officersData] = await Promise.all([
         eventsService.getAll(),
         studentsService.getAll(),
         attendanceService.getAll(),
+        lscOfficersService.getAll(),
       ]);
       setEvents(eventsData);
       setStudents(studentsData);
       setAttendanceRecords(attendanceData);
+      setOfficerStudentIds(activeLscOfficerStudentIds(studentsData, officersData));
     } catch (error) {
       console.error("Error loading report data:", error);
       toast.error("Failed to load data for reports");
@@ -133,13 +140,12 @@ export default function ReportManagementSection({
   // to realtime changes on the same source tables. Any attendance write
   // (QR scan, manual edit, Automatic Absent) triggers a fresh fetch so the
   // report always reflects the latest saved database values.
-  useEffect(() => {
-    return subscribeToTables(
-      ["attendance", "events", "students"],
-      () => loadData(),
-      "report-management",
-    );
-  }, [loadData]);
+  // useRealtimeSync adds reconnection recovery to prevent missed updates.
+  useRealtimeSync({
+    tables: ["attendance", "events", "students", "lsc_officers"],
+    onChange: () => loadData(),
+    channelPrefix: "report-management",
+  });
 
   // Contribution report data is loaded independently so a contribution-data
   // issue cannot prevent the existing attendance report from rendering.
@@ -213,6 +219,7 @@ export default function ReportManagementSection({
 
     const matchedStudents = students.filter(
       (s) =>
+        !officerStudentIds.has(s.id) &&
         s.yearLevel === Number(selectedYear) &&
         s.program === selectedCourse &&
         s.section === selectedSection,
@@ -291,6 +298,7 @@ export default function ReportManagementSection({
     selectedSection,
     attendanceRecords,
     selectedEventId,
+    officerStudentIds,
   ]);
 
   const totalStudents = reportRows.length;
@@ -302,7 +310,10 @@ export default function ReportManagementSection({
       : "0.0";
 
   const contributionEvents = useMemo(
-    () => events.filter((event) => event.allocationAmount > 0),
+    () =>
+      events.filter(
+        (event) => event.allocationAmount > 0 && !event.isNoContribution,
+      ),
     [events],
   );
 
@@ -320,7 +331,7 @@ export default function ReportManagementSection({
     // are no longer in the event catalog.
     for (const record of contributionRecords) {
       const student = studentById.get(record.studentId);
-      if (!student || record.requiredAmount <= 0) continue;
+      if (!student || officerStudentIds.has(student.id) || record.requiredAmount <= 0) continue;
 
       const status = contributionStatus(record);
       rows.push({
@@ -347,6 +358,7 @@ export default function ReportManagementSection({
     // A missing contribution row represents no payment yet. Add those rows so
     // the Unpaid filter reports students who have not made any payment.
     for (const student of students) {
+      if (officerStudentIds.has(student.id)) continue;
       for (const event of contributionEvents) {
         const key = `${student.id}:${event.id}`;
         if (contributionByStudentAndEvent.has(key)) continue;
@@ -388,6 +400,7 @@ export default function ReportManagementSection({
     selectedSection,
     selectedYear,
     students,
+    officerStudentIds,
   ]);
 
   const contributionReportTotalPages = Math.max(

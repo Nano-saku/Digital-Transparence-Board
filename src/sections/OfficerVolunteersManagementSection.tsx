@@ -36,8 +36,8 @@ import {
   eventsService,
   formatLscPositions,
   OFFICIAL_LSC_POSITIONS,
-  subscribeToTables,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import type {
   LscOfficer,
   EventVolunteer,
@@ -177,12 +177,15 @@ export default function OfficerVolunteersManagementSection({
 
   useEffect(() => {
     void loadData();
-    return subscribeToTables(
-      ["lsc_officers", "event_volunteers", "students", "events"],
-      () => void loadData(),
-      "officer-volunteers-management",
-    );
   }, [loadData]);
+
+  // useRealtimeSync handles reconnection recovery so officer appointment
+  // changes (INSERT/UPDATE/DELETE on lsc_officers) are never silently missed.
+  useRealtimeSync({
+    tables: ["lsc_officers", "event_volunteers", "students", "events"],
+    onChange: () => void loadData(),
+    channelPrefix: "officer-volunteers-management",
+  });
 
   const officerStudentIdMap = useMemo(() => {
     const map = new Map<string, LscOfficer>();

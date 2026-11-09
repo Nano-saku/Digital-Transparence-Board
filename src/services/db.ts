@@ -1794,16 +1794,46 @@ export const contributionsService = {
     totalPaid: number;
     totalBalance: number;
   }> {
-    const { data, error } = await getSupabase().rpc("get_contribution_totals");
+    // 1. Authoritative: get_financial_report calculates expected contributions
+    // (excluding active LSC officers) and total funds collected in ~200ms.
+    try {
+      const { data, error } = await getSupabase().rpc("get_financial_report");
+      if (!error && data?.summary) {
+        const totalRequired = Number(data.summary.totalExpectedContributions ?? 0);
+        const totalPaid = Number(
+          data.summary.totalFundsCollected ??
+            data.summary.totalEventCollections ??
+            0,
+        );
+        const totalBalance = Math.max(0, totalRequired - totalPaid);
+        return { totalRequired, totalPaid, totalBalance };
+      }
+      if (error) {
+        console.warn("get_financial_report returned error, trying fallback:", error);
+      }
+    } catch (e) {
+      console.warn("Could not retrieve totals via get_financial_report:", e);
+    }
 
-    if (error) throw error;
-
-    const row = Array.isArray(data) ? data[0] : data;
+    // 2. Fallback to get_contribution_totals RPC
+    try {
+      const { data, error } = await getSupabase().rpc("get_contribution_totals");
+      if (!error && data) {
+        const row = Array.isArray(data) ? data[0] : data;
+        return {
+          totalRequired: Number(row?.total_required ?? 0),
+          totalPaid: Number(row?.total_paid ?? 0),
+          totalBalance: Number(row?.total_balance ?? 0),
+        };
+      }
+    } catch (e) {
+      console.warn("Could not retrieve totals via get_contribution_totals:", e);
+    }
 
     return {
-      totalRequired: Number(row?.total_required ?? 0),
-      totalPaid: Number(row?.total_paid ?? 0),
-      totalBalance: Number(row?.total_balance ?? 0),
+      totalRequired: 0,
+      totalPaid: 0,
+      totalBalance: 0,
     };
   },
 
@@ -1819,12 +1849,25 @@ export const contributionsService = {
       "get_event_contribution_totals",
     );
 
-    if (error) throw error;
+    let rows: unknown[] = [];
+    if (!error && Array.isArray(data)) {
+      rows = data;
+    } else {
+      const fallback = await getSupabase().rpc(
+        "get_contribution_totals_by_event",
+      );
+      if (!fallback.error && Array.isArray(fallback.data)) {
+        rows = fallback.data;
+      } else if (error) {
+        throw error;
+      }
+    }
 
-    const rows = Array.isArray(data) ? data : [];
     const totals: Record<string, number> = {};
-    for (const row of rows) {
-      totals[row.event_id as string] = Number(row.collected ?? 0);
+    for (const row of rows as Array<{ event_id?: string; total_paid?: number; collected?: number }>) {
+      if (row?.event_id) {
+        totals[row.event_id] = Number(row.collected ?? row.total_paid ?? 0);
+      }
     }
     return totals;
   },
@@ -1882,6 +1925,8 @@ export const contributionsService = {
       .select("*")
       .eq("student_id", studentId)
       .eq("event_id", eventId)
+      .order("id", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) throw error;
@@ -2101,16 +2146,16 @@ export const paymentsService = {
 
   async getAll(): Promise<PaymentRecord[]> {
     return cachedRead<PaymentRecord>("payments", async () => {
-      const { data, error } = await getSupabase()
-        .from("payments")
-        .select("*")
-        .order("recorded_at", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false });
-
-      if (error) throw error;
-      return (
-        data?.map(mapPayment) || []
+      const allData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        getSupabase()
+          .from("payments")
+          .select("*")
+          .order("recorded_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .range(from, to),
       );
+
+      return allData.map(mapPayment);
     });
   },
 
@@ -3064,12 +3109,43 @@ export const subscribeToTables = (
   const sb = getSupabase();
   const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let destroyed = false;
+
+  // Offline-capable table names whose IndexedDB cache must be cleared
+  // so the next getAll() re-fetches from Supabase instead of serving stale data.
+  const INVALIDATABLE = new Set([
+    "students", "events", "lsc_officers",
+    "attendance", "contributions", "payments",
+  ]);
+
+  const clearTimers = () => {
+    if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
+    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  };
 
   const debouncedOnChange = () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
+    if (destroyed) return;
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      onChange();
-    }, 400);
+      debounceTimer = null;
+      if (!destroyed) onChange();
+    }, 350);
+  };
+
+  const invalidateCaches = () => {
+    for (const table of tables) {
+      if (table === "students" || table === "events") {
+        invalidateReferenceCache(table);
+      }
+      if (INVALIDATABLE.has(table)) {
+        void offlineSyncService
+          .invalidate(table as Parameters<typeof offlineSyncService.invalidate>[0])
+          .catch((err) =>
+            console.warn(`[subscribeToTables] cache invalidate(${table}):`, err),
+          );
+      }
+    }
   };
 
   for (const table of tables) {
@@ -3077,14 +3153,16 @@ export const subscribeToTables = (
       "postgres_changes",
       { event: "*", schema: "public", table },
       () => {
+        if (destroyed) return;
+        // Invalidate only the table that actually changed.
         if (table === "students" || table === "events") {
           invalidateReferenceCache(table);
         }
-        if (table === "attendance") {
+        if (INVALIDATABLE.has(table)) {
           void offlineSyncService
-            .invalidate("attendance")
-            .catch((cacheError) =>
-              console.warn("Could not invalidate cached attendance:", cacheError),
+            .invalidate(table as Parameters<typeof offlineSyncService.invalidate>[0])
+            .catch((err) =>
+              console.warn(`[subscribeToTables] cache invalidate(${table}):`, err),
             );
         }
         debouncedOnChange();
@@ -3092,12 +3170,49 @@ export const subscribeToTables = (
     );
   }
 
-  channel.subscribe();
+  // Monitor channel lifecycle so missed events after reconnection are recovered.
+  channel.subscribe((status: string) => {
+    if (destroyed) return;
+    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+      // Schedule a recovery refetch after the channel reconnects.
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!destroyed) { invalidateCaches(); onChange(); }
+      }, 800);
+    }
+    if (status === "SUBSCRIBED" && reconnectTimer !== null) {
+      // The channel reconnected — still do one recovery refetch.
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!destroyed) { invalidateCaches(); onChange(); }
+      }, 800);
+    }
+  });
+
   return () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
+    destroyed = true;
+    clearTimers();
     void sb.removeChannel(channel);
   };
 };
+
+export interface EventCollectionPerformance {
+  eventId: string;
+  eventName: string;
+  isNoContribution: boolean;
+  allocationAmount: number;
+  eligibleCount: number;
+  /** Sum of required amounts for all eligible (non-officer) students. */
+  expectedCollection: number;
+  /** Sum of credited payments for this event. */
+  actualCollection: number;
+  /** expectedCollection minus actualCollection, floored at 0. */
+  outstandingBalance: number;
+  /** actualCollection / expectedCollection * 100, or 0 when expectedCollection = 0. */
+  collectionPerformance: number;
+}
 
 export const financialReportingService = {
   async getReport(): Promise<FinancialReport> {
@@ -3119,6 +3234,32 @@ export const financialReportingService = {
     }
 
     return data as FinancialReport;
+  },
+
+  /**
+   * Returns authoritative per-event collection performance data from the
+   * database. Expected Collection, Actual Collection, Outstanding Balance,
+   * and Collection Performance % are computed entirely in PostgreSQL using
+   * is_lsc_officer() so exempt officers are always excluded correctly.
+   * Never duplicates this logic on the client side.
+   */
+  async getEventCollectionPerformance(): Promise<EventCollectionPerformance[]> {
+    const { data, error } = await getSupabase().rpc(
+      "get_event_collection_performance",
+    );
+    if (error) throw error;
+    if (!data || !Array.isArray(data)) return [];
+    return (data as Record<string, unknown>[]).map((row) => ({
+      eventId: row.eventId as string,
+      eventName: row.eventName as string,
+      isNoContribution: (row.isNoContribution as boolean) ?? false,
+      allocationAmount: Number(row.allocationAmount) || 0,
+      eligibleCount: Number(row.eligibleCount) || 0,
+      expectedCollection: Number(row.expectedCollection) || 0,
+      actualCollection: Number(row.actualCollection) || 0,
+      outstandingBalance: Number(row.outstandingBalance) || 0,
+      collectionPerformance: Number(row.collectionPerformance) || 0,
+    }));
   },
 
   subscribe(onChange: () => void): () => void {

@@ -30,8 +30,8 @@ import {
   paymentsService,
   studentRequirementFilesService,
   eventVolunteersService,
-  subscribeToTables,
 } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import {
   Dialog,
   DialogContent,
@@ -215,19 +215,22 @@ export default function StudentRecordSection({
 
   useEffect(() => {
     void loadStudentData();
-    return subscribeToTables(
-      [
-        "attendance",
-        "contributions",
-        "payments",
-        "events",
-        "event_volunteers",
-        "student_requirement_files",
-      ],
-      () => void loadStudentData(),
-      `student-record-${student.id}`,
-    );
-  }, [loadStudentData, student.id]);
+  }, [student.id, loadStudentData]);
+
+  // useRealtimeSync handles reconnection recovery so attendance, contribution,
+  // and payment changes are never silently missed for this student's record.
+  useRealtimeSync({
+    tables: [
+      "attendance",
+      "contributions",
+      "payments",
+      "events",
+      "event_volunteers",
+      "student_requirement_files",
+    ],
+    onChange: () => void loadStudentData(),
+    channelPrefix: `student-record-${student.id}`,
+  });
 
   // Payment receipts are grouped by event once (memoized) instead of being
   // re-filtered for every row on every render.
