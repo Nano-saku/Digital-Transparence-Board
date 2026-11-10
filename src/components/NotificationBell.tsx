@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bell, BellRing, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -16,6 +16,7 @@ import {
   isPushSupported,
   getExistingSubscription,
   subscribeStudentToPush,
+  subscribeAnonymousToPush,
   subscribeOfficerToPush,
   unsubscribeFromPush,
 } from "@/lib/push";
@@ -59,13 +60,41 @@ export default function NotificationBell({
   );
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushPermission, setPushPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const [pushStatusLoaded, setPushStatusLoaded] = useState(false);
+
+  const refreshPushStatus = useCallback(async () => {
+    // Never display a previous student/device value while a fresh browser
+    // subscription check is in flight.
+    setPushStatusLoaded(false);
+    setPushEnabled(false);
+    const supported = isPushSupported();
+    setPushSupported(supported);
+
+    if (!supported || typeof Notification === "undefined") {
+      setPushEnabled(false);
+      setPushPermission("unsupported");
+      setPushStatusLoaded(true);
+      return;
+    }
+
+    setPushPermission(Notification.permission);
+    try {
+      setPushEnabled(Boolean(await getExistingSubscription()));
+    } catch (error) {
+      console.error("Unable to check push subscription status:", error);
+      setPushEnabled(false);
+    } finally {
+      setPushStatusLoaded(true);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!isPushSupported()) return;
-    getExistingSubscription()
-      .then((sub) => setPushEnabled(!!sub))
-      .catch(() => setPushEnabled(false));
-  }, [isLoggedIn, studentId]);
+    void refreshPushStatus();
+  }, [isLoggedIn, studentId, refreshPushStatus]);
 
   async function handleTogglePush() {
     if (pushBusy) return;
@@ -74,7 +103,6 @@ export default function NotificationBell({
     try {
       if (pushEnabled) {
         await unsubscribeFromPush();
-        setPushEnabled(false);
         toast.success("Push notifications turned off.");
         return;
       }
@@ -83,21 +111,25 @@ export default function NotificationBell({
         ? await subscribeOfficerToPush()
         : studentId
           ? await subscribeStudentToPush(studentId)
-          : { ok: false as const, reason: "unsupported" as const };
+          : await subscribeAnonymousToPush();
 
       if (result.ok) {
-        setPushEnabled(true);
         toast.success("Push notifications enabled.");
       } else if (result.reason === "permission-denied") {
-        toast.error("Notification permission was denied.");
+        toast.error(
+          "Notifications are blocked. Enable them in your browser's site settings, then try again.",
+        );
       } else {
-        toast.error("Couldn't enable push notifications on this device.");
+        toast.error(
+          result.message || "Couldn't enable push notifications on this device.",
+        );
       }
     } catch (error) {
       console.error("Push toggle failed:", error);
       toast.error("Couldn't update push notifications.");
     } finally {
       setPushBusy(false);
+      void refreshPushStatus();
     }
   }
 
@@ -150,6 +182,9 @@ export default function NotificationBell({
 
   async function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
+    if (nextOpen) {
+      void refreshPushStatus();
+    }
     if (nextOpen && !isLoggedIn) {
       const now = new Date().toISOString();
       localStorage.setItem(LAST_SEEN_KEY, now);
@@ -283,8 +318,9 @@ export default function NotificationBell({
             ))
           )}
 
-          {(isLoggedIn || studentId) && isPushSupported() && (
+          {isLoggedIn && pushSupported && (
             <button
+              type="button"
               onClick={handleTogglePush}
               disabled={pushBusy}
               className="w-full flex items-center gap-2 px-3 py-2.5 border-t border-border text-xs text-royal-blue hover:bg-muted/60 transition-colors disabled:opacity-50"
@@ -293,6 +329,34 @@ export default function NotificationBell({
               {pushEnabled
                 ? "Turn off push notifications"
                 : "Get push notifications on this device"}
+            </button>
+          )}
+
+          {!isLoggedIn && (
+            <button
+              type="button"
+              onClick={handleTogglePush}
+              disabled={!pushSupported || !pushStatusLoaded || pushBusy}
+              title={
+                pushPermission === "denied"
+                  ? "Enable notifications in your browser settings first"
+                  : pushEnabled
+                    ? "Click to stop push notifications on this device"
+                    : "Click to enable push notifications on this device"
+              }
+              aria-label={
+                pushEnabled
+                  ? "Turn off push notifications on this device"
+                  : "Turn on push notifications on this device"
+              }
+              className="flex w-full cursor-pointer items-center gap-2 border-t border-border px-3 py-2.5 text-left text-xs text-royal-blue transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
+              {!pushStatusLoaded
+                ? "Checking push notifications..."
+                : pushEnabled
+                  ? "Turn off push notifications"
+                  : "Turn on push notifications"}
             </button>
           )}
         </DropdownMenuContent>
