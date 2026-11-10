@@ -12,7 +12,6 @@ import {
   getExistingSubscription,
   subscribeOfficerToPush,
   subscribeStudentToPush,
-  subscribeAnonymousToPush,
   upgradeSubscriptionToStudent,
 } from "@/lib/push";
 
@@ -40,6 +39,9 @@ export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptMod
     let cancelled = false;
 
     async function checkShouldPrompt() {
+      // Student push subscriptions must be tied to a verified student record.
+      // Officers have their own authenticated subscription flow.
+      if (!isLoggedIn && !studentId) return;
       if (!isPushSupported()) return;
       if (typeof Notification === "undefined") return;
       if (Notification.permission === "denied" || Notification.permission === "granted") return;
@@ -82,7 +84,11 @@ export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptMod
         ? await subscribeOfficerToPush()
         : studentId
           ? await subscribeStudentToPush(studentId)
-          : await subscribeAnonymousToPush();
+          : {
+              ok: false as const,
+              reason: "unsupported" as const,
+              message: "Open your student record before enabling push notifications.",
+            };
 
       if (result.ok) {
         toast.success("Push notifications enabled.");

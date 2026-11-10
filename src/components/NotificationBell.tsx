@@ -16,7 +16,6 @@ import {
   isPushSupported,
   getExistingSubscription,
   subscribeStudentToPush,
-  subscribeAnonymousToPush,
   subscribeOfficerToPush,
   unsubscribeFromPush,
 } from "@/lib/push";
@@ -111,7 +110,11 @@ export default function NotificationBell({
         ? await subscribeOfficerToPush()
         : studentId
           ? await subscribeStudentToPush(studentId)
-          : await subscribeAnonymousToPush();
+          : {
+              ok: false as const,
+              reason: "unsupported" as const,
+              message: "Open your student record before enabling push notifications.",
+            };
 
       if (result.ok) {
         toast.success("Push notifications enabled.");
@@ -332,7 +335,7 @@ export default function NotificationBell({
             </button>
           )}
 
-          {!isLoggedIn && (
+          {studentId && !isLoggedIn && (
             <button
               type="button"
               onClick={handleTogglePush}
