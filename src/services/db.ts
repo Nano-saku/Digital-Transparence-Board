@@ -880,8 +880,8 @@ export const profilePhotoService = {
 // EVENTS SERVICE
 // ============================================
 export const eventsService = {
-  async getAll(): Promise<Event[]> {
-    const cached = referenceDataCache.get("events");
+  async getAll(forceRefresh = false): Promise<Event[]> {
+    const cached = forceRefresh ? undefined : referenceDataCache.get("events");
     if (cached) return cached as Event[];
 
     const events = await cachedRead<Event>("events", async () => {
@@ -912,12 +912,12 @@ export const eventsService = {
    * the Asia/Manila date prevents a student in another device timezone from
    * seeing an event a day early or late.
    */
-  async getUpcomingForStudents(): Promise<Event[]> {
+  async getUpcomingForStudents(forceRefresh = false): Promise<Event[]> {
     const todayInManila = calendarDateInTimeZone(new Date());
 
     // `date` is a text column in the existing schema. Keep malformed legacy
     // values such as "TBD" out even if they sort after today's ISO date.
-    return (await this.getAll())
+    return (await this.getAll(forceRefresh))
       .filter(
         (event) =>
           Boolean(event.date) &&

@@ -5,6 +5,7 @@ import type { Student } from "@/types";
 import { studentsService } from "@/services/db";
 import LSCOfficerCarousel from "@/components/LSCOfficerCarousel";
 import Skeleton from "@/components/Skeleton";
+import UpcomingEvents from "@/components/UpcomingEvents";
 interface LandingSectionProps {
   onSearch: (name: string, studentId: string) => void;
   onViewTransparency: () => void;
@@ -315,6 +316,7 @@ export default function LandingSection({
           <ChevronDown className="w-5 h-5 animate-bounce" />
         </div>
       </section>
+      <UpcomingEvents />
       <section
         id="lsc-preview"
         className="relative overflow-hidden bg-[#0E1A4D] px-4 py-20 sm:px-6 lg:px-8"
