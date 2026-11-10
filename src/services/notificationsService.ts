@@ -254,10 +254,11 @@ async function subscribeStudentPush(
   studentId: string,
   keys: PushKeys,
 ): Promise<void> {
-  await getSupabase()
+  const { error: deleteError } = await getSupabase()
     .from("push_subscriptions")
     .delete()
     .eq("endpoint", keys.endpoint);
+  if (deleteError) throw deleteError;
 
   const { error } = await getSupabase().from("push_subscriptions").insert({
     id: createRecordId(),

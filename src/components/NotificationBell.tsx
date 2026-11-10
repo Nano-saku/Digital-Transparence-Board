@@ -64,12 +64,17 @@ export default function NotificationBell({
     NotificationPermission | "unsupported"
   >("unsupported");
   const [pushStatusLoaded, setPushStatusLoaded] = useState(false);
+  const [pushStatusError, setPushStatusError] = useState<string | null>(null);
+  const [pushSubscriptionError, setPushSubscriptionError] = useState<
+    string | null
+  >(null);
 
   const refreshPushStatus = useCallback(async () => {
     // Never display a previous student/device value while a fresh browser
     // subscription check is in flight.
     setPushStatusLoaded(false);
     setPushEnabled(false);
+    setPushStatusError(null);
     const supported = isPushSupported();
     setPushSupported(supported);
 
@@ -86,12 +91,18 @@ export default function NotificationBell({
     } catch (error) {
       console.error("Unable to check push subscription status:", error);
       setPushEnabled(false);
+      setPushStatusError(
+        error instanceof Error
+          ? error.message
+          : "Unable to check push notifications. Click to retry.",
+      );
     } finally {
       setPushStatusLoaded(true);
     }
   }, []);
 
   useEffect(() => {
+    setPushSubscriptionError(null);
     void refreshPushStatus();
   }, [isLoggedIn, studentId, refreshPushStatus]);
 
@@ -100,7 +111,7 @@ export default function NotificationBell({
     setPushBusy(true);
 
     try {
-      if (pushEnabled) {
+      if (pushEnabled && !pushSubscriptionError) {
         await unsubscribeFromPush();
         toast.success("Push notifications turned off.");
         return;
@@ -117,12 +128,17 @@ export default function NotificationBell({
             };
 
       if (result.ok) {
+        setPushSubscriptionError(null);
         toast.success("Push notifications enabled.");
       } else if (result.reason === "permission-denied") {
+        setPushSubscriptionError(result.message ?? "Notification permission is blocked.");
         toast.error(
           "Notifications are blocked. Enable them in your browser's site settings, then try again.",
         );
       } else {
+        setPushSubscriptionError(
+          result.message ?? "Couldn't save the push notification subscription.",
+        );
         toast.error(
           result.message || "Couldn't enable push notifications on this device.",
         );
@@ -357,6 +373,8 @@ export default function NotificationBell({
               <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
               {!pushStatusLoaded
                 ? "Checking push notifications..."
+                : pushStatusError || pushSubscriptionError
+                  ? "Retry push notifications"
                 : pushEnabled
                   ? "Turn off push notifications"
                   : "Turn on push notifications"}

@@ -26,9 +26,8 @@ interface PushPromptModalProps {
  * Proactively asks visitors to enable push, instead of waiting for someone
  * to find the toggle in the bell dropdown. Shows at most once per browser
  * (tracked in localStorage) and never if permission was already
- * denied/granted. Also stays mounted permanently (regardless of whether
- * the popup itself is showing) to silently re-link an anonymous
- * subscription to a real student the moment one verifies.
+ * denied/granted. Once a student is verified, it also reconciles any
+ * pre-existing browser subscription with that student's record.
  */
 export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptModalProps) {
   const [open, setOpen] = useState(false);
@@ -47,8 +46,13 @@ export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptMod
       if (Notification.permission === "denied" || Notification.permission === "granted") return;
       if (localStorage.getItem(DISMISSED_KEY)) return;
 
-      const existing = await getExistingSubscription();
-      if (existing) return;
+      try {
+        const existing = await getExistingSubscription();
+        if (existing) return;
+      } catch (error) {
+        console.warn("Unable to check push subscription before prompting:", error);
+        return;
+      }
 
       if (!cancelled) {
         const timer = setTimeout(() => setOpen(true), 1500);
@@ -63,9 +67,8 @@ export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptMod
     // Only re-check on identity changes (e.g. logging in), not every render.
   }, [isLoggedIn, studentId]);
 
-  // Whenever a visitor verifies as a specific student, silently upgrade
-  // any existing anonymous/prior subscription on this browser to match —
-  // no prompt, no popup, permission is already granted at that point.
+  // Reconcile a prior subscription with a verified student record without
+  // prompting again when the browser permission was already granted.
   useEffect(() => {
     if (studentId) {
       upgradeSubscriptionToStudent(studentId);
@@ -101,6 +104,9 @@ export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptMod
         localStorage.setItem(DISMISSED_KEY, "1");
         setOpen(false);
       }
+    } catch (error) {
+      console.error("Push prompt subscription failed:", error);
+      toast.error("Couldn't enable push notifications. Please try again.");
     } finally {
       setBusy(false);
     }

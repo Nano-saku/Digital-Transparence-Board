@@ -3,6 +3,25 @@ import { notificationsService } from "@/services/notificationsService";
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as
   | string
   | undefined;
+const SERVICE_WORKER_TIMEOUT_MS = 12_000;
+const PUSH_OPERATION_TIMEOUT_MS = 12_000;
+const DATABASE_SYNC_TIMEOUT_MS = 12_000;
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
 
 /** Converts the base64url VAPID public key into the Uint8Array the Push API expects. */
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -13,24 +32,54 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 export function isPushSupported(): boolean {
-  return "serviceWorker" in navigator && "PushManager" in window;
+  return (
+    typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    typeof Notification !== "undefined"
+  );
 }
 
 async function getRegistration(): Promise<ServiceWorkerRegistration> {
-  const registration = await navigator.serviceWorker.register("/sw.js");
-  // register() can resolve while the worker is still installing — the Push
-  // API needs it fully active. .ready resolves once that's actually true.
-  await navigator.serviceWorker.ready;
-  return registration;
+  const existing = await withTimeout(
+    navigator.serviceWorker.getRegistration(),
+    SERVICE_WORKER_TIMEOUT_MS,
+    "Timed out while checking the notification service worker.",
+  );
+  const registration =
+    existing ??
+    (await withTimeout(
+      navigator.serviceWorker.register("/sw.js"),
+      SERVICE_WORKER_TIMEOUT_MS,
+      "Unable to register the notification service worker.",
+    ));
+
+  if (registration.active) return registration;
+
+  // A service worker can remain installing/waiting indefinitely on slow or
+  // misconfigured deployments. Never allow that state to block the UI forever.
+  const readyRegistration = await withTimeout(
+    navigator.serviceWorker.ready,
+    SERVICE_WORKER_TIMEOUT_MS,
+    "Notification service worker did not become ready. Please refresh and try again.",
+  );
+
+  if (!readyRegistration.active) {
+    throw new Error("Notification service worker is not active yet.");
+  }
+
+  return readyRegistration;
 }
 
 /** Null if never subscribed on this browser, otherwise the existing PushSubscription. */
 export async function getExistingSubscription(): Promise<PushSubscription | null> {
   if (!isPushSupported()) return null;
-  const registration = await navigator.serviceWorker.ready.catch(() =>
-    getRegistration(),
+  const registration = await getRegistration();
+  return withTimeout(
+    registration.pushManager.getSubscription(),
+    PUSH_OPERATION_TIMEOUT_MS,
+    "Timed out while checking the existing push subscription.",
   );
-  return registration.pushManager.getSubscription();
 }
 
 interface SubscribeResult {
@@ -58,26 +107,41 @@ async function subscribeBrowser(): Promise<
     };
   }
 
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    return {
-      ok: false,
-      reason: "permission-denied",
-      message: "Notification permission was denied.",
-    };
-  }
-
   try {
+    let permission = Notification.permission;
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+    }
+    if (permission !== "granted") {
+      return {
+        ok: false,
+        reason: "permission-denied",
+        message:
+          "Notification permission is blocked. Enable it in your browser's site settings, then try again.",
+      };
+    }
+
     const registration = await getRegistration();
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      // Cast needed on newer TS lib versions: Uint8Array.from()/new Uint8Array()
-      // type as Uint8Array<ArrayBufferLike>, but PushManager's typings still
-      // want the older, stricter BufferSource shape. Runtime value is fine either way.
-      applicationServerKey: urlBase64ToUint8Array(
-        VAPID_PUBLIC_KEY,
-      ) as BufferSource,
-    });
+    const existing = await withTimeout(
+      registration.pushManager.getSubscription(),
+      PUSH_OPERATION_TIMEOUT_MS,
+      "Timed out while checking the existing push subscription.",
+    );
+    const subscription =
+      existing ??
+      (await withTimeout(
+        registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          // Cast needed on newer TS lib versions: Uint8Array.from()/new Uint8Array()
+          // type as Uint8Array<ArrayBufferLike>, but PushManager's typings still
+          // want the older, stricter BufferSource shape. Runtime value is fine either way.
+          applicationServerKey: urlBase64ToUint8Array(
+            VAPID_PUBLIC_KEY,
+          ) as BufferSource,
+        }),
+        PUSH_OPERATION_TIMEOUT_MS,
+        "Timed out while creating the push subscription.",
+      ));
     return { subscription };
   } catch (error) {
     console.error("Push subscribe failed:", error);
@@ -98,13 +162,26 @@ function toKeys(subscription: PushSubscription) {
 export async function subscribeStudentToPush(
   studentId: string,
 ): Promise<SubscribeResult> {
+  const normalizedStudentId = studentId.trim();
+  if (!normalizedStudentId) {
+    return {
+      ok: false,
+      reason: "error",
+      message: "Your student record is not ready. Reopen Find Your Records and try again.",
+    };
+  }
+
   const result = await subscribeBrowser();
   if (!("subscription" in result)) return result;
 
   try {
-    await notificationsService.subscribeStudentPush(
-      studentId,
-      toKeys(result.subscription),
+    await withTimeout(
+      notificationsService.subscribeStudentPush(
+        normalizedStudentId,
+        toKeys(result.subscription),
+      ),
+      DATABASE_SYNC_TIMEOUT_MS,
+      "Timed out while saving the push subscription. Please try again.",
     );
     return { ok: true };
   } catch (error) {
@@ -154,13 +231,20 @@ export async function subscribeAnonymousToPush(): Promise<SubscribeResult> {
 export async function upgradeSubscriptionToStudent(
   studentId: string,
 ): Promise<void> {
-  const subscription = await getExistingSubscription();
-  if (!subscription) return;
+  const normalizedStudentId = studentId.trim();
+  if (!normalizedStudentId) return;
 
   try {
-    await notificationsService.subscribeStudentPush(
-      studentId,
-      toKeys(subscription),
+    const subscription = await getExistingSubscription();
+    if (!subscription) return;
+
+    await withTimeout(
+      notificationsService.subscribeStudentPush(
+        normalizedStudentId,
+        toKeys(subscription),
+      ),
+      DATABASE_SYNC_TIMEOUT_MS,
+      "Timed out while linking the push subscription to the student record.",
     );
   } catch (error) {
     console.error("Failed to upgrade push subscription to student:", error);
@@ -172,6 +256,14 @@ export async function unsubscribeFromPush(): Promise<void> {
   if (!subscription) return;
 
   const endpoint = subscription.endpoint;
-  await subscription.unsubscribe();
-  await notificationsService.unsubscribePush(endpoint);
+  await withTimeout(
+    subscription.unsubscribe(),
+    PUSH_OPERATION_TIMEOUT_MS,
+    "Timed out while disabling push notifications.",
+  );
+  await withTimeout(
+    notificationsService.unsubscribePush(endpoint),
+    DATABASE_SYNC_TIMEOUT_MS,
+    "Timed out while removing the push subscription from the server.",
+  );
 }
