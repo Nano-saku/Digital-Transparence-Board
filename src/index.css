@@ -57,6 +57,15 @@
     --grad-card-accent: linear-gradient(90deg, #526ff2 0%, #9cacff 100%); --grad-btn-primary: linear-gradient(135deg, #526ff2 0%, #7c91ff 100%);
     --status-success: #54d98b; --status-warning: #e9bd5c; --status-danger: #f17777;
     --glass-bg: rgba(16, 24, 49, 0.86); --glass-border: rgba(166, 180, 226, 0.24); --glass-shadow: 0 24px 70px rgba(0, 0, 0, 0.26); --student-qr-actions-shadow: 0 -8px 16px rgba(4, 8, 22, 0.82);
+    --landing-upcoming-surface: #0b1744; --landing-preview-surface: #0e1a4d;
+    --landing-section-overlay: radial-gradient(circle at top right, rgba(58, 95, 224, 0.32), transparent 48%);
+    --landing-preview-overlay: radial-gradient(circle at center, rgba(58, 95, 224, 0.32), transparent 62%);
+    --landing-section-heading: #ffffff; --landing-section-description: #cbd5e1;
+    --carousel-card-surface: #0e1a4d; --carousel-card-border: rgba(255, 255, 255, 0.5);
+    --carousel-counter-overlay: linear-gradient(to top, rgba(14, 26, 77, 0.88), transparent);
+    --carousel-control-surface: rgba(14, 26, 77, 0.8); --carousel-control-hover: #1b2e8c;
+    --carousel-control-text: #ffffff; --carousel-indicator: rgba(255, 255, 255, 0.5);
+    --carousel-indicator-hover: rgba(255, 255, 255, 0.8);
   }
   [data-theme="light"] {
     color-scheme: light;
@@ -100,6 +109,15 @@
     --grad-seal-metallic: radial-gradient(circle at 75% 20%, rgba(82, 111, 242, 0.18), transparent 32%), linear-gradient(135deg, #e9f0ff 0%, #f8fbff 55%, #dbe7ff 100%);
     --grad-card-accent: linear-gradient(90deg, #3154d8 0%, #6682ff 100%); --grad-btn-primary: linear-gradient(135deg, #3154d8 0%, #526ff2 100%);
     --glass-bg: rgba(255, 255, 255, 0.94); --glass-border: rgba(55, 79, 126, 0.22); --glass-shadow: 0 24px 70px rgba(36, 65, 122, 0.16); --student-qr-actions-shadow: 0 -8px 16px rgba(244, 246, 252, 0.95);
+    --landing-upcoming-surface: #e8effb; --landing-preview-surface: #f3f6fc;
+    --landing-section-overlay: radial-gradient(circle at top right, rgba(82, 111, 242, 0.18), transparent 48%);
+    --landing-preview-overlay: radial-gradient(circle at center, rgba(82, 111, 242, 0.14), transparent 62%);
+    --landing-section-heading: var(--text-primary); --landing-section-description: var(--text-secondary);
+    --carousel-card-surface: #ffffff; --carousel-card-border: rgba(55, 79, 126, 0.28);
+    --carousel-counter-overlay: linear-gradient(to top, rgba(20, 36, 75, 0.82), transparent);
+    --carousel-control-surface: rgba(255, 255, 255, 0.92); --carousel-control-hover: #e1eaff;
+    --carousel-control-text: #1d3264; --carousel-indicator: rgba(55, 79, 126, 0.36);
+    --carousel-indicator-hover: rgba(55, 79, 126, 0.72);
   }
   * { @apply border-border; }
   html { scroll-behavior: smooth; }
@@ -286,6 +304,21 @@
 
   .glass-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 1rem; box-shadow: var(--glass-shadow); backdrop-filter: blur(18px) saturate(130%); -webkit-backdrop-filter: blur(18px) saturate(130%); }
   .glass-card-strong { background: var(--surface-raised); border: 1px solid var(--glass-border); border-radius: 1.25rem; box-shadow: var(--glass-shadow), inset 0 1px 0 var(--surface-soft); backdrop-filter: blur(20px) saturate(140%); -webkit-backdrop-filter: blur(20px) saturate(140%); }
+  .landing-events-section, .landing-preview-section { color: var(--text-primary); transition: background-color 180ms ease-out, color 180ms ease-out; }
+  .landing-events-section { background: var(--landing-upcoming-surface); }
+  .landing-preview-section { background: var(--landing-preview-surface); }
+  .landing-events-overlay { background: var(--landing-section-overlay); }
+  .landing-preview-overlay { background: var(--landing-preview-overlay); }
+  .landing-section-title { color: var(--landing-section-heading); }
+  .landing-section-description { color: var(--landing-section-description); }
+  .lsc-officer-carousel-card { background: var(--carousel-card-surface); border-color: var(--carousel-card-border); }
+  .lsc-officer-carousel-counter { background: var(--carousel-counter-overlay); color: var(--text-on-primary); }
+  .lsc-officer-carousel-control { background: var(--carousel-control-surface); border-color: var(--carousel-card-border); color: var(--carousel-control-text); }
+  .lsc-officer-carousel-control:hover { background: var(--carousel-control-hover); }
+  .lsc-officer-carousel-control:focus-visible, .lsc-officer-carousel-indicator:focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 3px; }
+  .lsc-officer-carousel-indicator { background: var(--carousel-indicator); }
+  .lsc-officer-carousel-indicator:hover { background: var(--carousel-indicator-hover); }
+  .lsc-officer-carousel-indicator.is-active { background: var(--dssc-gold); }
   .theme-toggle { display: inline-flex; width: 3.5rem; height: 2rem; align-items: center; justify-content: center; border: 0; border-radius: 9999px; padding: 0; background: transparent; color: var(--text-primary); box-shadow: none; transition: transform 180ms ease-out; }
   .theme-toggle:hover { background: transparent; transform: translateY(-1px); }
   .theme-toggle:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }

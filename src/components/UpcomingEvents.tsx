@@ -45,7 +45,7 @@ const EventCard = ({ event }: { event: Event }) => {
       </div>
 
       {(hasSchedules || hasLegacyTime) && (
-        <div className="mt-5 space-y-2 border-t border-white/10 pt-4 text-sm text-text-secondary">
+        <div className="theme-border mt-5 space-y-2 border-t pt-4 text-sm text-text-secondary">
           {hasSchedules ? (
             event.schedules!.map((schedule) => (
               <p key={schedule.period} className="flex items-center gap-2">
@@ -100,20 +100,20 @@ export default function UpcomingEvents() {
     <section
       id="upcoming-events"
       aria-labelledby="upcoming-events-heading"
-      className="relative overflow-hidden bg-[#0B1744] px-4 py-20 sm:px-6 lg:px-8"
+      className="landing-events-section relative overflow-hidden px-4 py-20 sm:px-6 lg:px-8"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(58,95,224,0.32),transparent_48%)]" />
+      <div className="landing-events-overlay pointer-events-none absolute inset-0" />
       <div className="relative z-10 mx-auto w-full max-w-6xl">
         <div className="mb-10 text-center">
           <span className="eyebrow">Stay connected</span>
           <h2
             id="upcoming-events-heading"
-            className="mt-3 font-display text-3xl font-bold text-white sm:text-4xl"
+            className="landing-section-title mt-3 font-display text-3xl font-bold sm:text-4xl"
           >
             Upcoming Events
           </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-300 sm:text-base">
-            See what&apos;s coming up in the Local Student Council community.
+          <p className="landing-section-description mx-auto mt-3 max-w-2xl text-sm leading-relaxed sm:text-base">
+            See what&apos;s coming up.
           </p>
         </div>
 

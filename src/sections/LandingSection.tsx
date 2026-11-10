@@ -319,18 +319,18 @@ export default function LandingSection({
       <UpcomingEvents />
       <section
         id="lsc-preview"
-        className="relative overflow-hidden bg-[#0E1A4D] px-4 py-20 sm:px-6 lg:px-8"
+        className="landing-preview-section relative overflow-hidden px-4 py-20 sm:px-6 lg:px-8"
       >
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(58,95,224,0.32),transparent_62%)]" />
+        <div className="landing-preview-overlay absolute inset-0 pointer-events-none" />
         <div className="relative z-10 mx-auto w-full max-w-6xl">
           <div className="mb-10 text-center">
             <span className="eyebrow">
               Leadership • Service • Commitment
             </span>
-            <h2 className="mt-3 font-display text-3xl font-bold text-white sm:text-4xl">
+            <h2 className="landing-section-title mt-3 font-display text-3xl font-bold sm:text-4xl">
               LSC Preview
             </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-300 sm:text-base">
+            <p className="landing-section-description mx-auto mt-3 max-w-2xl text-sm leading-relaxed sm:text-base">
               Meet the officers dedicated to serving the Local Student Council
               community.
             </p>

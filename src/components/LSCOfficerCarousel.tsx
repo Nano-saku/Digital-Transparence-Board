@@ -52,7 +52,7 @@ export default function LSCOfficerCarousel() {
               aria-hidden={!visible}
               tabIndex={visible ? 0 : -1}
               onClick={() => setActive(index)}
-              className="absolute left-1/2 top-1/2 overflow-hidden rounded-2xl border-2 border-white/50 bg-[#0E1A4D] shadow-2xl transition-[transform,opacity] duration-700 ease-out"
+              className="lsc-officer-carousel-card absolute left-1/2 top-1/2 overflow-hidden rounded-2xl border-2 shadow-2xl transition-[transform,opacity] duration-700 ease-out"
               style={{
                 width: 'clamp(13rem, 32vw, 20rem)',
                 height: 'clamp(17rem, 48vw, 25rem)',
@@ -68,7 +68,7 @@ export default function LSCOfficerCarousel() {
                 draggable={false}
                 className="h-full w-full object-contain"
               />
-              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0E1A4D]/80 to-transparent p-3 text-right text-xs font-semibold text-white">
+              <span className="lsc-officer-carousel-counter absolute inset-x-0 bottom-0 p-3 text-right text-xs font-semibold">
                 {index + 1} / {OFFICER_IMAGES.length}
               </span>
             </button>
@@ -79,7 +79,7 @@ export default function LSCOfficerCarousel() {
           type="button"
           onClick={() => move(-1)}
           aria-label="Previous officer"
-          className="absolute left-2 top-1/2 z-20 -translate-y-1/2 rounded-full border border-white/50 bg-[#0E1A4D]/80 p-2 text-white shadow-lg transition hover:bg-[#1B2E8C] sm:left-6 sm:p-3"
+          className="lsc-officer-carousel-control absolute left-2 top-1/2 z-20 -translate-y-1/2 rounded-full border p-2 shadow-lg transition sm:left-6 sm:p-3"
         >
           <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
         </button>
@@ -87,7 +87,7 @@ export default function LSCOfficerCarousel() {
           type="button"
           onClick={() => move(1)}
           aria-label="Next officer"
-          className="absolute right-2 top-1/2 z-20 -translate-y-1/2 rounded-full border border-white/50 bg-[#0E1A4D]/80 p-2 text-white shadow-lg transition hover:bg-[#1B2E8C] sm:right-6 sm:p-3"
+          className="lsc-officer-carousel-control absolute right-2 top-1/2 z-20 -translate-y-1/2 rounded-full border p-2 shadow-lg transition sm:right-6 sm:p-3"
         >
           <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
         </button>
@@ -101,7 +101,7 @@ export default function LSCOfficerCarousel() {
             onClick={() => setActive(index)}
             aria-label={`Go to officer image ${index + 1}`}
             aria-current={active === index ? 'true' : undefined}
-            className={`h-2.5 rounded-full transition-all ${active === index ? 'w-7 bg-lsc-gold' : 'w-2.5 bg-white/50 hover:bg-white/80'}`}
+            className={`lsc-officer-carousel-indicator h-2.5 rounded-full transition-all ${active === index ? 'is-active w-7' : 'w-2.5'}`}
           />
         ))}
       </div>
