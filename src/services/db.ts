@@ -3,6 +3,7 @@ import { getSupabase } from "../lib/supabase";
 import { offlineSyncService } from "../lib/offlineSync";
 import { autoCreateReceipt } from "../lib/receipts";
 import { today } from "../lib/format";
+import { calendarDateInTimeZone } from "../lib/attendance";
 import {
   normalizeStudentName,
   splitSearchWords,
@@ -836,14 +837,22 @@ export const profilePhotoService = {
       throw new Error("Profile photos must be 5 MB or smaller.");
     }
 
-    // One stable object per student lets replacement overwrite the previous
-    // photo instead of leaving orphaned files in Storage.
-    const path = `${studentId}/profile`;
+    // A replacement is uploaded before the student row is changed. A unique
+    // immutable path therefore keeps the current photo available if either
+    // Storage or the subsequent RPC fails.
+    const extensionByType: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+    const path = `${studentId}/profile/${crypto.randomUUID()}.${extensionByType[file.type]}`;
     const supabase = getSupabase();
     const { error: uploadError } = await supabase.storage
       .from(PROFILE_PHOTO_BUCKET)
-      .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
-    if (uploadError) throw new Error(uploadError.message);
+      .upload(path, file, { upsert: false, contentType: file.type, cacheControl: "3600" });
+    if (uploadError) {
+      throw new Error(`Profile photo upload failed: ${uploadError.message}`);
+    }
 
     const { data: urlData } = supabase.storage
       .from(PROFILE_PHOTO_BUCKET)
@@ -853,10 +862,17 @@ export const profilePhotoService = {
       target_student_id: studentId,
       next_profile_photo_url: versionedUrl,
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw new Error(
+        `Photo uploaded but was not saved to the student record: ${error.message}`,
+      );
+    }
 
     invalidateReferenceCache("students");
-    return (data as string | null) || versionedUrl;
+    if (typeof data !== "string" || data !== versionedUrl) {
+      throw new Error("Profile photo update was not confirmed by the database.");
+    }
+    return data;
   },
 };
 
@@ -882,6 +898,33 @@ export const eventsService = {
 
     referenceDataCache.set("events", events);
     return events;
+  },
+
+  /**
+   * Student-facing event feed derived from the established event catalog.
+   *
+   * Do not add a narrow `.select(...)` query here. Deployed projects can be
+   * upgraded incrementally, and explicitly naming a newer schedule/time column
+   * makes the entire upcoming-events panel fail on an otherwise readable event
+   * catalog. `getAll()` safely maps absent optional columns to `undefined`.
+   *
+   * Event dates are date-only Philippine calendar values. Comparing against
+   * the Asia/Manila date prevents a student in another device timezone from
+   * seeing an event a day early or late.
+   */
+  async getUpcomingForStudents(): Promise<Event[]> {
+    const todayInManila = calendarDateInTimeZone(new Date());
+
+    // `date` is a text column in the existing schema. Keep malformed legacy
+    // values such as "TBD" out even if they sort after today's ISO date.
+    return (await this.getAll())
+      .filter(
+        (event) =>
+          Boolean(event.date) &&
+          /^\d{4}-\d{2}-\d{2}$/.test(event.date!) &&
+          event.date! >= todayInManila,
+      )
+      .sort((left, right) => left.date!.localeCompare(right.date!));
   },
 
   async create(event: Omit<Event, "id">): Promise<Event> {

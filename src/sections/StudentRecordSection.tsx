@@ -12,10 +12,12 @@ import {
   Eye,
   HeartHandshake,
   Sparkles,
+  Clock,
 } from "lucide-react";
 import type {
   Student,
   Event,
+  EventSchedule,
   AttendanceRecord,
   ContributionRecord,
   PaymentRecord,
@@ -73,6 +75,7 @@ import SectionBackButton from "@/components/SectionBackButton";
 import Pagination from "@/components/common/Pagination";
 import AnimatedNetwork from "@/components/ui/animated-network";
 import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
+import { calendarDateInTimeZone } from "@/lib/attendance";
 
 interface StudentRecordSectionProps {
   student: Student;
@@ -82,6 +85,21 @@ interface StudentRecordSectionProps {
 }
 
 const RECORDS_PAGE_SIZE = 5;
+
+const eventScheduleLabel = (schedule: EventSchedule): string => {
+  const period =
+    schedule.period === "morning"
+      ? "Morning"
+      : schedule.period === "afternoon"
+        ? "Afternoon"
+        : "Evening";
+  const times = [
+    schedule.timeIn ? `Start ${formatTime12(schedule.timeIn)}` : "",
+    schedule.timeOut ? `End ${formatTime12(schedule.timeOut)}` : "",
+  ].filter(Boolean);
+
+  return times.length > 0 ? `${period}: ${times.join(" · ")}` : period;
+};
 
 /** Formats a byte count into a human-readable file size (e.g. "1.4 MB"). */
 function formatFileSize(bytes?: number): string {
@@ -104,6 +122,7 @@ export default function StudentRecordSection({
 }: StudentRecordSectionProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const incomingEventsRef = useRef<HTMLDivElement>(null);
   const attendanceRef = useRef<HTMLDivElement>(null);
   const contributionsRef = useRef<HTMLDivElement>(null);
 
@@ -132,6 +151,7 @@ export default function StudentRecordSection({
   >([]);
   const [contributionPage, setContributionPage] = useState(1);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
+  const [incomingEvents, setIncomingEvents] = useState<Event[]>([]);
   const [volunteerRecords, setVolunteerRecords] = useState<EventVolunteer[]>(
     [],
   );
@@ -146,16 +166,13 @@ export default function StudentRecordSection({
 
   // Load data from database
   const loadStudentData = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [
-        attendanceData,
-        contributionsData,
-        eventsData,
-        paymentsData,
-        publishedData,
-        volunteersData,
-      ] = await Promise.all([
+      // Optional record sections must never hide a student's basic profile or
+      // successfully loaded attendance/financial history. In particular, a
+      // project upgraded without the requirements RPC or newer event columns
+      // can still display every independent query that succeeds.
+      const results = await Promise.allSettled([
         attendanceService.getByStudentId(student.id),
         contributionsService.getByStudentId(student.id),
         eventsService.getAll(),
@@ -163,6 +180,50 @@ export default function StudentRecordSection({
         studentRequirementFilesService.getVisibleForStudent(student.id),
         eventVolunteersService.getByStudentId(student.id),
       ]);
+      const [
+        attendanceResult,
+        contributionsResult,
+        eventsResult,
+        paymentsResult,
+        publishedFilesResult,
+        volunteersResult,
+      ] = results;
+      const failedSections: string[] = [];
+      const reportFailure = (label: string, result: PromiseSettledResult<unknown>) => {
+        if (result.status !== "rejected") return;
+        console.error(`Failed to load student ${label}:`, result.reason);
+        failedSections.push(label);
+      };
+      reportFailure("attendance", attendanceResult);
+      reportFailure("contributions", contributionsResult);
+      reportFailure("event catalog", eventsResult);
+      reportFailure("payments", paymentsResult);
+      reportFailure("requirement files", publishedFilesResult);
+      reportFailure("volunteer activities", volunteersResult);
+
+      const attendanceData =
+        attendanceResult.status === "fulfilled" ? attendanceResult.value : [];
+      const contributionsData =
+        contributionsResult.status === "fulfilled" ? contributionsResult.value : [];
+      const eventsData = eventsResult.status === "fulfilled" ? eventsResult.value : [];
+      const paymentsData =
+        paymentsResult.status === "fulfilled" ? paymentsResult.value : [];
+      // Derive the student-facing upcoming list from this successful catalog
+      // read. Calling the separate service here would launch a second event
+      // request before the shared cache is populated.
+      const todayInManila = calendarDateInTimeZone(new Date());
+      const incomingEventsData = eventsData
+        .filter(
+          (event) =>
+            Boolean(event.date) &&
+            /^\d{4}-\d{2}-\d{2}$/.test(event.date!) &&
+            event.date! >= todayInManila,
+        )
+        .sort((left, right) => left.date!.localeCompare(right.date!));
+      const publishedData =
+        publishedFilesResult.status === "fulfilled" ? publishedFilesResult.value : [];
+      const volunteersData =
+        volunteersResult.status === "fulfilled" ? volunteersResult.value : [];
 
       // A contribution row is created when a payment or contribution is
       // recorded, so unpaid events may not have a row yet. The student view
@@ -202,12 +263,15 @@ export default function StudentRecordSection({
       setAttendanceRecords(attendanceData);
       setContributionRecords(displayedContributions);
       setPaymentRecords(paymentsData);
+      setIncomingEvents(incomingEventsData);
       // Published requirement files shown to the student (Student Viewer).
       setPublishedFiles(publishedData);
       setVolunteerRecords(volunteersData);
-    } catch (error) {
-      console.error("Error loading student data:", error);
-      toast.error("Failed to load student records");
+      if (failedSections.length > 0) {
+        toast.error(
+          `Some student record details could not be loaded: ${failedSections.join(", ")}.`,
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -337,6 +401,12 @@ export default function StudentRecordSection({
       to: { x: 0, opacity: 1, duration: 0.8 },
     },
     // Attendance table entrance
+    {
+      ref: incomingEventsRef,
+      from: { y: "36vh", opacity: 0 },
+      to: { y: 0, opacity: 1, duration: 0.7 },
+      position: "-=0.5",
+    },
     {
       ref: attendanceRef,
       from: { y: "60vh", opacity: 0 },
@@ -513,6 +583,108 @@ export default function StudentRecordSection({
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Incoming Events - read-only student view of scheduled events. */}
+            <div
+              ref={incomingEventsRef}
+              className="glass-card p-5 lg:p-6 mb-8 border border-primary/20"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <h2 className="font-display font-semibold text-lg text-dark">
+                      Incoming Events
+                    </h2>
+                    <p className="text-xs text-text-secondary">
+                      Upcoming LSC events, shown nearest first and updated automatically.
+                    </p>
+                  </div>
+                </div>
+                <span className="inline-flex w-fit items-center rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
+                  {incomingEvents.length} upcoming
+                </span>
+              </div>
+
+              {incomingEvents.length === 0 ? (
+                <SectionEmptyState
+                  message="No upcoming LSC events are scheduled right now"
+                  icon={Calendar}
+                  compact
+                />
+              ) : (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  {incomingEvents.map((event) => {
+                    const hasContributionRequirement =
+                      !student.isLscOfficer &&
+                      !event.isNoContribution &&
+                      event.allocationAmount > 0;
+
+                    return (
+                      <article
+                        key={event.id}
+                        className="rounded-xl border border-white/50 bg-white/40 p-4 shadow-xs"
+                      >
+                        <div className="flex gap-3">
+                          <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                            <span className="text-[10px] font-medium uppercase leading-none">
+                              {event.date
+                                ? new Intl.DateTimeFormat("en-US", {
+                                    month: "short",
+                                  }).format(new Date(`${event.date}T00:00:00`))
+                                : "TBD"}
+                            </span>
+                            <span className="mt-1 text-xl font-bold leading-none">
+                              {event.date?.slice(-2)}
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <h3 className="font-display font-semibold leading-snug text-dark">
+                                {event.name}
+                              </h3>
+                              <span className="rounded-full bg-status-info/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+                                Scheduled
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm font-medium text-text-secondary">
+                              {event.date ? formatDate(event.date) : "Date to be announced"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {event.schedules && event.schedules.length > 0 ? (
+                          <div className="mt-4 space-y-1.5 border-t border-white/50 pt-3 text-sm text-text-secondary">
+                            {event.schedules.map((schedule) => (
+                              <p key={schedule.period} className="flex items-center gap-2">
+                                <Clock className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                {eventScheduleLabel(schedule)}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (event.timeIn || event.timeOut) && (
+                          <p className="mt-4 flex items-center gap-2 border-t border-white/50 pt-3 text-sm text-text-secondary">
+                            <Clock className="h-3.5 w-3.5 shrink-0 text-primary" />
+                            {event.timeIn && `Start ${formatTime12(event.timeIn)}`}
+                            {event.timeIn && event.timeOut && " · "}
+                            {event.timeOut && `End ${formatTime12(event.timeOut)}`}
+                          </p>
+                        )}
+
+                        {hasContributionRequirement && (
+                          <div className="mt-4 rounded-lg bg-warning/15 px-3 py-2 text-sm text-dark">
+                            <span className="font-medium">Contribution required:</span>{" "}
+                            {formatPeso(event.allocationAmount)}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Two Column Layout */}

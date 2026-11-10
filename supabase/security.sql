@@ -177,9 +177,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_students_account_user_id
   ON public.students (account_user_id)
   WHERE account_user_id IS NOT NULL;
 
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('profile-photos', 'profile-photos', true)
-ON CONFLICT (id) DO UPDATE SET public = true;
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'profile-photos',
+  'profile-photos',
+  true,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS profile_photos_public_read ON storage.objects;
 CREATE POLICY profile_photos_public_read ON storage.objects
@@ -190,7 +199,7 @@ CREATE POLICY profile_photos_authenticated_upload ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'profile-photos'
-    AND split_part(name, '/', 2) = 'profile'
+    AND name ~ '^[^/]+/profile/[0-9a-fA-F-]+\.(jpg|png|webp)$'
     AND (
       public.has_role('admin') OR public.has_role('secretary')
       OR EXISTS (
@@ -206,7 +215,7 @@ CREATE POLICY profile_photos_authenticated_update ON storage.objects
   FOR UPDATE TO authenticated
   USING (
     bucket_id = 'profile-photos'
-    AND split_part(name, '/', 2) = 'profile'
+    AND name ~ '^[^/]+/profile(/[^/]+)?$'
     AND (
       public.has_role('admin') OR public.has_role('secretary')
       OR EXISTS (
@@ -218,7 +227,7 @@ CREATE POLICY profile_photos_authenticated_update ON storage.objects
   )
   WITH CHECK (
     bucket_id = 'profile-photos'
-    AND split_part(name, '/', 2) = 'profile'
+    AND name ~ '^[^/]+/profile(/[^/]+)?$'
   );
 
 CREATE OR REPLACE FUNCTION public.set_student_profile_photo(
@@ -228,13 +237,21 @@ CREATE OR REPLACE FUNCTION public.set_student_profile_photo(
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
-DECLARE saved_url TEXT;
+DECLARE
+  saved_url TEXT;
+  storage_path TEXT;
+  public_url_marker CONSTANT TEXT := '/storage/v1/object/public/profile-photos/';
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Authentication is required to update a profile photo';
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.students WHERE id = target_student_id) THEN
+    RAISE EXCEPTION 'Student record not found';
+  END IF;
+
   IF NOT (
     public.has_role('admin') OR public.has_role('secretary')
     OR EXISTS (
@@ -244,21 +261,35 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'You are not authorized to update this student profile photo';
   END IF;
-  IF next_profile_photo_url IS NULL
-     OR next_profile_photo_url NOT LIKE '%/storage/v1/object/public/profile-photos/' || target_student_id || '/profile%'
+
+  storage_path := split_part(
+    split_part(COALESCE(next_profile_photo_url, ''), public_url_marker, 2),
+    '?',
+    1
+  );
+  IF position(public_url_marker IN COALESCE(next_profile_photo_url, '')) = 0
+     OR storage_path NOT LIKE target_student_id || '/profile/%'
+     OR storage_path !~ '^[^/]+/profile/[0-9a-fA-F-]+\.(jpg|png|webp)$'
+     OR NOT EXISTS (
+       SELECT 1
+       FROM storage.objects
+       WHERE bucket_id = 'profile-photos'
+         AND name = storage_path
+     )
   THEN
     RAISE EXCEPTION 'Invalid profile photo storage path';
   END IF;
+
   UPDATE public.students
      SET profile_photo_url = next_profile_photo_url
    WHERE id = target_student_id
    RETURNING profile_photo_url INTO saved_url;
-  IF saved_url IS NULL THEN RAISE EXCEPTION 'Student record not found'; END IF;
   RETURN saved_url;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.set_student_profile_photo(TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.set_student_profile_photo(TEXT, TEXT) TO authenticated;
+NOTIFY pgrst, 'reload schema';
 
 ALTER TABLE public.board_members ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "board_members_read_public" ON public.board_members;
