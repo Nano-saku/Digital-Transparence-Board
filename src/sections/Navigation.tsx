@@ -44,12 +44,19 @@ const MANAGE_LINKS: Link[] = [
 const allowed = (role: UserRole) => (l: Link) => (l.roles ?? VIEW_ROLES[l.view] ?? [role]).includes(role);
 
 export default function Navigation({ currentView, onNavigate, role, onLogout, studentId }: NavigationProps) {
-  const [scrolled, setScrolled] = useState(false);
+  // "top": transparent on the hero; "dark": dark glass while a hero band is under the bar; "light": light glass over content.
+  const [surface, setSurface] = useState<"top" | "dark" | "light">("top");
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    const onScroll = () => {
+      const overHero = [...document.querySelectorAll("main .hero-bg")].some((el) => {
+        const { top, bottom } = el.getBoundingClientRect();
+        return top < 40 && bottom > 40; // the bar's vertical middle
+      });
+      setSurface(window.scrollY <= 24 ? "top" : overHero ? "dark" : "light");
+    };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -58,8 +65,8 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
   const links = role ? STAFF_LINKS.filter(allowed(role)) : PUBLIC_LINKS;
   const manage = role ? MANAGE_LINKS.filter(allowed(role)) : [];
   const manageActive = manage.some((l) => l.view === currentView);
-  // Every page starts with a dark .hero-bg band, so white text works until the user scrolls.
-  const solid = scrolled || mobileOpen;
+  // White text while over a dark hero band; ink on the light glass bar and the mobile sheet.
+  const solid = surface === "light" || mobileOpen;
 
   const go = (view: ViewState) => {
     setMobileOpen(false);
@@ -82,7 +89,7 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
     cn("w-full rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", active ? "bg-brand-500/10 text-brand-600" : "text-ink hover:bg-surface-2");
 
   return (
-    <nav className={cn("fixed inset-x-0 top-0 z-40 transition-[background-color,color,box-shadow] duration-300", solid ? "bg-surface/75 text-ink shadow-[0_8px_30px_-12px_rgb(10_16_51/0.18)] backdrop-blur-xl" : "text-white")}>
+    <nav className={cn("fixed inset-x-0 top-0 z-40 transition-[background-color,color,box-shadow] duration-300", solid ? "glass-bar text-ink" : surface === "dark" ? "glass-bar-dark text-white" : "text-white")}>
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:h-[4.5rem] lg:px-8">
         <button onClick={() => go("landing")} className="flex items-center gap-2.5" aria-label="LSynC home">
           <img src="/lsc-logo.jpg" alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white/30" />

@@ -16,10 +16,11 @@ import { ROLE_LABEL, STAFF_VIEWS, canAccess } from "@/lib/roles";
 import { saveViewSession, loadViewSession, clearViewSession } from "@/lib/sessionKeeper";
 import { LoadingCard } from "@/components/ui/Skeleton";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import PushPromptModal from "@/components/PushPromptModal";
 import SmoothScroll from "@/components/motion/SmoothScroll";
-import { scrollToTop } from "@/lib/scroll";
-import { growFrom } from "@/lib/transition";
+import { scrollToTop, scrollToY } from "@/lib/scroll";
+import { growFrom, pressOrigin } from "@/lib/transition";
 import { useInteractionMotion } from "@/hooks/useInteractionMotion";
 import Navigation from "@/sections/Navigation";
 import LandingSection from "@/sections/LandingSection";
@@ -96,6 +97,10 @@ const STUDENT_VIEWS: ViewState[] = ["student-record", "officer-record", "evaluat
 const recordView = (pending: Event | null, verification: StudentAppointmentVerification): ViewState =>
   pending ? "evaluation-required" : verification.status === "verified" ? "officer-record" : "student-record";
 
+/** One step of in-app history: the view, plus how to animate back out of it. */
+type Step = { view: ViewState; scrollY: number; origin: DOMRect | null };
+type NavigateOptions = { studentId?: string; replace?: boolean; reset?: boolean };
+
 const Fallback = () => (
   <div className="mx-auto max-w-5xl px-4 pt-28">
     <LoadingCard />
@@ -110,10 +115,19 @@ function App() {
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
+  // CSS entrance only when no view transition animated the change (avoids a replay after it settles).
+  const [enter, setEnter] = useState(true);
+  const steps = useRef<Step[]>([{ view: "landing", scrollY: 0, origin: null }]);
   const loggingOut = useRef(false);
   const appointmentCheck = useRef(0);
   const role: UserRole | null = auth?.role ?? null;
   useInteractionMotion();
+
+  /** Swap the current view in place (restores, role or appointment changes). */
+  const showView = (next: ViewState) => {
+    steps.current[steps.current.length - 1].view = next;
+    setView(next);
+  };
 
   // Restore the Supabase session after a reload, and reopen whichever staff
   // page or verified student record was showing before it (lib/sessionKeeper).
@@ -127,10 +141,10 @@ function App() {
         if (persisted && STAFF_VIEWS.includes(persisted.view)) {
           if (!session) return clearViewSession(); // signed out since the tab was left open
           // A role change can revoke access: land on the dashboard instead.
-          setView(canAccess(session.role, persisted.view) === false ? "admin-dashboard" : persisted.view);
+          showView(canAccess(session.role, persisted.view) === false ? "admin-dashboard" : persisted.view);
           return;
         }
-        if (session) setView((v) => (v === "admin-login" ? "admin-dashboard" : v));
+        if (session && steps.current[steps.current.length - 1].view === "admin-login") showView("admin-dashboard");
         if (persisted?.studentId && STUDENT_VIEWS.includes(persisted.view)) {
           try {
             const found = await studentsService.getByStudentId(persisted.studentId);
@@ -140,7 +154,7 @@ function App() {
             setStudent(found);
             setPendingEvaluation(pending);
             setAppointment(verification);
-            setView(recordView(pending, verification));
+            showView(recordView(pending, verification));
           } catch (error) {
             console.warn("Could not restore student session:", error);
           }
@@ -151,7 +165,7 @@ function App() {
     // Fired when the user arrives through a password-reset email link.
     const unsubscribe = authService.onPasswordRecovery(() => {
       setAuth(null);
-      setView("admin-reset-password");
+      showView("admin-reset-password");
     });
     return () => {
       offlineSyncService.stop();
@@ -163,16 +177,65 @@ function App() {
     offlineSyncService.configure(auth?.user.id ?? null, auth?.role ?? null);
   }, [auth]);
 
-  const navigate = async (next: ViewState, studentId?: string) => {
+  const remember = (next: ViewState, studentId?: string) => {
     if (STAFF_VIEWS.includes(next)) saveViewSession({ view: next });
     else if (studentId && STUDENT_VIEWS.includes(next)) saveViewSession({ view: next, studentId });
     else if (next === "landing") clearViewSession();
-    await VIEW_CODE[next]?.().catch(() => undefined); // a failed chunk still falls back to Suspense
-    growFrom(() => {
-      setView(next);
-      scrollToTop();
-    });
   };
+
+  /**
+   * Go to a view. Going to the previous step is a "back" (reverse morph, scroll
+   * restored); `replace` swaps the current step (login, re-checks) and `reset`
+   * starts history over (logout). Each forward step is also a browser history
+   * entry, so the device back button works too.
+   */
+  const navigate = async (next: ViewState, { studentId, replace = false, reset = false }: NavigateOptions = {}) => {
+    const stack = steps.current;
+    const top = stack[stack.length - 1];
+    if (!replace && !reset && stack.length > 1 && stack[stack.length - 2].view === next) return window.history.back();
+    if (!replace && !reset && top.view === next) return scrollToTop();
+    const origin = pressOrigin();
+    if (reset) steps.current = [{ view: next, scrollY: 0, origin: null }];
+    else if (replace) stack[stack.length - 1] = { ...top, view: next };
+    else {
+      stack.push({ view: next, scrollY: window.scrollY, origin });
+      window.history.pushState({ lsync: stack.length }, "");
+    }
+    remember(next, studentId);
+    await VIEW_CODE[next]?.().catch(() => undefined); // a failed chunk still falls back to Suspense
+    growFrom(
+      (animated) => {
+        setEnter(!animated);
+        setView(next);
+        scrollToTop();
+      },
+      { origin },
+    );
+  };
+
+  // Back (in-app or device): shrink the current view into the element that opened it.
+  const goBack = useRef(async () => {});
+  goBack.current = async () => {
+    const stack = steps.current;
+    if (stack.length < 2) return;
+    const leaving = stack.pop()!;
+    const target = stack[stack.length - 1].view;
+    remember(target, student?.studentId);
+    await VIEW_CODE[target]?.().catch(() => undefined);
+    growFrom(
+      (animated) => {
+        setEnter(!animated);
+        setView(target);
+        scrollToY(leaving.scrollY);
+      },
+      { origin: leaving.origin, direction: "back" },
+    );
+  };
+  useEffect(() => {
+    const onPop = () => void goBack.current();
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // Warm the public pages once the landing page is idle so they open instantly.
   useEffect(() => {
@@ -199,7 +262,8 @@ function App() {
       setStudent(found);
       setPendingEvaluation(pending);
       setAppointment(verification);
-      navigate(recordView(pending, verification), found.studentId);
+      // Re-checking from the evaluation gate replaces it rather than stacking on it.
+      navigate(recordView(pending, verification), { studentId: found.studentId, replace: view === "evaluation-required" });
       if (verification.status === "error") {
         toast.info("Showing the regular student record while appointment verification is unavailable.");
       }
@@ -226,6 +290,7 @@ function App() {
       setAppointment(verification);
       if (view !== "student-record" && view !== "officer-record") return;
       const next: ViewState = verification.status === "verified" ? "officer-record" : "student-record";
+      steps.current[steps.current.length - 1].view = next;
       setView(next);
       saveViewSession({ view: next, studentId: student.studentId });
     };
@@ -241,7 +306,7 @@ function App() {
   const handleLogin = async (email: string, password: string) => {
     const session = await authService.signIn(email, password);
     setAuth(session);
-    navigate("admin-dashboard");
+    navigate("admin-dashboard", { replace: true });
     toast.success(`Welcome, ${ROLE_LABEL[session.role]}!`);
   };
 
@@ -252,7 +317,7 @@ function App() {
     await authService.updatePassword(password);
     await authService.signOut();
     setAuth(null);
-    navigate("admin-login");
+    navigate("admin-login", { replace: true });
     toast.success("Password updated. Please sign in with your new password.");
   };
 
@@ -268,7 +333,7 @@ function App() {
     }
     setAuth(null);
     offlineSyncService.configure(null, null);
-    navigate("landing");
+    navigate("landing", { reset: true });
     toast.info("You have been logged out");
   };
 
@@ -360,7 +425,9 @@ function App() {
       <PushPromptModal isLoggedIn={!!role} studentId={student?.id} />
       <main>
         <Suspense fallback={<Fallback />}>
-          <div key={view} className="page-enter">{renderView()}</div>
+          <div key={view} className={enter ? "page-enter" : undefined}>
+            <ErrorBoundary>{renderView()}</ErrorBoundary>
+          </div>
         </Suspense>
       </main>
       {view === "landing" && <FooterSection onNavigate={navigate} />}

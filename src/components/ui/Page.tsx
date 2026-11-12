@@ -22,7 +22,7 @@ interface PageProps {
 export default function Page({ title, subtitle, eyebrow, onBack, actions, hero, children }: PageProps) {
   return (
     <div className="min-h-screen pb-16">
-      <header className="hero-bg blend-bottom pb-40 pt-24 lg:pt-28">
+      <header className="hero-bg band-bottom pb-36 pt-24 lg:pt-28">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
           <div className="flex items-start gap-4">
             {onBack && (

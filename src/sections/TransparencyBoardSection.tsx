@@ -279,29 +279,41 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
                 <EmptyState icon={PieChart} title="No event allocations yet" />
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {allocations.map((a) => (
-                  <article key={a.eventId} className="card card-hover p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="min-w-0 truncate font-bold text-ink" title={a.eventName}>{a.eventName}</h3>
-                      <span className="chip chip-brand shrink-0">{formatPeso(a.allocationAmount)} / student</span>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-center">
-                      {[
-                        ["Expected", expectedCollection(a), "text-ink"],
-                        ["Collected", a.totalCollected, "text-success"],
-                        ["Spent", a.totalSpent, "text-danger"],
-                        ["Balance", a.remainingBalance, "text-ink"],
-                      ].map(([label, value, tone]) => (
-                        <div key={label} className="rounded-xl bg-surface-2 px-2 py-2.5">
-                          <p className="text-[11px] font-medium text-muted">{label}</p>
-                          <p className={`mt-0.5 truncate text-sm font-bold ${tone}`}>{formatPeso(value as number)}</p>
+              <div className="card overflow-hidden p-0">
+                {/* One calm row per event: the collected amount leads, the rest is secondary. */}
+                <div className="hidden grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.4fr)] gap-6 border-b border-line px-6 py-3 text-xs font-semibold uppercase tracking-wide text-muted md:grid">
+                  <span>Event</span>
+                  <span className="text-right">Collected</span>
+                  <span className="text-right">Spent</span>
+                  <span className="text-right">Balance</span>
+                  <span>Used</span>
+                </div>
+                <ul className="divide-y divide-line">
+                  {allocations.map((a) => {
+                    const expected = expectedCollection(a);
+                    const used = pct(a.totalSpent, a.totalCollected);
+                    return (
+                      <li key={a.eventId} className="grid grid-cols-3 items-center gap-x-6 gap-y-3 px-5 py-4 transition-colors hover:bg-surface-2/60 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.4fr)] md:px-6">
+                        <div className="col-span-3 min-w-0 md:col-span-1">
+                          <p className="truncate font-semibold text-ink" title={a.eventName}>{a.eventName}</p>
+                          <p className="text-xs text-muted">
+                            {formatPeso(a.allocationAmount)} per student
+                            {expected > 0 && <> · {formatPeso(expected)} expected</>}
+                          </p>
                         </div>
-                        ))}
-                      </div>
-                      <SpentBar className="mt-4 h-2 bg-surface-2" fill="bg-gradient-to-r from-brand-500 to-indigo-500" caption="text-muted" percent={pct(a.totalSpent, a.totalCollected)} />
-                    </article>
-                ))}
+                        <Amount label="Collected" value={a.totalCollected} weight="strong" />
+                        <Amount label="Spent" value={a.totalSpent} />
+                        <Amount label="Balance" value={a.remainingBalance} weight="medium" />
+                        <div className="col-span-3 flex items-center gap-3 md:col-span-1">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+                            <div className="h-full rounded-full bg-brand-500" style={{ width: `${used}%` }} />
+                          </div>
+                          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted">{used}%</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
           </section>
@@ -422,6 +434,18 @@ function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
 }
 
 /** "N% of collected funds spent" progress bar. */
+/** A money figure; the label only shows on small screens (the header labels the columns on desktop). */
+const AMOUNT_STYLE = { strong: "font-bold text-ink", medium: "text-sm font-medium text-ink", muted: "text-sm text-muted" };
+
+function Amount({ label, value, weight = "muted" }: { label: string; value: number; weight?: keyof typeof AMOUNT_STYLE }) {
+  return (
+    <div className="min-w-0 md:text-right">
+      <p className="text-[11px] text-muted md:hidden">{label}</p>
+      <p className={`truncate tabular-nums ${AMOUNT_STYLE[weight]}`}>{formatPeso(value)}</p>
+    </div>
+  );
+}
+
 function SpentBar({ percent, className, fill, caption }: { percent: number; className: string; fill: string; caption: string }) {
   return (
     <div>
