@@ -1,181 +1,98 @@
-/**
- * Shared CSV / Excel (spreadsheet) import helpers.
- *
- * These were previously declared inside section components (e.g.
- * StudentManagementSection); import them from here so CSV/Excel parsing
- * stays in one place across the app.
- */
+// CSV / Excel import helpers shared by the management sections.
+import type { Row } from "read-excel-file/browser";
 
-import type { Row } from 'read-excel-file/browser';
+/** "Student ID" -> "studentid". */
+const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** Lowercases a header and strips non-alphanumerics so "Student ID" -> "studentid". */
-function normalizeHeader(header: string): string {
-  return header.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
+const cellText = (cell: unknown) => String(cell ?? "").trim();
+const isBlankRow = (values?: readonly unknown[]) => !values || values.every((cell) => cellText(cell) === "");
 
 /**
- * De-duplicates a list of (already-normalized) headers by suffixing repeats
- * "_2", "_3", ... — the first occurrence keeps its plain name. Without this,
- * a sheet with repeated column groups (e.g. "Event / Required Amount /
- * Amount Paid" listed once per event, side by side, as in the official
- * "Student Body" contribution tracking sheet) would silently lose every
- * occurrence but the last when the row is built into a header-keyed object,
- * since later columns would overwrite earlier ones under the same key.
+ * Turns a cell matrix (first row = headers) into header-keyed records, skipping
+ * wholly blank rows only (an empty Amount Paid cell is valid input). Repeated
+ * headers become "x", "x_2", "x_3"… instead of overwriting each other, so wide
+ * sheets with one column group per event survive (see `expandEventGroups`).
  */
-function dedupeHeaders(headers: string[]): string[] {
+function toRecords(cells: readonly (readonly unknown[])[]): Record<string, string>[] {
+  const [headerRow, ...rows] = cells;
+  if (isBlankRow(headerRow)) return [];
   const counts = new Map<string, number>();
-  return headers.map((header) => {
+  const headers = headerRow.map((cell) => {
+    const header = normalizeHeader(String(cell ?? ""));
     const count = (counts.get(header) ?? 0) + 1;
     counts.set(header, count);
     return count === 1 ? header : `${header}_${count}`;
   });
+  return rows
+    .filter((values) => !isBlankRow(values))
+    .map((values) => Object.fromEntries(headers.map((header, i) => [header, cellText(values[i])])));
 }
 
-/**
- * Parses CSV text (supports double-quoted fields, commas and escaped quotes)
- * into an array of header-keyed row objects. Repeated headers are kept (see
- * {@link dedupeHeaders}) rather than overwritten, so {@link expandEventGroups}
- * can read them back out.
- */
+/** Splits one CSV line, honouring double quotes and escaped `""`. */
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch !== '"') cur += ch;
+      else if (line[i + 1] === '"') cur += line[i++];
+      else inQuotes = false;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/** Header-keyed rows from CSV text; the first line is the header row. */
 export function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/);
-  if (lines.length === 0) return [];
-
-  const parseLine = (line: string): string[] => {
-    const out: string[] = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQuotes) {
-        if (ch === '"') {
-          if (line[i + 1] === '"') {
-            cur += '"';
-            i++;
-          } else {
-            inQuotes = false;
-          }
-        } else {
-          cur += ch;
-        }
-      } else if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        out.push(cur.trim());
-        cur = '';
-      } else {
-        cur += ch;
-      }
-    }
-    out.push(cur.trim());
-    return out;
-  };
-
-  const headerValues = parseLine(lines[0]);
-  if (headerValues.every((value) => value.trim() === "")) return [];
-
-  const headers = dedupeHeaders(headerValues.map(normalizeHeader));
-  const rows: Record<string, string>[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseLine(lines[i]);
-    if (values.every((value) => value.trim() === "")) continue;
-
-    const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      row[header] = (values[index] ?? '').trim();
-    });
-    rows.push(row);
-  }
-  return rows;
+  return toRecords(text.split(/\r?\n/).map(parseCsvLine));
 }
 
-/**
- * Converts an Excel cell matrix into header-keyed records (same shape as
- * parseCsv, including the repeated-header handling described there).
- */
+/** Header-keyed rows from an Excel worksheet matrix (same shape as `parseCsv`). */
 export function excelRowsToRecords(cells: Row[]): Record<string, string>[] {
-  const rows: Record<string, string>[] = [];
-  if (cells.length === 0) return rows;
-
-  // The reader returns the complete worksheet matrix, including rows between
-  // the header and the final populated row. Do not use a fixed row count or
-  // stop at the first blank cell: an empty Amount Paid cell is valid input and
-  // must not hide later event/payment columns or later student rows.
-  const headerRow = cells[0];
-  if (!headerRow || headerRow.every((cell) => cell === null || String(cell).trim() === "")) {
-    return rows;
-  }
-
-  const headers = dedupeHeaders(
-    headerRow.map((cell) => normalizeHeader(String(cell ?? ""))),
-  );
-  for (let i = 1; i < cells.length; i++) {
-    const rowValues = cells[i];
-    if (!rowValues || rowValues.every((cell) => cell === null || String(cell).trim() === "")) {
-      continue;
-    }
-
-    const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      const cell = rowValues[index];
-      row[header] = cell === null || cell === undefined ? "" : String(cell).trim();
-    });
-    rows.push(row);
-  }
-  return rows;
+  return toRecords(cells);
 }
 
-/**
- * Returns the first non-empty value for the given normalized header aliases,
- * e.g. `pickField(row, 'studentid', 'lrn', 'id')`. Empty string when nothing
- * matches.
- */
+/** First non-empty value among the given normalized header aliases, else "". */
 export function pickField(row: Record<string, string>, ...aliases: string[]): string {
   for (const alias of aliases) {
-    const value = row[alias];
-    if (value && value.trim() !== '') return value.trim();
+    const value = row[alias]?.trim();
+    if (value) return value;
   }
-  return '';
+  return "";
 }
 
 /**
- * Parses a user-entered money value like "₱1,500.00", "1,500" or "1500" into
- * a non-negative number. Returns null for empty/invalid input so callers can
- * distinguish an empty spreadsheet cell from a real zero amount.
+ * "₱1,500.00" / "1,500" / "1500" -> 1500. `null` for empty or invalid input so
+ * callers can tell an empty cell from a real zero.
  */
 export function parseAmount(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const cleaned = trimmed.replace(/[₱$,\s]/g, "");
-  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return null;
-
+  const cleaned = value.trim().replace(/[₱$,\s]/g, "");
   const amount = Number(cleaned);
-  return Number.isFinite(amount) ? amount : null;
+  return /^-?\d+(?:\.\d+)?$/.test(cleaned) && Number.isFinite(amount) ? amount : null;
 }
 
 /**
- * Parses a spreadsheet "Amount Paid" cell. Accepts peso signs ("₱", "PHP",
- * "Php", "P"), thousands separators and decimals ("₱1,500.50"). Returns null
- * for blank, non-numeric, zero, or negative values — i.e. "no payment".
+ * An "Amount Paid" cell (also accepts a "PHP"/"Php"/"P" prefix), rounded to
+ * centavos; `null` for blank, non-numeric, zero or negative values ("no payment").
  */
 export function parsePositiveAmount(value: string): number | null {
-  const withoutCurrency = value.trim().replace(/^(?:php|p)(?=\s*[\d.,])/i, "");
-  const amount = parseAmount(withoutCurrency);
-  if (amount === null || amount <= 0) return null;
-  return Math.round(amount * 100) / 100;
+  const amount = parseAmount(value.trim().replace(/^(?:php|p)(?=\s*[\d.,])/i, ""));
+  return amount !== null && amount > 0 ? Math.round(amount * 100) / 100 : null;
 }
 
-/**
- * Tokenizes a person's name for matching: lowercase, punctuation removed
- * (so "Samborayan, Sitti Aisah R." and "Sitti Aisah R Samborayan" produce the
- * same tokens), whitespace collapsed.
- */
+/** Lowercase, accent- and punctuation-free name tokens ("Samborayan, Sitti R." -> samborayan sitti r). */
 function nameTokens(value: string): string[] {
   return value
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
@@ -187,9 +104,8 @@ export function exactNameKey(value: string): string {
 }
 
 /**
- * Loose name key that ignores middle initials and word order, so
- * "Norkesa Samborayan", "Norkesa A. Samborayan" and "Samborayan, Norkesa A."
- * all match. Callers must treat keys shared by several students as ambiguous.
+ * Name key ignoring initials and word order ("Samborayan, Norkesa A." matches
+ * "Norkesa Samborayan"). Callers must treat keys shared by several students as ambiguous.
  */
 export function looseNameKey(value: string): string {
   return nameTokens(value)
@@ -198,15 +114,9 @@ export function looseNameKey(value: string): string {
     .join(" ");
 }
 
-/**
- * Strips stray internal whitespace from an ID, e.g. "2026- 00040" ->
- * "2026-00040". Real-world exports of hand-maintained sheets frequently have
- * an accidental space typed next to the dash; this keeps those rows matching
- * the clean Student ID stored in the system instead of being skipped as
- * unmatched.
- */
+/** "2026- 00040" -> "2026-00040" (hand-typed sheets often have stray spaces). */
 export function normalizeStudentId(value: string): string {
-  return value.replace(/\s+/g, '');
+  return value.replace(/\s+/g, "");
 }
 
 /** One (Event, Required Amount, Amount Paid) group read off an import row. */
@@ -216,78 +126,39 @@ export interface EventAmountGroup {
   amountPaid: string;
 }
 
-const EVENT_NAME_ALIASES = ['event', 'eventname', 'activity', 'contributionfor'];
-const REQUIRED_AMOUNT_ALIASES = [
-  'requiredamount',
-  'required',
-  'amount',
-  'fee',
-  'contribution',
-  'contributionamount',
-];
-const PAID_AMOUNT_ALIASES = [
-  'amountpaid',
-  'paid',
-  'paidamount',
-  'amountcollected',
-  'collected',
-  'collection',
-  'payment',
-  'paymentamount',
-];
+const EVENT_ALIASES = ["event", "eventname", "activity", "contributionfor"];
+const REQUIRED_ALIASES = ["requiredamount", "required", "amount", "fee", "contribution", "contributionamount"];
+const PAID_ALIASES = ["amountpaid", "paid", "paidamount", "amountcollected", "collected", "collection", "payment", "paymentamount"];
 
 /**
- * Reads however many (Event, Required Amount, Amount Paid) column groups a
- * row actually has.
- *
- * Most contribution sheets are "narrow": one row per student per event. The
- * official DSSC "Student Body" tracking sheet is "wide" instead — one row
- * per student, with every event's Event / Required Amount / Amount Paid
- * columns repeated side by side. `parseCsv` / `excelRowsToRecords` keep every
- * occurrence of a repeated header by suffixing it "_2", "_3", ... (see
- * `dedupeHeaders`), so this walks the row's columns in order and starts a new
- * group at every Event column, reading the Required Amount / Amount Paid
- * columns that follow it. A narrow-format row (a single trio) naturally comes
- * back as a single-item array, so both shapes are handled by the same call
- * site. Groups whose Event cell is blank are omitted; Amount Paid is returned
- * raw (possibly "") so the caller decides what counts as paid.
+ * Reads every (Event, Required Amount, Amount Paid) group in a row. Narrow sheets
+ * (one row per student per event) yield one group; the wide official "Student Body"
+ * sheet repeats the group per event. Columns are walked left to right (record keys
+ * keep insertion order): each Event column starts a group and the first Required /
+ * Paid column after it belongs to that group, so any number of groups and mixed
+ * header spellings work. Groups with a blank Event cell are omitted; Amount Paid is
+ * returned raw (possibly "") so the caller decides what counts as paid.
  */
 export function expandEventGroups(row: Record<string, string>): EventAmountGroup[] {
-  // Walk the columns in their original left-to-right order (records are
-  // built header-by-header, and non-numeric string keys keep insertion
-  // order). Every "Event" column starts a new group; the first Required
-  // Amount / Amount Paid column after it (and before the next Event column)
-  // belongs to that group. This handles any number of groups — no fixed cap,
-  // no early stop at a blank cell — and also mixed header spellings such as
-  // "Event" in one group and "Activity" in another.
-  const baseName = (key: string) => key.replace(/_\d+$/, '');
   const groups: EventAmountGroup[] = [];
   let current: EventAmountGroup | null = null;
   let hasRequired = false;
   let hasPaid = false;
 
-  const flush = () => {
-    // A group whose Event cell is blank for this row cannot be matched.
-    if (current && current.eventName) groups.push(current);
-  };
-
   for (const [key, rawValue] of Object.entries(row)) {
-    const base = baseName(key);
-    const value = (rawValue ?? '').trim();
-
-    if (EVENT_NAME_ALIASES.includes(base)) {
-      flush();
-      current = { eventName: value, requiredAmount: '', amountPaid: '' };
-      hasRequired = false;
-      hasPaid = false;
-    } else if (current && !hasPaid && PAID_AMOUNT_ALIASES.includes(base)) {
+    const base = key.replace(/_\d+$/, "");
+    const value = (rawValue ?? "").trim();
+    if (EVENT_ALIASES.includes(base)) {
+      current = { eventName: value, requiredAmount: "", amountPaid: "" };
+      if (value) groups.push(current);
+      hasRequired = hasPaid = false;
+    } else if (current && !hasPaid && PAID_ALIASES.includes(base)) {
       current.amountPaid = value;
       hasPaid = true;
-    } else if (current && !hasRequired && REQUIRED_AMOUNT_ALIASES.includes(base)) {
+    } else if (current && !hasRequired && REQUIRED_ALIASES.includes(base)) {
       current.requiredAmount = value;
       hasRequired = true;
     }
   }
-  flush();
   return groups;
 }

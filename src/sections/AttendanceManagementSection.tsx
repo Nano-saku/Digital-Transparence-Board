@@ -1,50 +1,13 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import {
-  Calendar,
-  Users,
-  CheckCircle,
-  XCircle,
-  Search,
-  Layers,
-  Clock,
-  LogIn,
-  LogOut,
-  QrCode,
-  ScanLine,
-  Camera,
-  CameraOff,
-  SwitchCamera,
-  Trash2,
-  Edit2,
-  Save,
-} from "lucide-react";
-import jsQR from "jsqr";
-import {
-  eventsService,
-  studentsService,
-  attendanceService,
-  classifyAttendanceError,
-  lscOfficersService,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import type {
-  Event,
-  EventSession,
-  Student,
-  AttendanceRecord,
-  UserRole,
-} from "@/types";
-import { parseStudentQrText } from "@/lib/qr";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { BarChart3, CircleAlert, CircleCheck, LogIn, LogOut, Pencil, QrCode, ShieldAlert, UserCheck, Users, X } from "lucide-react";
 import { toast } from "sonner";
+import { attendanceService, classifyAttendanceError, eventsService, lscOfficersService, studentsService } from "@/services/db";
+import { useLiveData } from "@/hooks/useLiveData";
+import type { AttendanceRecord, EventSession, Student, UserRole } from "@/types";
+import { parseStudentQrText } from "@/lib/qr";
+import { composeTime12, formatTime12, splitTime24 } from "@/lib/format";
 import {
-  formatDate,
-  formatTime12,
-  splitTime24,
-  composeTime12,
-} from "@/lib/format";
-import { matchesSearchWords } from "@/lib/utils";
-import {
-  EVENT_SESSION_ICONS,
+  calendarDateInTimeZone,
   EVENT_SESSION_LABELS,
   getEventSessionWindows,
   getScheduledEventSessions,
@@ -52,20 +15,21 @@ import {
   resolveEventSessionForTime,
 } from "@/lib/attendance";
 import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
-import SectionLoader from "@/components/SectionLoader";
-import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionBackButton from "@/components/SectionBackButton";
-import AttendanceAnalysisChart from "@/features/events/AttendanceAnalysisChart";
-import ConfirmDialog from "@/components/common/ConfirmDialog";
-import Pagination from "@/components/common/Pagination";
-import Skeleton from "@/components/Skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { canAccess } from "@/lib/roles";
+import { matchesSearchWords } from "@/lib/utils";
+import Page from "@/components/ui/Page";
+import Modal from "@/components/ui/Modal";
+import StatCard from "@/components/ui/StatCard";
+import EmptyState from "@/components/ui/EmptyState";
+import SearchInput from "@/components/ui/SearchInput";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Skeleton, { LoadingCard } from "@/components/ui/Skeleton";
+import QrScanner from "./attendance/QrScanner";
+import { AttendanceTable, Segmented, StatusChip, TimeFields, WholeDayPanel, type TimeParts } from "./attendance/parts";
+import { MODE_LABEL, STATUS, STATUSES, type ScanMode, type Status } from "./attendance/status";
+
+// Recharts is only needed for the analysis card — keep it out of this chunk.
+const AttendanceAnalysisChart = lazy(() => import("@/components/AttendanceAnalysisChart"));
 
 interface AttendanceManagementSectionProps {
   onBack: () => void;
@@ -73,1881 +37,552 @@ interface AttendanceManagementSectionProps {
   userId?: string;
 }
 
+type TimePatch = Partial<Pick<AttendanceRecord, "status" | "timeIn" | "timeOut">>;
+interface EditForm {
+  status: Status;
+  timeIn: TimeParts;
+  timeOut: TimeParts;
+}
+
+const REALTIME_TABLES = ["events", "students", "attendance", "lsc_officers"] as const;
+
 /** Current wall-clock time as 24h "HH:MM". */
 const nowClock = () => new Date().toTimeString().slice(0, 5);
 
-export default function AttendanceManagementSection({
-  onBack,
-  role,
-}: AttendanceManagementSectionProps) {
-  const [events, setEvents] = useState<Event[]>([]);
-  const attendanceEvents = useMemo(
-    () => events.filter((event) => !event.isNonConducting),
-    [events],
-  );
-  const [students, setStudents] = useState<Student[]>([]);
-  const [officerStudentIds, setOfficerStudentIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [attendanceRecords, setAttendanceRecords] = useState<
-    AttendanceRecord[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const [showAttendanceClearConfirm, setShowAttendanceClearConfirm] =
-    useState(false);
-  const [attendanceToClear, setAttendanceToClear] = useState<{
-    id: string;
-    studentName: string;
-    /** Scheduled session the cleared record belongs to, e.g. "Morning". */
-    sessionLabel: string;
-  } | null>(null);
+/** Empty string = deliberately blank (clears the time); null = invalid input. */
+const parseTime = ({ hour, minute, period }: TimeParts) => (hour.trim() || minute.trim() ? composeTime12(hour, minute, period) : "");
 
-  // Edit attendance (Status + Time In + Time Out) via an explicit dialog.
-  // Keep the selected row as well as the student so Save updates the exact
-  // database record that was opened. A null record is a new attendance draft
-  // for students who do not have a row yet.
-  const [editingAttendance, setEditingAttendance] = useState<{
-    student: Student;
-    record: AttendanceRecord | null;
-  } | null>(null);
-  const emptyAttendanceEditForm = {
-    status: "present" as "present" | "absent" | "excuse",
-    timeInHour: "",
-    timeInMinute: "",
-    timeInPeriod: "AM" as "AM" | "PM",
-    timeOutHour: "",
-    timeOutMinute: "",
-    timeOutPeriod: "AM" as "AM" | "PM",
-  };
-  const [attendanceEditForm, setAttendanceEditForm] = useState(
-    emptyAttendanceEditForm,
-  );
-  const [savingAttendanceEdit, setSavingAttendanceEdit] = useState(false);
+/** Readable cause of a Supabase/PostgREST failure, including its details, hint and code. */
+function errorMessage(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const { message, details, hint, code } = error as Record<string, unknown>;
+  const codeText = typeof code === "string" ? code.trim() : "";
+  if (codeText === "42501") {
+    // attendanceService already refreshed the session, retried once, and
+    // replaced the raw error with the specific cause. Show that cause as-is.
+    return error instanceof Error && error.message ? error.message : "This session is not authorized to write attendance. Sign in again with an admin or secretary account.";
+  }
+  if (codeText === "PGRST116") return "The attendance row was not returned after saving. Refresh the attendance list and try again.";
+  const parts = [message, details, hint].filter((p): p is string => typeof p === "string" && p.trim().length > 0).map((p) => p.trim());
+  if (codeText) parts.push(`code ${codeText}`);
+  if (parts.length) return parts.join(" — ");
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown database error";
+  }
+}
 
-  // Role-based permissions
-  const canRecordAttendance = role === "admin" || role === "secretary";
+export default function AttendanceManagementSection({ onBack, role }: AttendanceManagementSectionProps) {
+  const canRecordAttendance = canAccess(role, "attendance-management") === true;
 
-  // Attendance
-  const [selectedEventForAttendance, setSelectedEventForAttendance] =
-    useState("");
-  const [attendanceSearch, setAttendanceSearch] = useState("");
-  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<
-    "all" | "present" | "absent" | "excuse"
-  >("all");
-  const [attendancePage, setAttendancePage] = useState(1);
+  // Reconnect-aware sync: attendance, exemptions and officer changes from other devices.
+  const { data, loading, mutate } = useLiveData({
+    sources: {
+      events: () => eventsService.getAll(),
+      students: () => studentsService.getAll(),
+      records: () => attendanceService.getAll(),
+      officers: () => lscOfficersService.getAll(),
+    },
+    tables: REALTIME_TABLES,
+    channel: "attendance-management",
+    enabled: canRecordAttendance,
+    onError: () => toast.error("Failed to load data"),
+  });
+  const { events = [], students = [], records = [], officers = [] } = data ?? {};
 
-  const ATTENDANCE_PAGE_SIZE = 20;
+  const [eventId, setEventId] = useState("");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
+  const [scanFilter, setScanFilter] = useState<{ program: string; section: string } | null>(null);
+  const [lastScan, setLastScan] = useState<{ studentId: string; time: string } | null>(null);
+  const [scanMode, setScanMode] = useState<ScanMode>("timeIn");
+  const [scanMessage, setScanMessage] = useState<{ ok: boolean; text: string; id: number } | null>(null);
+  const [clearTarget, setClearTarget] = useState<{ id: string; name: string; sessionLabel: string } | null>(null);
+  const [clearing, setClearing] = useState(false);
+  // The opened row is kept so Save updates that exact record; null = new draft.
+  const [editing, setEditing] = useState<{ student: Student; record: AttendanceRecord | null; form: EditForm } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  // Ticking clock that badges the scheduled session running right now.
+  const [nowHM, setNowHM] = useState(nowClock);
 
-  // Auto-filter state set by QR scan
-  const [scannedCourse, setScannedCourse] = useState<string | null>(null);
-  const [scannedSection, setScannedSection] = useState<string | null>(null);
-  const [lastScannedStudentId, setLastScannedStudentId] = useState<
-    string | null
-  >(null);
-  const [lastScanTime, setLastScanTime] = useState<string | null>(null);
+  const attendanceEvents = useMemo(() => events.filter((e) => !e.isNonConducting), [events]);
+  const event = attendanceEvents.find((e) => e.id === eventId);
 
-  // QR Code Scanner
-  const [scanMode, setScanMode] = useState<"timeIn" | "timeOut">("timeIn");
-  const [scannerActive, setScannerActive] = useState(false);
-  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
-  const [scanMessage, setScanMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const lastScanRef = useRef({ data: "", at: 0 });
-  const autoMarkingAbsentRef = useRef(false);
-  // Last Automatic Absent failure shown, so a realtime refresh does not
-  // repeat the same toast unnecessarily.
-  const autoAbsentErrorRef = useRef<string | null>(null);
-  // Automatic Absent is decided by the authoritative database RPC, not by a
-  // potentially stale client attendance snapshot.
-  // Prevent a realtime refresh that started before a save completed from
-  // replacing the just-saved status with an older attendance snapshot.
-  const attendanceWriteVersionRef = useRef(0);
-  // Only the newest overlapping refresh may replace attendance state.
-  const attendanceLoadVersionRef = useRef(0);
-  // Timestamp (Date.now()) of the last completed attendance write. A
-  // background loadData that started within a short window after a write may
-  // receive a stale Supabase snapshot before the WAL change is readable via
-  // the REST layer. Guarding on this timestamp prevents that stale fetch from
-  // overwriting the correct optimistic update.
-  const lastAttendanceWriteAtRef = useRef(0);
-  const selectedAttendanceEvent = events.find(
-    (e) => e.id === selectedEventForAttendance,
-  );
+  // Active LSC officers are exempt from attendance and left out of every list and total.
+  const officerSet = useMemo(() => activeLscOfficerStudentIds(students, officers), [students, officers]);
+  const eligibleStudents = useMemo(() => students.filter((s) => !officerSet.has(s.id)), [students, officerSet]);
 
-  // Whole Day view: every session configured in the Event section is handled
-  // on this one screen, so the secretary never switches session tabs.
-  const scheduledSessionWindows = useMemo(
-    () =>
-      selectedAttendanceEvent
-        ? getEventSessionWindows(selectedAttendanceEvent)
-        : [],
-    [selectedAttendanceEvent],
-  );
-
-  // Ticking clock used to highlight the scheduled session running right now.
-  const [nowHM, setNowHM] = useState(() => nowClock());
   useEffect(() => {
     const interval = setInterval(() => setNowHM(nowClock()), 30_000);
     return () => clearInterval(interval);
   }, []);
 
-  const activeSession = useMemo(
-    () =>
-      selectedAttendanceEvent
-        ? resolveEventSessionForTime(selectedAttendanceEvent, nowHM)
-        : null,
-    [selectedAttendanceEvent, nowHM],
-  );
+  // Whole Day view: every session configured for the event is handled on one screen.
+  const sessionWindows = useMemo(() => (event ? getEventSessionWindows(event) : []), [event]);
+  const activeSession = event ? resolveEventSessionForTime(event, nowHM) : null;
 
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
+  // Scoped by event + date: an event can keep rows from before its date was
+  // edited, and Automatic Absent writes against the configured date.
+  const eventRecords = useMemo(() => records.filter((r) => r.eventId === eventId && (!event?.date || r.date === event.date)), [records, eventId, event?.date]);
 
-  const loadData = useCallback(async (showLoader = true) => {
-    const attendanceLoadVersion = ++attendanceLoadVersionRef.current;
-    const attendanceVersionAtStart = attendanceWriteVersionRef.current;
-    // Snapshot the last-write timestamp so the guard below can detect if a
-    // new write was committed after this load started (which would mean
-    // Supabase may not have reflected the change yet in the REST response).
-    const writeTimestampAtStart = lastAttendanceWriteAtRef.current;
-    // Grace-period: if a background realtime load started within 4 s of the
-    // last write, skip replacing attendance. Supabase's REST layer can lag
-    // slightly behind the WAL-replicated realtime event, so the first one or
-    // two background fetches after a write may return a stale snapshot that
-    // predates the committed row — overwriting the correct optimistic update.
-    // Explicit loads (showLoader=true) always apply regardless of this guard.
-    const WRITE_GRACE_MS = 4_000;
-    const loadStartedAt = Date.now();
-    try {
-      if (showLoader) {
-        setLoading(true);
-      }
-
-      const [eventsData, studentsData, attendanceData, officersData] = await Promise.all([
-        eventsService.getAll(),
-        studentsService.getAll(),
-        attendanceService.getAll(),
-        lscOfficersService.getAll(),
-      ]);
-
-      setEvents(eventsData);
-      setStudents(studentsData);
-      setOfficerStudentIds(activeLscOfficerStudentIds(studentsData, officersData));
-      setAttendanceRecords((current) => {
-        // Block if a newer load was started (stale race).
-        if (attendanceLoadVersion !== attendanceLoadVersionRef.current)
-          return current;
-        // Block if a write was in-flight when this load started (version guard).
-        if (attendanceVersionAtStart !== attendanceWriteVersionRef.current)
-          return current;
-        // For background (realtime-triggered) loads only:
-        if (!showLoader) {
-          // Block if the write timestamp changed mid-load (a write completed
-          // after this fetch started, so Supabase data may predate that write).
-          if (writeTimestampAtStart !== lastAttendanceWriteAtRef.current)
-            return current;
-          // Block if this load started within the grace period of the last
-          // write (REST layer may not have caught up to the committed row yet).
-          if (loadStartedAt - lastAttendanceWriteAtRef.current < WRITE_GRACE_MS)
-            return current;
-        }
-        return attendanceData;
-      });
-    } catch (error) {
-      console.error("Error loading data:", error);
-      toast.error("Failed to load data");
-    } finally {
-      if (showLoader) {
-        setLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // useRealtimeSync handles reconnection recovery to prevent missed
-  // attendance, exemption, and officer-change events.
-  useRealtimeSync({
-    tables: ["events", "students", "attendance", "lsc_officers"],
-    onChange: () => loadData(false),
-    channelPrefix: "attendance-management",
-  });
-
-  useSectionEntrance(sectionRef, [
-    {
-      ref: contentRef,
-      from: { y: "6vh", opacity: 0 },
-      to: { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" },
-    },
-  ]);
-
-  // Whole Day records: every scheduled session of the selected event at once.
-  // Attendance is scoped by event + date because one event can have historical
-  // rows from before its date was edited. Automatic Absent also writes against
-  // the event's configured date, so showing every row by event ID could select
-  // an old attendance row instead of the current-date Absent row.
-  const selectedAttendanceRecords = useMemo(
-    () =>
-      selectedEventForAttendance
-        ? attendanceRecords.filter(
-            (r) =>
-              r.eventId === selectedEventForAttendance &&
-              (!selectedAttendanceEvent?.date ||
-                r.date === selectedAttendanceEvent.date),
-          )
-        : [],
-    [attendanceRecords, selectedAttendanceEvent, selectedEventForAttendance],
-  );
-
-  const attendanceMap = useMemo(() => {
+  const recordByStudent = useMemo(() => {
+    // Prefer a real result over an auto-created Absent row, then the row carrying a Time In.
+    const score = (r: AttendanceRecord) => (r.status === "absent" ? 0 : 2) + (r.timeIn ? 1 : 0);
     const map = new Map<string, AttendanceRecord>();
-    selectedAttendanceRecords.forEach((record) => {
-      const existing = map.get(record.studentId);
-      // Prefer a real result over an auto-created absent placeholder, then the
-      // row that already carries a Time In.
-      if (!existing) {
-        map.set(record.studentId, record);
-        return;
-      }
-      const score = (r: AttendanceRecord) =>
-        (r.status === "absent" ? 0 : 2) + (r.timeIn ? 1 : 0);
-      if (score(record) > score(existing)) map.set(record.studentId, record);
-    });
+    for (const r of eventRecords) {
+      const existing = map.get(r.studentId);
+      if (!existing || score(r) > score(existing)) map.set(r.studentId, r);
+    }
     return map;
-  }, [selectedAttendanceRecords]);
+  }, [eventRecords]);
 
-  const persistAttendance = useCallback(
-    async (
-      studentId: string,
-      patch: Partial<Pick<AttendanceRecord, "status" | "timeIn" | "timeOut">>,
-      recordToUpdate?: AttendanceRecord,
-      /** Scheduled session auto-detected for this write. */
-      sessionForWrite?: EventSession,
-    ): Promise<AttendanceRecord | null> => {
-      const event = selectedAttendanceEvent;
-      const knownExisting =
-        recordToUpdate ??
-        attendanceMap.get(studentId) ??
-        null;
+  const counts = useMemo(() => {
+    const c: Record<Status, number> = { present: 0, excuse: 0, absent: 0 };
+    for (const s of eligibleStudents) {
+      const status = recordByStudent.get(s.id)?.status;
+      if (status) c[status]++;
+    }
+    return c;
+  }, [eligibleStudents, recordByStudent]);
 
-      if (!event && !knownExisting) {
-        toast.error("Select an event before recording attendance");
-        return null;
-      }
+  // ── Persistence ───────────────────────────────────────────
+  /** Creates or updates this student's single row for the selected event + date. */
+  const persist = async (studentId: string, patch: TimePatch, recordToUpdate?: AttendanceRecord, sessionForWrite?: EventSession) => {
+    const known = recordToUpdate ?? recordByStudent.get(studentId) ?? null;
+    const target = known ?? (event && { eventId: event.id, eventName: event.name, date: event.date ?? calendarDateInTimeZone(new Date()) });
+    if (!target) {
+      toast.error("Select an event before recording attendance");
+      return null;
+    }
+    // Automatic Absent or another tab may have created the row since it was
+    // opened; re-check the natural key so an edit never inserts a duplicate.
+    const existing = known ?? (navigator.onLine ? await attendanceService.getByStudentEventAndDate(studentId, target.eventId, target.date) : null);
+    // The session is derived from the event's schedules and the recorded time, never picked by hand.
+    const session = sessionForWrite ?? existing?.session ?? (event && resolveEventSessionForTime(event, patch.timeIn || patch.timeOut || nowClock())) ?? "morning";
+    const payload = {
+      studentId,
+      eventId: target.eventId,
+      eventName: existing?.eventName ?? target.eventName,
+      date: target.date,
+      session,
+      status: patch.status ?? existing?.status ?? "present",
+      // Time columns are NOT NULL; an empty string is a deliberately cleared time.
+      timeIn: patch.timeIn ?? existing?.timeIn ?? "",
+      timeOut: patch.timeOut ?? existing?.timeOut ?? "",
+    };
+    const saved = existing ? await attendanceService.update(existing.id, payload) : await attendanceService.create(payload);
+    // A refresh that began before (or just after) this write keeps the saved row.
+    mutate("records", (prev) => {
+      const i = prev.findIndex((r) => r.id === saved.id || (r.studentId === saved.studentId && r.eventId === saved.eventId && r.date === saved.date));
+      return i >= 0 ? prev.map((r, j) => (j === i ? saved : r)) : [...prev, saved];
+    });
+    return saved;
+  };
 
-      const eventId = knownExisting?.eventId ?? event!.id;
-      const date =
-        knownExisting?.date ??
-        event!.date ??
-        new Date().toISOString().slice(0, 10);
-
-      // The edit dialog may have opened before Automatic Absent or another
-      // tab created the row. Re-check the natural key immediately before
-      // deciding to INSERT so an edit never creates a second row.
-      const existing =
-        knownExisting ??
-        (typeof navigator === "undefined" || navigator.onLine
-          ? await attendanceService.getByStudentEventAndDate(
-              studentId,
-              eventId,
-              date,
-            )
-          : null);
-
-      // Whole Day view: the scheduled session is derived from the event's
-      // configured schedules and the recorded time, never from a tab.
-      const resolvedSession =
-        sessionForWrite ??
-        existing?.session ??
-        (event
-          ? (resolveEventSessionForTime(
-              event,
-              patch.timeIn || patch.timeOut || nowClock(),
-            ) ?? "morning")
-          : "morning");
-
-      const payload = {
-        studentId,
-        eventId,
-        eventName: existing?.eventName ?? event!.name,
-        date,
-        session: resolvedSession,
-        status: patch.status ?? existing?.status ?? "present",
-        // Attendance time columns are TEXT NOT NULL. An empty string is the
-        // persisted representation for a deliberately cleared time.
-        timeIn: patch.timeIn !== undefined ? patch.timeIn : existing?.timeIn ?? "",
-        timeOut:
-          patch.timeOut !== undefined ? patch.timeOut : existing?.timeOut ?? "",
-      };
-      attendanceWriteVersionRef.current += 1;
-      const saved = existing
-        ? await attendanceService.update(existing.id, payload)
-        : await attendanceService.create(payload);
-      // A refresh can begin after the write starts but before Supabase returns.
-      // Advance the version again now so that an older snapshot returned by
-      // that refresh cannot replace the row we are about to apply locally.
-      attendanceWriteVersionRef.current += 1;
-      // Record the exact moment this write finished so loadData can honour the
-      // grace period and avoid replacing the optimistic update with a stale
-      // Supabase REST snapshot that predates the WAL propagation.
-      lastAttendanceWriteAtRef.current = Date.now();
-      setAttendanceRecords((prev) => {
-        const index = prev.findIndex(
-          (r) =>
-            r.id === saved.id ||
-            (r.studentId === saved.studentId &&
-              r.eventId === saved.eventId &&
-              r.date === saved.date),
-        );
-        if (index >= 0) {
-          const copy = [...prev];
-          copy[index] = saved;
-          return copy;
-        }
-        const next = [...prev, saved];
-        return next;
-      });
-      return saved;
-    },
-    [selectedAttendanceEvent, attendanceMap],
-  );
-
-  const confirmClearAttendance = async () => {
-    if (!attendanceToClear) return;
-
+  /** Stamps the current time as Time In / Time Out (QR scan or row menu). Valid scans always record Present. */
+  const recordNow = async (student: Student, mode: ScanMode) => {
+    if (!event) return void toast.error("Select an event before recording attendance");
+    if (officerSet.has(student.id)) return void toast.info(`${student.name} is an active LSC officer and is exempt from this attendance requirement.`);
+    const existing = recordByStudent.get(student.id);
+    const time = nowClock();
+    let patch: TimePatch;
+    let session: EventSession | null;
+    if (mode === "timeIn") {
+      if (existing?.timeIn) return void toast.info(`${student.name} already has Time In recorded`);
+      // Time In detects the scheduled session from the event configuration.
+      patch = { status: "present", timeIn: time };
+      session = resolveEventSessionForTime(event, time);
+    } else {
+      if (!existing?.timeIn) return void toast.error(`${student.name} has no Time In yet for this event`);
+      if (existing.timeOut) return void toast.info(`${student.name} already has Time Out recorded`);
+      // Time Out reuses the session stored with Time In.
+      patch = { status: existing.status, timeOut: time };
+      session = existing.session;
+    }
     try {
-      await attendanceService.delete(attendanceToClear.id);
-      attendanceWriteVersionRef.current += 1;
-      lastAttendanceWriteAtRef.current = Date.now();
-      setAttendanceRecords((prev) =>
-        prev.filter((record) => record.id !== attendanceToClear.id),
-      );
-      if (
-        lastScannedStudentId &&
-        attendanceMap.get(lastScannedStudentId)?.id === attendanceToClear.id
-      ) {
-        setLastScannedStudentId(null);
-        setLastScanTime(null);
-      }
-      toast.success(
-        `${attendanceToClear.studentName}'s ${attendanceToClear.sessionLabel} attendance has been cleared.`,
-      );
-      setShowAttendanceClearConfirm(false);
-      setAttendanceToClear(null);
+      await persist(student.id, patch, existing, session ?? undefined);
+      toast.success(`${student.name} ${MODE_LABEL[mode]} recorded at ${formatTime12(time)} for the ${session ? EVENT_SESSION_LABELS[session] : "Whole Day"} session`);
     } catch (error) {
-      console.error("Error clearing attendance:", error);
-      toast.error(
-        `Failed to clear ${attendanceToClear.studentName}'s attendance.`,
-      );
+      console.error(`Error recording ${MODE_LABEL[mode]}:`, error);
+      toast.error(`Failed to record ${MODE_LABEL[mode]} — ${errorMessage(error)}`);
     }
   };
 
-  const handleClearAttendance = (student: Student) => {
-    const record = attendanceMap.get(student.id);
-    if (!record) {
-      toast.error("No attendance record exists for this student.");
-      return;
-    }
-    setAttendanceToClear({
-      id: record.id,
-      studentName: student.name,
-      sessionLabel: EVENT_SESSION_LABELS[record.session] ?? "Whole Day",
-    });
-    setShowAttendanceClearConfirm(true);
+  const openEdit = (student: Student, record?: AttendanceRecord) => {
+    if (!event) return void toast.error("Select an event before editing attendance");
+    setEditing({ student, record: record ?? null, form: { status: record?.status ?? "absent", timeIn: splitTime24(record?.timeIn), timeOut: splitTime24(record?.timeOut) } });
   };
+  const setForm = (patch: Partial<EditForm>) => setEditing((e) => e && { ...e, form: { ...e.form, ...patch } });
 
-  const openAttendanceEditModal = (student: Student) => {
-    const record = attendanceMap.get(student.id);
-    if (!selectedAttendanceEvent) {
-      toast.error("Select an event before editing attendance");
-      return;
-    }
-    const timeIn = splitTime24(record?.timeIn);
-    const timeOut = splitTime24(record?.timeOut);
-    setAttendanceEditForm({
-      status: record?.status ?? "absent",
-      timeInHour: timeIn.hour,
-      timeInMinute: timeIn.minute,
-      timeInPeriod: timeIn.period,
-      timeOutHour: timeOut.hour,
-      timeOutMinute: timeOut.minute,
-      timeOutPeriod: timeOut.period,
-    });
-    setEditingAttendance({ student, record: record ?? null });
-  };
-
-  const closeAttendanceEditModal = () => {
-    setEditingAttendance(null);
-    setAttendanceEditForm(emptyAttendanceEditForm);
-  };
-
-  const handleSaveAttendanceEdit = async () => {
-    if (!editingAttendance) return;
-
-    const timeInProvided =
-      attendanceEditForm.timeInHour.trim() ||
-      attendanceEditForm.timeInMinute.trim();
-    const timeOutProvided =
-      attendanceEditForm.timeOutHour.trim() ||
-      attendanceEditForm.timeOutMinute.trim();
-    const parsedTimeIn = timeInProvided
-      ? composeTime12(
-          attendanceEditForm.timeInHour,
-          attendanceEditForm.timeInMinute,
-          attendanceEditForm.timeInPeriod,
-        )
-      : "";
-    const parsedTimeOut = timeOutProvided
-      ? composeTime12(
-          attendanceEditForm.timeOutHour,
-          attendanceEditForm.timeOutMinute,
-          attendanceEditForm.timeOutPeriod,
-        )
-      : "";
-
-    if (timeInProvided && parsedTimeIn === null) {
-      toast.error("Time In hour must be 1-12 and minutes must be 00-59.");
-      return;
-    }
-    if (timeOutProvided && parsedTimeOut === null) {
-      toast.error("Time Out hour must be 1-12 and minutes must be 00-59.");
-      return;
-    }
-
-    setSavingAttendanceEdit(true);
+  const saveEdit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editing) return;
+    const timeIn = parseTime(editing.form.timeIn);
+    const timeOut = parseTime(editing.form.timeOut);
+    if (timeIn === null || timeOut === null) return void toast.error(`${timeIn === null ? "Time In" : "Time Out"} hour must be 1-12 and minutes must be 00-59.`);
+    setSavingEdit(true);
     try {
-      const saved = await persistAttendance(
-        editingAttendance.student.id,
-        {
-          status: attendanceEditForm.status,
-          timeIn: parsedTimeIn ?? "",
-          timeOut: parsedTimeOut ?? "",
-        },
-        editingAttendance.record ?? undefined,
-      );
-      if (!saved) {
-        throw new Error("No attendance record was returned after saving.");
-      }
-      toast.success(
-        `${editingAttendance.student.name}'s attendance ${editingAttendance.record ? "updated" : "created"}.`,
-      );
-      closeAttendanceEditModal();
+      const saved = await persist(editing.student.id, { status: editing.form.status, timeIn, timeOut }, editing.record ?? undefined);
+      if (!saved) throw new Error("No attendance record was returned after saving.");
+      toast.success(`${editing.student.name}'s attendance ${editing.record ? "updated" : "created"}.`);
+      setEditing(null);
     } catch (error) {
       console.error("Error saving attendance:", error);
       toast.error(`Failed to save attendance — ${errorMessage(error)}`);
     } finally {
-      setSavingAttendanceEdit(false);
+      setSavingEdit(false);
     }
   };
 
-  const deriveScanStatus = (): "present" => "present";
-
-  const errorMessage = (error: unknown): string => {
-    const details =
-      typeof error === "object" && error !== null
-        ? (error as {
-            message?: unknown;
-            details?: unknown;
-            hint?: unknown;
-            code?: unknown;
-          })
-        : null;
-    if (details) {
-      const code =
-        typeof details.code === "string" ? details.code.trim() : "";
-      if (code === "42501") {
-        // attendanceService already refreshed the session, retried once, and
-        // replaced the raw error with the specific cause (expired session,
-        // non-attendance role, or database policy). Show that cause as-is.
-        if (error instanceof Error && error.message) return error.message;
-        return "This session is not authorized to write attendance. Sign in again with an admin or secretary account.";
-      }
-      if (code === "PGRST116") {
-        return "The attendance row was not returned after saving. Refresh the attendance list and try again.";
-      }
-      const parts = [details.message, details.details, details.hint]
-        .filter(
-          (part): part is string =>
-            typeof part === "string" && part.trim().length > 0,
-        )
-        .map((part) => part.trim());
-      if (code) parts.push(`code ${code}`);
-      if (parts.length > 0) return parts.join(" — ");
-      try {
-        return JSON.stringify(error);
-      } catch {
-        return "Unknown database error";
-      }
-    }
-    if (error instanceof Error) return error.message;
-    return String(error);
-  };
-
-  const handleManualAttendance = async (
-    student: Student,
-    action: "timeIn" | "timeOut",
-  ) => {
-    const event = selectedAttendanceEvent;
-    if (!event) {
-      toast.error("Select an event before recording attendance");
-      return;
-    }
-    const existing = attendanceMap.get(student.id) ?? null;
-
-    if (officerStudentIds.has(student.id)) {
-      toast.info(
-        `${student.name} is an active LSC officer and is exempt from this attendance requirement.`,
-      );
-      return;
-    }
-
-    if (action === "timeIn") {
-      if (existing?.timeIn) {
-        toast.info(`${student.name} already has Time In recorded`);
-        return;
-      }
-      const scanTime = nowClock();
-      // Whole Day: detect the scheduled session from the event configuration.
-      const session = resolveEventSessionForTime(event, scanTime);
-      const sessionLabel = session
-        ? EVENT_SESSION_LABELS[session]
-        : "Whole Day";
-      try {
-        await persistAttendance(
-          student.id,
-          {
-            status: deriveScanStatus(),
-            timeIn: scanTime,
-          },
-          existing ?? undefined,
-          session ?? undefined,
-        );
-        toast.success(
-          `${student.name} Time In recorded at ${formatTime12(scanTime)} for the ${sessionLabel} session`,
-        );
-      } catch (error) {
-        console.error("Error recording Time In:", error);
-        toast.error(`Failed to record Time In — ${errorMessage(error)}`);
-      }
-    } else {
-      if (!existing?.timeIn) {
-        toast.error(`${student.name} has no Time In yet for this event`);
-        return;
-      }
-      if (existing.timeOut) {
-        toast.info(`${student.name} already has Time Out recorded`);
-        return;
-      }
-      const scanTime = nowClock();
-      const sessionLabel =
-        EVENT_SESSION_LABELS[existing.session] ?? "Whole Day";
-      try {
-        await persistAttendance(
-          student.id,
-          {
-            status: existing.status,
-            timeOut: scanTime,
-          },
-          existing,
-          existing.session,
-        );
-        toast.success(
-          `${student.name} Time Out recorded at ${formatTime12(scanTime)} for the ${sessionLabel} session`,
-        );
-      } catch (error) {
-        console.error("Error recording Time Out:", error);
-        toast.error(`Failed to record Time Out — ${errorMessage(error)}`);
-      }
+  const confirmClear = async () => {
+    if (!clearTarget) return;
+    setClearing(true);
+    try {
+      await attendanceService.delete(clearTarget.id);
+      mutate("records", (prev) => prev.filter((r) => r.id !== clearTarget.id));
+      if (lastScan && recordByStudent.get(lastScan.studentId)?.id === clearTarget.id) setLastScan(null);
+      toast.success(`${clearTarget.name}'s ${clearTarget.sessionLabel} attendance has been cleared.`);
+      setClearTarget(null);
+    } catch (error) {
+      console.error("Error clearing attendance:", error);
+      toast.error(`Failed to clear ${clearTarget.name}'s attendance.`);
+    } finally {
+      setClearing(false);
     }
   };
 
-  const handleQrScan = (rawData: string) => {
-    const now = Date.now();
-    if (
-      lastScanRef.current.data === rawData &&
-      now - lastScanRef.current.at < 2500
-    )
-      return;
-    lastScanRef.current = { data: rawData, at: now };
-
-    const payload = parseStudentQrText(rawData);
-    if (!payload) {
-      setScanMessage({
-        type: "error",
-        text: "Unrecognized QR code — please scan a student attendance QR.",
-      });
-      return;
-    }
-
-    const student = students.find((s) => s.studentId === payload.studentId);
+  const onScan = (raw: string) => {
+    const id = Date.now();
+    const payload = parseStudentQrText(raw);
+    const student = payload && students.find((s) => s.studentId === payload.studentId);
     if (!student) {
-      setScanMessage({
-        type: "error",
-        text: `No student matches ID "${payload.studentId}" — use the manual search below.`,
+      return setScanMessage({
+        ok: false,
+        id,
+        text: payload ? `No student matches ID "${payload.studentId}" — use the manual search below.` : "Unrecognized QR code — please scan a student attendance QR.",
       });
-      return;
     }
-
-    setScanMessage({
-      type: "success",
-      text: `Scanned ${student.name} (${student.studentId}) — recording ${scanMode === "timeIn" ? "Time In" : "Time Out"}…`,
-    });
-    setScannedCourse(student.program);
-    setScannedSection(student.section);
-    setLastScannedStudentId(student.id);
-    setLastScanTime(nowClock());
-    setAttendancePage(1);
-    void handleManualAttendance(student, scanMode);
+    setScanMessage({ ok: true, id, text: `Scanned ${student.name} (${student.studentId}) — recording ${MODE_LABEL[scanMode]}…` });
+    setScanFilter({ program: student.program, section: student.section });
+    setLastScan({ studentId: student.id, time: nowClock() });
+    void recordNow(student, scanMode);
   };
 
-  const qrScanHandlerRef = useRef<(data: string) => void>(() => undefined);
-  qrScanHandlerRef.current = handleQrScan;
-
+  // ── Automatic Absent ──────────────────────────────────────
+  // Once an event's calendar day has ended and Auto Mark Absent is on, the
+  // mark_absent_if_missing RPC inserts Absent rows for students with no row.
+  // Online only and never queued: rechecked on load, every minute, and on reconnect.
+  // One run at a time; each distinct failure is toasted once.
+  const autoMarking = useRef(false);
+  const autoAbsentError = useRef<string | null>(null);
   useEffect(() => {
-    if (!scannerActive) return;
+    if (!canRecordAttendance) return;
+    const run = async () => {
+      if (autoMarking.current || !navigator.onLine) return;
+      const now = new Date();
+      const due = events.filter((e) => e.autoMarkAbsent === true && !e.isNonConducting && e.date && hasEventAttendanceDayEnded(e.date, now));
+      if (!due.length) return;
 
-    let cancelled = false;
-    let stream: MediaStream | null = null;
-    let rafId = 0;
-    const video = videoRef.current;
-
-    const tick = () => {
-      rafId = requestAnimationFrame(tick);
-      const canvas = canvasRef.current;
-      if (
-        !video ||
-        !canvas ||
-        video.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA
-      )
-        return;
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-      if (!width || !height) return;
-
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-      ctx.drawImage(video, 0, 0, width, height);
-      const image = ctx.getImageData(0, 0, width, height);
-      const code = jsQR(image.data, image.width, image.height, {
-        inversionAttempts: "dontInvert",
-      });
-      if (code?.data) qrScanHandlerRef.current(code.data);
-    };
-
-    const start = async () => {
+      autoMarking.current = true;
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Camera API unavailable");
+        for (const ev of due) {
+          // An event-date cutoff, not a schedule-window one: the session only labels the inserted rows.
+          const session = getScheduledEventSessions(ev)[0] ?? "morning";
+          const inserted = await attendanceService.markAbsentIfMissing({ eventId: ev.id, session });
+          if (inserted.length) mutate("records", (prev) => [...new Map([...prev, ...inserted].map((r) => [r.id, r])).values()]);
         }
-
-        const constraints: MediaStreamConstraints = selectedCameraId
-          ? { video: { deviceId: { exact: selectedCameraId } } }
-          : { video: { facingMode: { ideal: "environment" } } };
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (selectedCameraError) {
-          if (!selectedCameraId) throw selectedCameraError;
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: { ideal: "environment" } },
-            });
-          } catch {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          }
-          if (!cancelled) setSelectedCameraId(null);
-        }
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+        autoAbsentError.current = null;
+      } catch (error) {
+        const kind = classifyAttendanceError(error);
+        if (kind === "network") {
+          // Supabase unreachable — nothing was written; the next check retries.
+          console.warn("Automatic Absent skipped; Supabase unreachable:", error);
           return;
         }
-        if (video) {
-          video.muted = true;
-          video.srcObject = stream;
-          try {
-            await video.play();
-          } catch {
-            /* autoplay restrictions */
-          }
+        console.error("Auto-marking absent students failed:", error);
+        const message = kind === "auth" ? "not authorized. Sign out and sign in again; if it persists, an admin must run supabase/attendance_fix.sql." : errorMessage(error);
+        if (autoAbsentError.current !== message) {
+          autoAbsentError.current = message;
+          toast.error(`Failed to auto-mark absent students — ${message}`);
         }
-        lastScanRef.current = { data: "", at: 0 };
-
-        if (navigator.mediaDevices.enumerateDevices) {
-          const devices = (
-            await navigator.mediaDevices.enumerateDevices()
-          ).filter((device) => device.kind === "videoinput");
-          if (!cancelled) {
-            setCameraDevices(devices);
-            if (!selectedCameraId && devices.length > 1) {
-              const rearCamera = devices.find((device) =>
-                /back|rear|environment|world|外向|后置/i.test(device.label),
-              );
-              const currentCameraId = stream
-                .getVideoTracks()[0]
-                ?.getSettings().deviceId;
-              if (rearCamera && rearCamera.deviceId !== currentCameraId) {
-                setSelectedCameraId(rearCamera.deviceId);
-                return;
-              }
-              if (currentCameraId) setSelectedCameraId(currentCameraId);
-            }
-          }
-        }
-        tick();
-      } catch (error) {
-        console.error("Error starting QR scanner camera:", error);
-        if (!cancelled) {
-          setScanMessage({
-            type: "error",
-            text: "Unable to access the camera. Grant camera permission or use the manual search below.",
-          });
-          setScannerActive(false);
-        }
+      } finally {
+        autoMarking.current = false;
       }
     };
-    start();
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(rafId);
-      stream?.getTracks().forEach((track) => track.stop());
-      if (video) video.srcObject = null;
-    };
-  }, [scannerActive, selectedCameraId]);
-
-  const autoMarkAbsent = useCallback(async () => {
-    if (!canRecordAttendance) return;
-    if (autoMarkingAbsentRef.current) return;
-    autoMarkingAbsentRef.current = true;
-    const now = new Date();
-    const completedEvents = events.filter(
-      (event) =>
-        event.autoMarkAbsent === true &&
-        !event.isNonConducting &&
-        hasEventAttendanceDayEnded(event.date, now),
-    );
-    if (completedEvents.length === 0) {
-      autoMarkingAbsentRef.current = false;
-      return;
-    }
-
-    // Automatic Absent is an online-only server-side bulk insert. It is not
-    // queued for offline replay: enabling the setting or loading the
-    // attendance page performs one attempt for each completed event.
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      autoMarkingAbsentRef.current = false;
-      return;
-    }
-
-    try {
-      for (const event of completedEvents) {
-        if (!event.date) continue;
-
-        // Automatic Absent is an event-date cutoff, not a schedule-window
-        // cutoff. Use the first configured session when available, otherwise
-        // retain the database function's valid morning default.
-        const session = getScheduledEventSessions(event)[0] ?? "morning";
-        const inserted = await attendanceService.markAbsentIfMissing({
-          eventId: event.id,
-          session,
-        });
-        if (inserted.length === 0) continue;
-
-        setAttendanceRecords((prev) => {
-          const byId = new Map(prev.map((record) => [record.id, record]));
-          inserted.forEach((record) => byId.set(record.id, record));
-          return [...byId.values()];
-        });
-        attendanceWriteVersionRef.current += 1;
-        lastAttendanceWriteAtRef.current = Date.now();
-      }
-      autoAbsentErrorRef.current = null;
-    } catch (error) {
-      const kind = classifyAttendanceError(error);
-      if (kind === "network") {
-        // Supabase unreachable (e.g. Wi-Fi without internet). Nothing was
-        // written. The officer can refresh the attendance page to try again.
-        console.warn("Automatic Absent skipped; Supabase unreachable:", error);
-        return;
-      }
-      console.error("Auto-marking absent students failed:", error);
-      const message =
-        kind === "auth"
-          ? "not authorized. Sign out and sign in again; if it persists, an admin must run supabase/attendance_fix.sql."
-          : errorMessage(error);
-      // Show each distinct failure only once during this page session.
-      if (autoAbsentErrorRef.current !== message) {
-        autoAbsentErrorRef.current = message;
-        toast.error(`Failed to auto-mark absent students — ${message}`);
-      }
-    } finally {
-      autoMarkingAbsentRef.current = false;
-    }
-  }, [canRecordAttendance, events]);
-
-  useEffect(() => {
-    // Recheck once on load/event changes, periodically while the page is open,
-    // and immediately after reconnecting. The RPC rereads auto_mark_absent and
-    // the event date, so retries remain safe when settings or attendance rows
-    // changed in another tab.
-    void autoMarkAbsent();
-    const retry = () => void autoMarkAbsent();
-    const interval = window.setInterval(retry, 60_000);
+    const retry = () => void run();
+    retry();
+    const interval = setInterval(retry, 60_000);
     window.addEventListener("online", retry);
     return () => {
-      window.clearInterval(interval);
+      clearInterval(interval);
       window.removeEventListener("online", retry);
     };
-  }, [autoMarkAbsent]);
+  }, [canRecordAttendance, events, mutate]);
 
-  const attendanceSearchTerm = attendanceSearch.trim().toLowerCase();
-  const filteredStudents = useMemo(() => {
-    let result = students.filter((student) => !officerStudentIds.has(student.id));
-
-    if (scannedCourse && scannedSection) {
-      result = result.filter(
-        (s) => s.program === scannedCourse && s.section === scannedSection,
-      );
-    }
-
-    if (attendanceSearchTerm) {
-      result = result.filter((s) =>
-        matchesSearchWords(`${s.name} ${s.studentId}`, attendanceSearchTerm),
-      );
-    }
-
-    if (attendanceStatusFilter !== "all") {
-      result = result.filter((s) => {
-        const status = attendanceMap.get(s.id)?.status;
-        return status === attendanceStatusFilter;
-      });
-    }
-
-    if (lastScannedStudentId) {
-      const scanned = result.find((s) => s.id === lastScannedStudentId);
-      if (scanned) {
-        result = [
-          scanned,
-          ...result.filter((s) => s.id !== lastScannedStudentId),
-        ];
-      }
-    }
-
-    return result;
-  }, [
-    students,
-    officerStudentIds,
-    attendanceSearchTerm,
-    attendanceStatusFilter,
-    attendanceMap,
-    scannedCourse,
-    scannedSection,
-    lastScannedStudentId,
-  ]);
-
-  useEffect(() => {
-    setAttendancePage(1);
-  }, [
-    selectedEventForAttendance,
-    attendanceSearchTerm,
-    attendanceStatusFilter,
-    scannedCourse,
-    scannedSection,
-    lastScannedStudentId,
-  ]);
-
-  const attendanceTotalPages = Math.max(
-    1,
-    Math.ceil(filteredStudents.length / ATTENDANCE_PAGE_SIZE),
-  );
-  const currentAttendancePage = Math.min(attendancePage, attendanceTotalPages);
-  const attendancePageStartIndex =
-    (currentAttendancePage - 1) * ATTENDANCE_PAGE_SIZE;
-  const paginatedStudents = filteredStudents.slice(
-    attendancePageStartIndex,
-    attendancePageStartIndex + ATTENDANCE_PAGE_SIZE,
-  );
-
-  useEffect(() => {
-    if (attendancePage > attendanceTotalPages) {
-      setAttendancePage(attendanceTotalPages);
-    }
-  }, [attendancePage, attendanceTotalPages]);
-
-  const lastScannedStudent = lastScannedStudentId
-    ? (students.find((s) => s.id === lastScannedStudentId) ?? null)
-    : null;
-
-  const attendanceAnalysisData = useMemo(() => {
-    const registeredStudentIds = new Set(
-      students
-        .filter((student) => !officerStudentIds.has(student.id))
-        .map((student) => student.id),
+  // ── Table rows ────────────────────────────────────────────
+  // Only depend on records when filtering by status, so saving a row doesn't jump back to page 1.
+  const statusSource = statusFilter === "all" ? null : recordByStudent;
+  const visibleStudents = useMemo(() => {
+    const list = eligibleStudents.filter(
+      (s) =>
+        (!scanFilter || (s.program === scanFilter.program && s.section === scanFilter.section)) &&
+        matchesSearchWords(`${s.name} ${s.studentId}`, query) &&
+        (!statusSource || statusSource.get(s.id)?.status === statusFilter),
     );
-    const totalPopulation = registeredStudentIds.size;
+    const pinned = lastScan && list.find((s) => s.id === lastScan.studentId);
+    return pinned ? [pinned, ...list.filter((s) => s !== pinned)] : list;
+  }, [eligibleStudents, scanFilter, query, statusSource, statusFilter, lastScan]);
 
-    return [...events]
-      .filter((event) => !event.isNonConducting)
-      .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
-      .map((event) => {
-        const attendeeIds = new Set(
-          attendanceRecords
-            .filter(
-              (record) =>
-                record.eventId === event.id &&
-                (!event.date || record.date === event.date) &&
-                registeredStudentIds.has(record.studentId) &&
-                (record.status === "present" || record.status === "excuse"),
-            )
-            .map((record) => record.studentId),
-        );
-        const actualPopulationAttended = attendeeIds.size;
-
-        return {
-          eventId: event.id,
-          eventName: event.name,
-          eventLabel: event.date
-            ? `${event.name} — ${formatDate(event.date)}`
-            : event.name,
-          totalPopulation,
-          actualPopulationAttended,
-          attendanceGap: Math.max(
-            0,
-            totalPopulation - actualPopulationAttended,
-          ),
-        };
-      });
-  }, [attendanceRecords, events, officerStudentIds, students]);
+  const lastScanned = lastScan && students.find((s) => s.id === lastScan.studentId);
+  const officerCount = students.length - eligibleStudents.length;
 
   if (!canRecordAttendance) {
     return (
-      <section
-        ref={sectionRef}
-        className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
-      >
-        <div
-          ref={contentRef}
-          className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
-        >
-          <div className="flex items-center gap-4 mb-6">
-            <SectionBackButton onClick={onBack} />
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Access Denied
-              </h1>
-              <p className="text-text-secondary text-sm">
-                You don't have permission to access attendance management
-              </p>
-            </div>
-          </div>
+      <Page eyebrow="Events" title="Attendance" onBack={onBack}>
+        <div className="card">
+          <EmptyState icon={ShieldAlert} title="Access denied" description="You don't have permission to access attendance management." />
         </div>
-      </section>
+      </Page>
     );
   }
 
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
-    >
-      <div
-        ref={contentRef}
-        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
-      >
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            <SectionBackButton onClick={onBack} />
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Attendance Management
-              </h1>
-              <p className="text-text-secondary text-sm">
-                Track and manage student attendance
-              </p>
-            </div>
-          </div>
+    <Page
+      eyebrow="Events"
+      title="Attendance"
+      subtitle="Scan student QR passes for the whole event day — each Time In and Time Out lands in the right scheduled session automatically."
+      onBack={onBack}
+      hero={
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+          <StatCard
+            featured
+            label="Students tracked"
+            value={eligibleStudents.length}
+            icon={Users}
+            hint={officerCount ? `${officerCount} LSC officer${officerCount > 1 ? "s" : ""} exempt` : `${attendanceEvents.length} events`}
+          />
+          {STATUSES.map((s) => (
+            <StatCard key={s} label={STATUS[s].label} value={event ? counts[s] : "—"} icon={STATUS[s].icon} tone={STATUS[s].tone} hint={event ? "Whole day" : "Select an event"} />
+          ))}
         </div>
-
-        {/* Loading State */}
-        {loading && <SectionLoader message="Loading data..." />}
-
-        {/* Attendance Content */}
-        {!loading && (
-          <div className="glass-card p-5 lg:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Users className="w-5 h-5 text-red" />
+      }
+    >
+      {loading ? (
+        <LoadingCard label="Loading attendance…" />
+      ) : (
+        <>
+          {/* Event picker + Whole Day sessions */}
+          <section className="card space-y-5 p-5 sm:p-6">
+            {attendanceEvents.length === 0 ? (
+              <EmptyState icon={QrCode} title="No events yet" description="Create an event that tracks attendance to start recording." />
+            ) : (
+              <>
+                <div>
+                  <p className="label">Event</p>
+                  <Segmented label="Event" value={event ? eventId : null} onChange={setEventId} options={attendanceEvents.map((e) => ({ value: e.id, label: e.name }))} />
                 </div>
-                <h3 className="font-display font-semibold text-lg text-dark">
-                  Attendance Tracking
-                </h3>
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-dark mb-1.5">
-                Select Event
-              </label>
-              <select
-                value={selectedEventForAttendance}
-                onChange={(e) => setSelectedEventForAttendance(e.target.value)}
-                className="glass-input w-full px-4 py-3 text-sm"
-              >
-                <option value="">Choose an event</option>
-                {attendanceEvents.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Whole Day attendance view - every scheduled session at once */}
-            {selectedAttendanceEvent && (
-              <div className="whole-day-panel mb-5 overflow-hidden rounded-2xl shadow-sm">
-                <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5">
-                  {/* Whole Day header */}
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div
-                        aria-hidden="true"
-                        className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-info/15 shadow-inner"
-                      >
-                        {/* Back cloud — mirrored, tucked behind the sun (top-left) */}
-                        <svg
-                          viewBox="0 0 32 20"
-                          className="absolute left-[1px] top-[6px] z-0 h-[15px] w-6"
-                        >
-                          <g transform="matrix(-1 0 0 1 32 0)">
-                            <path
-                              className="whole-day-cloud-back"
-                              d="M7.5 18H25A5 5 0 0 0 25.5 8.03A7 7 0 0 0 12.2 6.6A5.75 5.75 0 0 0 7.5 18Z"
-                            />
-                          </g>
-                        </svg>
-                        <span className="relative z-10 select-none text-[2rem] leading-none">
-                          {EVENT_SESSION_ICONS.morning}
-                        </span>
-                        {/* Front cloud — overlaps the sun and peeks past the edge (bottom-right) */}
-                        <svg
-                          viewBox="0 0 32 20"
-                          overflow="visible"
-                          className="absolute -right-[5px] bottom-[3px] z-20 h-[17.5px] w-7"
-                        >
-                          <path
-                            className="whole-day-cloud-front"
-                            d="M7.5 18H25A5 5 0 0 0 25.5 8.03A7 7 0 0 0 12.2 6.6A5.75 5.75 0 0 0 7.5 18Z"
-                          />
-                        </svg>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-display text-lg font-semibold text-info">
-                          Whole Day Attendance
-                        </p>
-                        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-text-secondary">
-                          <Calendar className="h-4 w-4 text-text-muted" />
-                          {selectedAttendanceEvent.date
-                            ? formatDate(selectedAttendanceEvent.date)
-                            : "Event date not set"}
-                          <span aria-hidden="true">·</span>
-                          {scheduledSessionWindows.length > 0
-                            ? `${scheduledSessionWindows.length} scheduled session${
-                                scheduledSessionWindows.length > 1 ? "s" : ""
-                              } handled automatically`
-                            : "No sessions configured for this event"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-left text-sm text-text-secondary sm:text-right">
-                      <p className="font-medium text-dark">
-                        {selectedAttendanceEvent.name}
-                      </p>
-                      <p className="text-xs">
-                        Time In / Time Out are matched to the right scheduled
-                        session automatically — no session tabs to switch.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Scheduled sessions detected from the Event section */}
-                  {scheduledSessionWindows.length > 0 ? (
-                    <div className="theme-border grid gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {scheduledSessionWindows.map((window) => {
-                        const isActive = window.session === activeSession;
-                        const sessionRecords = selectedAttendanceRecords.filter(
-                          (record) => record.session === window.session,
-                        );
-                        const presentCount = sessionRecords.filter(
-                          (record) => record.status === "present",
-                        ).length;
-                        const excuseCount = sessionRecords.filter(
-                          (record) => record.status === "excuse",
-                        ).length;
-                        const absentCount = sessionRecords.filter(
-                          (record) => record.status === "absent",
-                        ).length;
-
-                        return (
-                          <div
-                            key={window.session}
-                            className={`rounded-xl border p-3 transition-colors ${
-                              isActive
-                                ? "border-red/40 bg-red/10"
-                                : "whole-day-session-card"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="flex items-center gap-1.5 text-sm font-semibold text-dark">
-                                <span aria-hidden="true">{window.icon}</span>
-                                {window.label} Session
-                              </p>
-                              {isActive && (
-                                <span className="rounded-full bg-red px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                                  Now
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-1 text-xs text-text-secondary">
-                              {window.timeIn && window.timeOut ? (
-                                <span className="font-medium text-success">
-                                  {formatTime12(window.timeIn)} -{" "}
-                                  {formatTime12(window.timeOut)}
-                                </span>
-                              ) : window.timeIn ? (
-                                <span className="font-medium text-info">
-                                  {formatTime12(window.timeIn)} - Time Out not
-                                  set
-                                </span>
-                              ) : window.timeOut ? (
-                                <span className="font-medium text-info">
-                                  Time In not set -{" "}
-                                  {formatTime12(window.timeOut)}
-                                </span>
-                              ) : (
-                                <span className="font-medium text-warning">
-                                  Schedule times not configured
-                                </span>
-                              )}
-                            </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
-                              <span className="rounded-full bg-success/15 px-2 py-0.5 text-success">
-                                Present {presentCount}
-                              </span>
-                              <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-purple-600">
-                                Excused {excuseCount}
-                              </span>
-                              <span className="rounded-full bg-danger/15 px-2 py-0.5 text-danger">
-                                Absent {absentCount}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="theme-border border-t pt-3 text-sm font-medium text-warning">
-                      Add a Morning, Afternoon, or Evening schedule in the Event
-                      section so the Whole Day view can detect it.
-                    </p>
-                  )}
-                </div>
-              </div>
+                {event && <WholeDayPanel event={event} windows={sessionWindows} activeSession={activeSession} records={eventRecords} />}
+              </>
             )}
+          </section>
 
-            {/* Scheduled windows + auto-status rules */}
-            {selectedAttendanceEvent && (
-              <div className="mb-4 rounded-xl border border-white/50 bg-white/30 p-3">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                  <span className="flex items-center gap-1.5 font-medium text-dark">
-                    <Clock className="w-4 h-4 text-red" />
-                    Attendance rules
-                  </span>
-                  <span className="text-xs text-text-secondary">
-                    Present = successfully scanned QR code for this event |
-                    Absent = no scan recorded (auto-marked at 12:00 AM when Auto Mark Absent is ON)
-                  </span>
-                </div>
+          {!event ? (
+            attendanceEvents.length > 0 && (
+              <div className="card">
+                <EmptyState icon={UserCheck} title="Select an event to track attendance" description="Pick an event above to open the scanner and the student list." />
               </div>
-            )}
+            )
+          ) : (
+            <>
+              <section className="card grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
+                <QrScanner
+                  modeLabel={MODE_LABEL[scanMode]}
+                  tone={scanMessage ? (scanMessage.ok ? "ok" : "error") : null}
+                  onScan={onScan}
+                  onStart={() => setScanMessage(null)}
+                  onError={(text) => setScanMessage({ ok: false, id: Date.now(), text })}
+                />
 
-            {/* QR Code Scanner */}
-            {selectedAttendanceEvent && (
-              <div className="mb-6 border border-white/50 rounded-xl p-4 lg:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-red/10 flex items-center justify-center">
-                      <QrCode className="w-4 h-4 text-red" />
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="icon-tile">
+                      <QrCode className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-display font-semibold text-dark">
-                        QR Code Scanner
-                      </h4>
-                      <p className="text-xs text-text-secondary">
-                        Pick a mode, then hold a student's QR code in front of
-                        the camera — the scan time is recorded automatically.
-                      </p>
+                      <h2 className="text-lg">QR scanner</h2>
+                      <p className="text-sm text-muted">Pick a mode, then hold a student's QR pass up to the camera — the scan time is recorded automatically.</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setScanMode("timeIn")}
-                      className={`px-3 py-1.5 text-xs rounded-lg ${
-                        scanMode === "timeIn"
-                          ? "bg-green-600 text-white"
-                          : "bg-green-100 text-green-700 hover:bg-green-200"
-                      }`}
-                      title="Scanned students will be recorded as Time In"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      Scan Time In
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScanMode("timeOut")}
-                      className={`px-3 py-1.5 text-xs rounded-lg ${
-                        scanMode === "timeOut"
-                          ? "bg-blue-600 text-white"
-                          : "bg-blue-100 text-blue-700 hover:bg-blue-200"
-                      }`}
-                      title="Scanned students will be recorded as Time Out"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      Scan Time Out
-                    </button>
-                  </div>
-                </div>
-
-                {/* Camera preview */}
-                <div className="relative h-64 max-w-md mx-auto rounded-xl overflow-hidden bg-black/80">
-                  <video
-                    ref={videoRef}
-                    className="absolute inset-0 w-full h-full object-cover"
-                    style={{ transform: "scaleX(1)" }}
-                    muted
-                    playsInline
+                  <Segmented
+                    label="Scan mode"
+                    value={scanMode}
+                    onChange={setScanMode}
+                    options={[
+                      { value: "timeIn", label: "Scan Time In", icon: LogIn },
+                      { value: "timeOut", label: "Scan Time Out", icon: LogOut },
+                    ]}
                   />
-                  <canvas ref={canvasRef} className="hidden" />
-                  {!scannerActive ? (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/80">
-                      <ScanLine className="w-10 h-10 opacity-60" />
-                      <p className="text-xs">Camera is off</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setScanMessage(null);
-                          setScannerActive(true);
-                        }}
-                        className="px-4 py-2 text-sm"
-                      >
-                        <Camera className="w-4 h-4" />
-                        Start {scanMode === "timeIn"
-                          ? "Time In"
-                          : "Time Out"}{" "}
-                        Scanner
-                      </button>
-                    </div>
-                  ) : (
-                    <>
+
+                  <div aria-live="polite">
+                    {scanMessage && (
                       <div
-                        className="absolute inset-x-8 top-1/2 -translate-y-1/2 h-0.5 bg-red/70 animate-pulse pointer-events-none"
-                        aria-hidden="true"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setScannerActive(false)}
-                        className="absolute bottom-3 right-3 px-3 py-1.5 text-xs rounded-lg bg-black/60 text-white hover:bg-black/80"
+                        key={scanMessage.id}
+                        className={`flex animate-fade-up items-start gap-2.5 rounded-2xl border px-4 py-3 text-sm font-medium ${
+                          scanMessage.ok ? "border-success/30 bg-success/10 text-success" : "border-danger/30 bg-danger/10 text-danger"
+                        }`}
                       >
-                        <CameraOff className="w-3.5 h-3.5" />
-                        Stop Camera
-                      </button>
-                      {cameraDevices.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const currentIndex = cameraDevices.findIndex(
-                              (device) => device.deviceId === selectedCameraId,
-                            );
-                            const nextCamera =
-                              cameraDevices[
-                                (currentIndex + 1) % cameraDevices.length
-                              ];
-                            if (nextCamera)
-                              setSelectedCameraId(nextCamera.deviceId);
-                          }}
-                          className="absolute bottom-3 left-3 px-3 py-1.5 text-xs rounded-lg bg-black/60 text-white hover:bg-black/80"
-                          title="Switch camera"
-                        >
-                          <SwitchCamera className="w-3.5 h-3.5" />
-                          Switch Camera
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {scanMessage && (
-                  <div
-                    className={`mt-3 max-w-md mx-auto text-sm rounded-lg px-3 py-2 ${
-                      scanMessage.type === "error"
-                        ? "bg-red/10 text-red-500"
-                        : "bg-green-100 text-green-700"
-                    }`}
-                  >
-                    {scanMessage.text}
-                  </div>
-                )}
-
-                <p className="mt-2 text-xs text-text-secondary text-center">
-                  Can't scan a student's QR code? Use the manual search below to
-                  record their attendance.
-                </p>
-              </div>
-            )}
-
-            {selectedEventForAttendance && (
-              <>
-                {/* Search and status controls */}
-                <div className="mb-4 flex flex-col items-stretch gap-4 rounded-2xl border border-blue-50 bg-white/80 p-4 shadow-sm sm:flex-row sm:items-center sm:gap-6 sm:p-5">
-                  <div className="relative min-w-0 flex-1">
-                    <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-secondary" />
-                    <input
-                      type="text"
-                      value={attendanceSearch}
-                      onChange={(e) => setAttendanceSearch(e.target.value)}
-                      placeholder="Search by full name or student ID..."
-                      className="glass-input w-full rounded-xl py-3.5 pl-12 pr-16 text-sm sm:text-base"
-                    />
-                    {attendanceSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setAttendanceSearch("")}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-medium text-text-secondary hover:text-dark"
-                        title="Clear search"
-                      >
-                        Clear
-                      </button>
+                        {scanMessage.ok ? <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+                        {scanMessage.text}
+                      </div>
                     )}
                   </div>
 
-                  <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-                    <label
-                      htmlFor="attendance-status-filter"
-                      className="text-sm font-medium text-dark whitespace-nowrap"
-                    >
-                      Show students:
-                    </label>
-                    <select
-                      id="attendance-status-filter"
-                      value={attendanceStatusFilter}
-                      onChange={(e) =>
-                        setAttendanceStatusFilter(
-                          e.target.value as
-                            | "all"
-                            | "present"
-                            | "absent"
-                            | "excuse",
-                        )
-                      }
-                      className="glass-input min-w-[180px] rounded-xl px-4 py-3 text-sm sm:text-base"
-                    >
-                      <option value="all">All Students</option>
-                      <option value="present">Present</option>
-                      <option value="absent">Absent</option>
-                      <option value="excuse">Excused</option>
-                    </select>
-                  </div>
-                </div>
-
-                {scannedCourse && scannedSection && (
-                  <div className="mb-3 flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setScannedCourse(null);
-                        setScannedSection(null);
-                        setLastScannedStudentId(null);
-                        setLastScanTime(null);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200 transition-colors"
-                      title="Clear auto-filters set by QR scan"
-                    >
-                      <span>
-                        Filtered: {scannedCourse} — Section {scannedSection}
-                      </span>
-                      <XCircle className="w-3 h-3" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Last Scanned Student Banner */}
-                {lastScannedStudent && lastScannedStudentId && (
-                  <div className="mb-4 border border-green-200 bg-green-50/60 rounded-xl p-4 lg:p-5">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-                        <CheckCircle className="w-5 h-5 text-green-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-green-700 mb-1">
-                          ✓ Last Scanned — Marked Present
-                        </p>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span className="font-semibold text-dark">
-                            {lastScannedStudent.name}
-                          </span>
-                          <span className="text-sm text-text-secondary">
-                            Course:{" "}
-                            <span className="font-medium text-dark">
-                              {lastScannedStudent.program}
-                            </span>
-                          </span>
-                          <span className="text-sm text-text-secondary">
-                            Section:{" "}
-                            <span className="font-medium text-dark">
-                              {lastScannedStudent.section}
-                            </span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-sm">
-                            <span className="text-text-secondary">Status:</span>
-                            <span
-                              className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-600"
-                            >
-                              Present
-                            </span>
-                          </span>
-                          <span className="text-sm text-text-secondary">
-                            Event:{" "}
-                            <span className="font-medium text-dark">
-                              {selectedAttendanceEvent?.name ?? "—"}
-                            </span>
-                          </span>
-                          <span className="text-sm text-text-secondary">
-                            Scan Time:{" "}
-                            <span className="font-medium text-dark">
-                              {lastScanTime ? formatTime12(lastScanTime) : "—"}
-                            </span>
-                          </span>
+                  {lastScan && lastScanned && (
+                    <div className="rounded-2xl border border-line bg-surface-2 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Last scanned</p>
+                      <div className="mt-2 flex items-center gap-3">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-500/10 text-sm font-bold text-brand-600">{lastScanned.name.charAt(0).toUpperCase()}</div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold">{lastScanned.name}</p>
+                          <p className="truncate text-xs text-muted">
+                            {lastScanned.program} · Section {lastScanned.section}
+                          </p>
                         </div>
+                        <StatusChip status={recordByStudent.get(lastScanned.id)?.status} />
                       </div>
+                      <p className="mt-3 text-xs text-muted">
+                        Scanned at <b className="text-ink">{formatTime12(lastScan.time)}</b> · {event.name}
+                      </p>
                     </div>
+                  )}
+
+                  <p className="mt-auto text-xs text-muted">Can't scan a QR pass? Find the student in the list below and use Edit to record attendance manually.</p>
+                </div>
+              </section>
+
+              <AttendanceTable
+                key={eventId}
+                students={visibleStudents}
+                // A new scan pins that student to the top, so it also returns to page 1.
+                resetKey={JSON.stringify([query, statusFilter, scanFilter, lastScan?.studentId])}
+                recordByStudent={recordByStudent}
+                lastScanId={lastScan?.studentId}
+                toolbar={
+                  <div className="flex flex-col gap-3 border-b border-line p-4 sm:p-5 lg:flex-row lg:items-center">
+                    <SearchInput value={query} onChange={setQuery} placeholder="Search by name or student ID…" className="flex-1" />
+                    <Segmented
+                      label="Filter by status"
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      options={[{ value: "all" as const, label: "All" }, ...STATUSES.map((s) => ({ value: s, label: `${STATUS[s].label} · ${counts[s]}` }))]}
+                    />
+                    {scanFilter && (
+                      <button
+                        type="button"
+                        className="chip chip-brand self-start hover:bg-brand-500/20 lg:self-auto"
+                        onClick={() => {
+                          setScanFilter(null);
+                          setLastScan(null);
+                        }}
+                        title="Clear the filter set by the last QR scan"
+                      >
+                        {scanFilter.program} · Section {scanFilter.section}
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
-                )}
-
-                <div className="rounded-xl overflow-hidden border border-gray-200">
-                  <div className="overflow-x-auto">
-                    <table className="glass-table">
-                      <thead>
-                        <tr>
-                          <th>Student</th>
-                          <th>Student ID</th>
-                          <th>Course</th>
-                          <th>Section</th>
-                          <th className="text-center">Status</th>
-                          <th>Event</th>
-                          <th>Session</th>
-                          <th>Time In</th>
-                          <th>Time Out</th>
-                          <th className="text-center">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paginatedStudents.map((student) => {
-                          const record = attendanceMap.get(student.id);
-                          const isLastScanned =
-                            student.id === lastScannedStudentId;
-                          return (
-                            <tr
-                              key={student.id}
-                              className={
-                                isLastScanned
-                                  ? "bg-green-50/70 border-l-2 border-l-green-500"
-                                  : ""
-                              }
-                            >
-                              <td className="font-medium text-dark">
-                                <div className="flex items-center gap-2">
-                                  {isLastScanned && (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                                  )}
-                                  {student.name}
-                                </div>
-                              </td>
-                              <td className="text-text-secondary">
-                                {student.studentId}
-                              </td>
-                              <td className="text-text-secondary">
-                                {student.program}
-                              </td>
-                              <td className="text-text-secondary">
-                                {student.section}
-                              </td>
-                              <td className="text-center">
-                                {record ? (
-                                  <span
-                                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                                      record.status === "present"
-                                        ? "bg-green-100 text-green-600"
-                                        : record.status === "excuse"
-                                          ? "bg-purple-100 text-purple-700"
-                                          : "bg-red/10 text-red-500"
-                                    }`}
-                                  >
-                                    {record.status === "present"
-                                      ? "Present"
-                                      : record.status === "excuse"
-                                        ? "Excused"
-                                        : "Absent"}
-                                  </span>
-                                ) : (
-                                  <span className="text-text-secondary text-xs">
-                                    —
-                                  </span>
-                                )}
-                              </td>
-                              <td className="text-text-secondary text-sm">
-                                {selectedAttendanceEvent?.name ?? "—"}
-                              </td>
-                              <td className="text-text-secondary text-sm">
-                                {record
-                                  ? `${EVENT_SESSION_ICONS[record.session] ?? ""} ${
-                                      EVENT_SESSION_LABELS[record.session] ??
-                                      "—"
-                                    }`.trim()
-                                  : "—"}
-                              </td>
-                              <td className="text-text-secondary text-sm">
-                                {formatTime12(record?.timeIn)}
-                              </td>
-                              <td className="text-text-secondary text-sm">
-                                {formatTime12(record?.timeOut)}
-                              </td>
-                              <td className="text-center">
-                                <div className="inline-flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => openAttendanceEditModal(student)}
-                                    disabled={!canRecordAttendance}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                      canRecordAttendance
-                                        ? "text-primary hover:bg-primary/10"
-                                        : "text-text-secondary/40 cursor-not-allowed"
-                                    }`}
-                                    title="Edit attendance record"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleClearAttendance(student)}
-                                    disabled={!record}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                      record
-                                        ? "text-red-500 hover:bg-red/10 hover:text-red-600"
-                                        : "text-text-secondary/40 cursor-not-allowed"
-                                    }`}
-                                    title={
-                                      record
-                                        ? "Clear attendance record"
-                                        : "No attendance record to clear"
-                                    }
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    Clear
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {filteredStudents.length === 0 && (
-                          <tr>
-                            <td
-                              colSpan={10}
-                              className="text-center text-text-secondary py-6"
-                            >
-                              {scannedCourse && scannedSection
-                                ? `No students found in ${scannedCourse} \u2014 Section ${scannedSection}${attendanceSearch ? ` matching "${attendanceSearch}"` : ""}`
-                                : `No students match "${attendanceSearch}"`}
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <Pagination
-                  page={currentAttendancePage}
-                  totalPages={attendanceTotalPages}
-                  totalItems={filteredStudents.length}
-                  startIndex={attendancePageStartIndex}
-                  endIndex={attendancePageStartIndex + paginatedStudents.length}
-                  onPrev={() =>
-                    setAttendancePage((page) => Math.max(1, page - 1))
-                  }
-                  onNext={() =>
-                    setAttendancePage((page) =>
-                      Math.min(attendanceTotalPages, page + 1),
-                    )
-                  }
-                  onJump={setAttendancePage}
-                />
-              </>
-            )}
-
-            {!selectedEventForAttendance && (
-              <SectionEmptyState
-                message="Select an event to track attendance"
-                icon={Calendar}
-              />
-            )}
-
-            {/* Event Attendance Analysis */}
-            <div className="mt-6 border-t border-white/50 pt-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Layers className="w-5 h-5 text-red" />
-                </div>
-                <div>
-                  <h3 className="font-display font-semibold text-lg text-dark">
-                    Event Attendance Analysis
-                  </h3>
-                  <p className="text-xs text-text-secondary">
-                    K-Means attendance comparison using live registered-student
-                    and attendance records for every event.
-                  </p>
-                </div>
-              </div>
-
-              <AttendanceAnalysisChart data={attendanceAnalysisData} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Edit Attendance Modal */}
-      <Dialog
-        open={editingAttendance != null}
-        onOpenChange={(open) => {
-          if (!open) closeAttendanceEditModal();
-        }}
-      >
-        <DialogContent className="glass-card-strong max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              {editingAttendance?.record ? "Edit Attendance" : "Set Attendance"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            <p className="text-sm text-text-secondary">
-              <span className="font-semibold text-dark">
-                {editingAttendance?.student.name}
-              </span>{" "}
-              — {editingAttendance?.record?.eventName ?? selectedAttendanceEvent?.name ?? "—"}
-            </p>
-
-            <div>
-              <label className="block text-sm font-medium text-dark mb-1">
-                Status
-              </label>
-              <select
-                value={attendanceEditForm.status}
-                onChange={(e) =>
-                  setAttendanceEditForm({
-                    ...attendanceEditForm,
-                    status: e.target.value as "present" | "absent" | "excuse",
-                  })
                 }
-                className="glass-input w-full px-4 py-2"
-                disabled={savingAttendanceEdit}
-              >
-                <option value="present">Present</option>
-                <option value="absent">Absent</option>
-                <option value="excuse">Excused</option>
-              </select>
-            </div>
+                emptyText={
+                  scanFilter
+                    ? `No students found in ${scanFilter.program} — Section ${scanFilter.section}${query ? ` matching "${query}"` : ""}.`
+                    : query
+                      ? `No students match "${query}".`
+                      : "No students match the current filter."
+                }
+                onEdit={openEdit}
+                onRecordNow={(student, mode) => void recordNow(student, mode)}
+                onClear={(student, record) => setClearTarget({ id: record.id, name: student.name, sessionLabel: EVENT_SESSION_LABELS[record.session] ?? "Whole Day" })}
+              />
+            </>
+          )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-dark mb-1">
-                  Time In
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={attendanceEditForm.timeInHour}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeInHour: e.target.value.replace(/\D/g, ""),
-                      })
-                    }
-                    className="glass-input w-12 px-1 py-2 text-center"
-                    placeholder="3"
-                    title="Hour (1-12)"
-                    disabled={savingAttendanceEdit}
-                  />
-                  <span className="text-text-secondary font-medium">:</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={attendanceEditForm.timeInMinute}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeInMinute: e.target.value.replace(/\D/g, ""),
-                      })
-                    }
-                    className="glass-input w-12 px-1 py-2 text-center"
-                    placeholder="37"
-                    title="Minutes (00-59)"
-                    disabled={savingAttendanceEdit}
-                  />
-                  <select
-                    value={attendanceEditForm.timeInPeriod}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeInPeriod: e.target.value as "AM" | "PM",
-                      })
-                    }
-                    className="glass-input flex-1 px-1 py-2"
-                    title="AM or PM"
-                    disabled={savingAttendanceEdit}
-                  >
-                    <option value="AM">AM</option>
-                    <option value="PM">PM</option>
-                  </select>
-                </div>
+          {/* Analysis */}
+          <section className="card p-5 sm:p-6">
+            <div className="mb-5 flex items-start gap-3">
+              <div className="icon-tile">
+                <BarChart3 className="h-5 w-5" />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-dark mb-1">
-                  Time Out
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={attendanceEditForm.timeOutHour}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeOutHour: e.target.value.replace(/\D/g, ""),
-                      })
-                    }
-                    className="glass-input w-12 px-1 py-2 text-center"
-                    placeholder="9"
-                    title="Hour (1-12)"
-                    disabled={savingAttendanceEdit}
-                  />
-                  <span className="text-text-secondary font-medium">:</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={attendanceEditForm.timeOutMinute}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeOutMinute: e.target.value.replace(/\D/g, ""),
-                      })
-                    }
-                    className="glass-input w-12 px-1 py-2 text-center"
-                    placeholder="46"
-                    title="Minutes (00-59)"
-                    disabled={savingAttendanceEdit}
-                  />
-                  <select
-                    value={attendanceEditForm.timeOutPeriod}
-                    onChange={(e) =>
-                      setAttendanceEditForm({
-                        ...attendanceEditForm,
-                        timeOutPeriod: e.target.value as "AM" | "PM",
-                      })
-                    }
-                    className="glass-input flex-1 px-1 py-2"
-                    title="AM or PM"
-                    disabled={savingAttendanceEdit}
-                  >
-                    <option value="AM">AM</option>
-                    <option value="PM">PM</option>
-                  </select>
-                </div>
+                <h2 className="text-lg">Event attendance analysis</h2>
+                <p className="text-sm text-muted">Students tracked vs. students who attended (present or excused), per event.</p>
               </div>
             </div>
-            <p className="text-xs text-text-secondary">
-              Type Hour (1-12) and Minutes (00-59), then choose AM or PM.
-              Leave both blank to clear.
-            </p>
+            <Suspense fallback={<Skeleton className="h-72 w-full" />}>
+              <AttendanceAnalysisChart events={attendanceEvents} students={eligibleStudents} records={records} />
+            </Suspense>
+          </section>
+        </>
+      )}
 
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={closeAttendanceEditModal}
-                className="flex-1 glass-button px-4 py-2.5"
-                disabled={savingAttendanceEdit}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveAttendanceEdit}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
-                disabled={savingAttendanceEdit}
-              >
-                {savingAttendanceEdit ? (
-                  <>
-                    <Skeleton className="h-4 w-4 rounded-full" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Save
-                  </>
-                )}
-              </button>
+      <Modal
+        open={!!editing}
+        onClose={() => !savingEdit && setEditing(null)}
+        title={editing?.record ? "Edit attendance" : "Set attendance"}
+        size="lg"
+        description={
+          <>
+            <b className="text-ink">{editing?.student.name}</b> — {editing?.record?.eventName ?? event?.name ?? "—"}
+          </>
+        }
+        icon={<Pencil className="h-5 w-5 text-brand-500" />}
+        footer={
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setEditing(null)} disabled={savingEdit}>
+              Cancel
+            </button>
+            <button type="submit" form="attendance-edit" className="btn btn-primary" disabled={savingEdit}>
+              {savingEdit ? "Saving…" : "Save"}
+            </button>
+          </>
+        }
+      >
+        {editing && (
+          <form id="attendance-edit" onSubmit={saveEdit} className="space-y-5">
+            <div>
+              <p className="label">Status</p>
+              <Segmented
+                label="Status"
+                value={editing.form.status}
+                onChange={(status) => setForm({ status })}
+                options={STATUSES.map((s) => ({ value: s, label: STATUS[s].label, icon: STATUS[s].icon }))}
+                disabled={savingEdit}
+              />
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(["timeIn", "timeOut"] as const).map((field) => (
+                <TimeFields key={field} label={MODE_LABEL[field]} value={editing.form[field]} onChange={(value) => setForm({ [field]: value })} disabled={savingEdit} />
+              ))}
+            </div>
+            <p className="text-xs text-muted">Type Hour (1-12) and Minutes (00-59), then choose AM or PM. Leave both blank to clear.</p>
+          </form>
+        )}
+      </Modal>
 
       <ConfirmDialog
-        open={showAttendanceClearConfirm && attendanceToClear != null}
-        onClose={() => {
-          setShowAttendanceClearConfirm(false);
-          setAttendanceToClear(null);
-        }}
-        onConfirm={confirmClearAttendance}
-        title="Clear Attendance?"
-        confirmLabel="Clear Attendance"
-        warningText="This will permanently remove the attendance record. The student will become unrecorded and can be marked again afterward."
-      >
-        <p className="text-sm text-text-secondary leading-relaxed">
-          Are you sure you want to clear{" "}
-          <span className="font-semibold text-dark">
-            {attendanceToClear?.studentName ?? ""}
-          </span>
-          's{" "}
-          <span className="font-semibold text-dark">
-            {attendanceToClear?.sessionLabel ?? "Whole Day"}
-          </span>{" "}
-          attendance?
-        </p>
-      </ConfirmDialog>
-    </section>
+        open={!!clearTarget}
+        onClose={() => setClearTarget(null)}
+        onConfirm={confirmClear}
+        loading={clearing}
+        title="Clear attendance?"
+        confirmLabel="Clear attendance"
+        description={
+          <>
+            Clear <b className="text-ink">{clearTarget?.name}</b>'s <b className="text-ink">{clearTarget?.sessionLabel}</b> attendance? The record is
+            permanently removed and the student can be marked again afterward.
+          </>
+        }
+      />
+    </Page>
   );
 }

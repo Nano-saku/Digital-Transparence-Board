@@ -1,991 +1,472 @@
-﻿import { useState, useEffect, useMemo, useCallback } from "react";
-import {
-  FileText,
-  Download,
-  Users,
-  CheckCircle,
-  XCircle,
-  Filter,
-} from "lucide-react";
-import {
-  eventsService,
-  studentsService,
-  attendanceService,
-  contributionsService,
-  lscOfficersService,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import type {
-  Event,
-  Student,
-  AttendanceRecord,
-  ContributionRecord,
-} from "@/types";
-import {
-  formatPeso,
-  formatTime12,
-  getOrdinalSuffix,
-} from "@/lib/format";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { CheckCircle, ClipboardCheck, Download, Filter, Receipt, Users, Wallet, XCircle, type LucideIcon } from "lucide-react";
+import type { AttendanceRecord, ContributionRecord, Student } from "@/types";
+import { attendanceService, contributionsService, eventsService, lscOfficersService, studentsService } from "@/services/db";
+import { useLiveData } from "@/hooks/useLiveData";
+import { usePagination } from "@/hooks/usePagination";
+import { formatPeso, formatTime12, getOrdinalSuffix } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
-import { downloadBlob, blobToDataUri } from "@/lib/receipts";
-import SectionLoader from "@/components/SectionLoader";
-import Skeleton from "@/components/Skeleton";
-import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionLayout from "@/components/common/SectionLayout";
-import Pagination from "@/components/common/Pagination";
-import SummaryCard from "@/components/common/SummaryCard";
-import { toast } from "sonner";
+import { downloadReport, printTable, type Column, type Tone } from "@/lib/printReport";
+import DataTable, { type DataColumn } from "@/components/DataTable";
+import Page from "@/components/ui/Page";
+import Field from "@/components/ui/Field";
+import StatCard from "@/components/ui/StatCard";
+import EmptyState from "@/components/ui/EmptyState";
+import Pagination from "@/components/ui/Pagination";
+import { LoadingCard } from "@/components/ui/Skeleton";
 
-interface ReportManagementSectionProps {
-  onBack: () => void;
-}
+type Status = "Present" | "Excused" | "Absent";
+type ReportType = "attendance" | "contribution";
+type PayStatus = "paid" | "partial" | "unpaid";
 
-interface ReportRow {
+interface ClassRow {
+  key: string;
   studentName: string;
   yearLevel: number;
   course: string;
   section: string;
-  status: "Present" | "Absent" | "Excused";
   eventName: string;
+}
+interface AttendanceRow extends ClassRow {
+  status: Status;
   timeIn: string;
   timeOut: string;
 }
-
-type ContributionReportStatus = "" | "unpaid" | "partial" | "paid";
-type ReportType = "attendance" | "contribution";
-const CONTRIBUTION_REPORT_PAGE_SIZE = 30;
-
-interface ContributionReportRow {
-  studentName: string;
-  studentId: string;
-  eventId: string;
-  yearLevel: number;
-  course: string;
-  section: string;
-  eventName: string;
-  requiredAmount: number;
-  amountPaid: number;
-  remainingBalance: number;
-  status: "Unpaid" | "Partial Payment" | "Fully Paid";
-  statusValue: Exclude<ContributionReportStatus, "">;
+interface ContributionRow extends ClassRow, Pick<ContributionRecord, "eventId" | "requiredAmount" | "amountPaid" | "remainingBalance"> {
+  status: PayStatus;
 }
 
-export default function ReportManagementSection({
-  onBack,
-}: ReportManagementSectionProps) {
-  const [loading, setLoading] = useState(true);
+const REPORT_TYPES: Record<ReportType, { label: string; icon: LucideIcon }> = {
+  attendance: { label: "Attendance", icon: ClipboardCheck },
+  contribution: { label: "Contributions", icon: Wallet },
+};
+const PAY_STATUS: Record<PayStatus, { label: string; tone: Tone }> = {
+  paid: { label: "Fully Paid", tone: "success" },
+  partial: { label: "Partial Payment", tone: "warning" },
+  unpaid: { label: "Unpaid", tone: "danger" },
+};
+// Pie colours: brand-blue ramp (dark → light) so the slices stay distinct in both themes.
+const STATUS: Record<Status, { color: string; tone: Tone }> = {
+  Present: { color: "#007BFF", tone: "success" },
+  Excused: { color: "#70B8FF", tone: "accent" },
+  Absent: { color: "#B0E0E6", tone: "danger" },
+};
+const STATUSES = Object.keys(STATUS) as Status[];
+const CHIP: Record<Tone, string> = { brand: "chip-brand", accent: "chip-brand", success: "chip-success", warning: "chip-warning", danger: "chip-danger" };
+// Best record per student wins: present > excused > absent.
+const STATUS_RANK: Record<AttendanceRecord["status"], number> = { present: 2, excuse: 1, absent: 0 };
+const CONTRIBUTION_PAGE_SIZE = 30;
+const NONE: never[] = [];
+
+const ord = (n: number) => `${n}${getOrdinalSuffix(n)}`;
+const slug = (name: string) => name.replace(/\s+/g, "-").toLowerCase();
+const uniqueSorted = <T,>(values: T[]) => [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+const payStatusOf = (r: Pick<ContributionRecord, "amountPaid" | "remainingBalance">) =>
+  (Object.keys(PAY_STATUS) as PayStatus[]).find((s) => PAY_STATUS[s].label === contributionStatus(r).label) ?? "unpaid";
+
+// Shared by the on-screen tables and the printable reports.
+const CLASS_COLUMNS: Column<ClassRow>[] = [
+  { label: "Student", value: (r) => r.studentName },
+  { label: "Year", align: "center", value: (r) => ord(r.yearLevel) },
+  { label: "Course", align: "center", value: (r) => r.course },
+  { label: "Section", align: "center", value: (r) => r.section },
+];
+const EVENT_COLUMN: Column<ClassRow> = { label: "Event", value: (r) => r.eventName };
+const STATUS_COLUMN: Column<AttendanceRow> = { label: "Status", align: "center", value: (r) => r.status, pill: (r) => STATUS[r.status].tone };
+const TIME_COLUMNS: Column<AttendanceRow>[] = [
+  { label: "Time in", align: "center", value: (r) => r.timeIn },
+  { label: "Time out", align: "center", value: (r) => r.timeOut },
+];
+const ATTENDANCE_COLUMNS: Column<AttendanceRow>[] = [...CLASS_COLUMNS, STATUS_COLUMN, ...TIME_COLUMNS];
+const ATTENDANCE_PRINT_COLUMNS: Column<AttendanceRow>[] = [...CLASS_COLUMNS, STATUS_COLUMN, EVENT_COLUMN, ...TIME_COLUMNS];
+const CONTRIBUTION_COLUMNS: Column<ContributionRow>[] = [
+  ...CLASS_COLUMNS,
+  EVENT_COLUMN,
+  { label: "Required", align: "right", value: (r) => formatPeso(r.requiredAmount) },
+  { label: "Paid", align: "right", value: (r) => formatPeso(r.amountPaid) },
+  { label: "Balance", align: "right", value: (r) => formatPeso(r.remainingBalance) },
+  { label: "Payment status", align: "center", value: (r) => PAY_STATUS[r.status].label, pill: (r) => PAY_STATUS[r.status].tone },
+];
+
+export default function ReportManagementSection({ onBack }: { onBack: () => void }) {
   const [generating, setGenerating] = useState(false);
-
-  const [events, setEvents] = useState<Event[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [attendanceRecords, setAttendanceRecords] = useState<
-    AttendanceRecord[]
-  >([]);
-  const [contributionRecords, setContributionRecords] = useState<
-    ContributionRecord[]
-  >([]);
-  const [contributionLoading, setContributionLoading] = useState(true);
-  const [officerStudentIds, setOfficerStudentIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-
-  // Filters
   const [reportType, setReportType] = useState<ReportType>("attendance");
-  const [selectedEventId, setSelectedEventId] = useState("");
-  const [selectedYear, setSelectedYear] = useState("");
-  const [selectedCourse, setSelectedCourse] = useState("");
-  const [selectedSection, setSelectedSection] = useState("");
-  const [selectedContributionStatus, setSelectedContributionStatus] =
-    useState<ContributionReportStatus>("");
-  const [contributionReportPage, setContributionReportPage] = useState(1);
+  const [eventId, setEventId] = useState("");
+  const [year, setYear] = useState("");
+  const [course, setCourse] = useState("");
+  const [section, setSection] = useState("");
+  const [payStatus, setPayStatus] = useState<PayStatus | "">("");
 
-  // Load data
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [eventsData, studentsData, attendanceData, officersData] = await Promise.all([
-        eventsService.getAll(),
-        studentsService.getAll(),
-        attendanceService.getAll(),
-        lscOfficersService.getAll(),
-      ]);
-      setEvents(eventsData);
-      setStudents(studentsData);
-      setAttendanceRecords(attendanceData);
-      setOfficerStudentIds(activeLscOfficerStudentIds(studentsData, officersData));
-    } catch (error) {
-      console.error("Error loading report data:", error);
-      toast.error("Failed to load data for reports");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Keep the Attendance Report in sync with Attendance Tracking by subscribing
-  // to realtime changes on the same source tables. Any attendance write
-  // (QR scan, manual edit, Automatic Absent) triggers a fresh fetch so the
-  // report always reflects the latest saved database values.
-  // useRealtimeSync adds reconnection recovery to prevent missed updates.
-  useRealtimeSync({
-    tables: ["attendance", "events", "students", "lsc_officers"],
-    onChange: () => loadData(),
-    channelPrefix: "report-management",
+  // Every attendance or contribution write (QR scan, manual edit, automatic
+  // absent, payment) refetches, so the reports always match their source pages.
+  const { data, loading, failed } = useLiveData({
+    sources: {
+      events: () => eventsService.getAll(),
+      students: () => studentsService.getAll(),
+      records: () => attendanceService.getAll(),
+      officers: () => lscOfficersService.getAll(),
+    },
+    // Optional so a contribution-data issue can't break the attendance report.
+    optional: { contributions: () => contributionsService.getAll() },
+    tables: ["attendance", "events", "students", "lsc_officers", "contributions"],
+    channel: "report-management",
+    onError: () => toast.error("Failed to load data for reports"),
   });
-
-  // Contribution report data is loaded independently so a contribution-data
-  // issue cannot prevent the existing attendance report from rendering.
-  const loadContributionData = useCallback(async () => {
-    try {
-      setContributionLoading(true);
-      const data = await contributionsService.getAll();
-      setContributionRecords(data);
-    } catch (error) {
-      console.error("Error loading contribution report data:", error);
-      toast.error("Failed to load contribution report data");
-    } finally {
-      setContributionLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    loadContributionData();
-  }, [loadContributionData]);
+    if (failed.includes("contributions")) toast.error("Failed to load contribution report data");
+  }, [failed]);
 
-  // Derive unique filter options from student data
-  const yearOptions = useMemo(() => {
-    return [...new Set(students.map((s) => s.yearLevel))].sort((a, b) => a - b);
-  }, [students]);
+  const { events = NONE, students = NONE, records = NONE, officers = NONE, contributions = NONE } = data ?? {};
+  // Appointed LSC officers are exempt from attendance and contributions.
+  const officerIds = useMemo(() => activeLscOfficerStudentIds(students, officers), [students, officers]);
 
-  const courseOptions = useMemo(() => {
-    let filtered = students;
-    if (selectedYear) {
-      filtered = filtered.filter((s) => s.yearLevel === Number(selectedYear));
-    }
-    return [...new Set(filtered.map((s) => s.program))].sort();
-  }, [students, selectedYear]);
+  // Cascading options: course depends on year, section on year + course.
+  const inYear = students.filter((s) => s.yearLevel === Number(year));
+  const yearOptions = uniqueSorted(students.map((s) => s.yearLevel));
+  const courseOptions = uniqueSorted(inYear.map((s) => s.program));
+  const sectionOptions = uniqueSorted(inYear.filter((s) => s.program === course).map((s) => s.section));
 
-  const sectionOptions = useMemo(() => {
-    let filtered = students;
-    if (selectedYear) {
-      filtered = filtered.filter((s) => s.yearLevel === Number(selectedYear));
-    }
-    if (selectedCourse) {
-      filtered = filtered.filter((s) => s.program === selectedCourse);
-    }
-    if (!selectedYear){
-      setSelectedCourse("");
-    }
-    if (!selectedCourse){
-      setSelectedSection("");
-    }
-    return [...new Set(filtered.map((s) => s.section))].sort();
-  }, [students, selectedYear, selectedCourse]);
+  const event = events.find((e) => e.id === eventId) ?? null;
+  const complete = !!event && !!year && !!course && !!section;
+  const classLabel = `${ord(Number(year))} Year`;
 
-  // Reset dependent filters when parent changes
-  useEffect(() => {
-    if (selectedCourse && !courseOptions.includes(selectedCourse)) {
-      setSelectedCourse("");
-    }
-  }, [courseOptions, selectedCourse]);
-
-  useEffect(() => {
-    if (selectedSection && !sectionOptions.includes(selectedSection)) {
-      setSelectedSection("");
-    }
-  }, [sectionOptions, selectedSection]);
-
-  const selectedEvent = events.find((e) => e.id === selectedEventId) ?? null;
-  const filtersComplete =
-    !!selectedEventId && !!selectedYear && !!selectedCourse && !!selectedSection;
-
-  // Build report rows
-  const reportRows: ReportRow[] = useMemo(() => {
-    if (!filtersComplete || !selectedEvent) return [];
-
-    const matchedStudents = students.filter(
-      (s) =>
-        !officerStudentIds.has(s.id) &&
-        s.yearLevel === Number(selectedYear) &&
-        s.program === selectedCourse &&
-        s.section === selectedSection,
-    );
-
-    // Filter attendance records by both eventId and date so we always read
-    // the same data slice as Attendance Tracking. Without the date filter,
-    // stale rows from a previous event date (e.g. before the date was
-    // corrected) can shadow the current records and make the report
-    // inconsistent with the attendance list.
-    const eventRecords = attendanceRecords.filter(
-      (r) =>
-        r.eventId === selectedEventId &&
-        (!selectedEvent.date || r.date === selectedEvent.date),
-    );
-
-    // studentId -> best record (prefer Present over Excused over Absent)
-    const studentRecordMap = new Map<string, AttendanceRecord>();
-    for (const record of eventRecords) {
-      const existing = studentRecordMap.get(record.studentId);
-      if (!existing) {
-        studentRecordMap.set(record.studentId, record);
-      } else {
-        const priorityOf = (s: string) =>
-          s === "present" ? 3 : s === "excuse" ? 2 : 0;
-        if (priorityOf(record.status) > priorityOf(existing.status)) {
-          studentRecordMap.set(record.studentId, record);
-        } else if (
-          priorityOf(record.status) === priorityOf(existing.status) &&
-          record.timeIn &&
-          !existing.timeIn
-        ) {
-          studentRecordMap.set(record.studentId, record);
-        }
-      }
+  const rows = useMemo<AttendanceRow[]>(() => {
+    if (!complete || !event) return [];
+    // Match Attendance Tracking's slice (event + date) so stale rows from a
+    // corrected event date can't shadow the current ones.
+    const best = new Map<string, AttendanceRecord>();
+    for (const r of records) {
+      if (r.eventId !== event.id || (event.date && r.date !== event.date)) continue;
+      const cur = best.get(r.studentId);
+      const diff = cur ? STATUS_RANK[r.status] - STATUS_RANK[cur.status] : 1;
+      if (diff > 0 || (diff === 0 && r.timeIn && !cur?.timeIn)) best.set(r.studentId, r);
     }
 
-    return matchedStudents
-      .map((student): ReportRow => {
-        const record = studentRecordMap.get(student.id);
-        if (!record || record.status === "absent") {
-          return {
-            studentName: student.name,
-            yearLevel: student.yearLevel,
-            course: student.program,
-            section: student.section,
-            status: "Absent",
-            eventName: selectedEvent.name,
-            timeIn: "—",
-            timeOut: "—",
-          };
-        }
-        // Use the stored status as the authoritative value. QR scans always
-        // write Present; manual edits may select Present or Excuse.
-        const displayStatus: "Present" | "Excused" =
-          record.status === "excuse" ? "Excused" : "Present";
-
+    return students
+      .filter((s) => !officerIds.has(s.id) && s.yearLevel === Number(year) && s.program === course && s.section === section)
+      .map((s): AttendanceRow => {
+        const r = best.get(s.id);
+        const base = { key: s.id, studentName: s.name, yearLevel: s.yearLevel, course: s.program, section: s.section, eventName: event.name };
+        if (!r || r.status === "absent") return { ...base, status: "Absent", timeIn: "—", timeOut: "—" };
+        // The stored status is authoritative: QR scans write Present, manual edits Present or Excuse.
         return {
-          studentName: student.name,
-          yearLevel: student.yearLevel,
-          course: student.program,
-          section: student.section,
-          status: displayStatus,
-          eventName: selectedEvent.name,
-          timeIn: record.timeIn ? formatTime12(record.timeIn) : "—",
-          timeOut: record.timeOut ? formatTime12(record.timeOut) : "—",
+          ...base,
+          status: r.status === "excuse" ? "Excused" : "Present",
+          timeIn: r.timeIn ? formatTime12(r.timeIn) : "—",
+          timeOut: r.timeOut ? formatTime12(r.timeOut) : "—",
         };
       })
       .sort((a, b) => a.studentName.localeCompare(b.studentName));
-  }, [
-    filtersComplete,
-    selectedEvent,
-    students,
-    selectedYear,
-    selectedCourse,
-    selectedSection,
-    attendanceRecords,
-    selectedEventId,
-    officerStudentIds,
-  ]);
+  }, [complete, event, records, students, officerIds, year, course, section]);
 
-  const totalStudents = reportRows.length;
-  const totalPresent = reportRows.filter((r) => r.status === "Present").length;
-  const totalAbsent = reportRows.filter((r) => r.status === "Absent").length;
-  const attendancePercentage =
-    totalStudents > 0
-      ? ((totalPresent / totalStudents) * 100).toFixed(1)
-      : "0.0";
+  const contributionRows = useMemo<ContributionRow[]>(() => {
+    const studentById = new Map(students.map((s) => [s.id, s]));
+    const recorded = new Set(contributions.map((r) => `${r.studentId}:${r.eventId}`));
+    const toRow = (s: Student, r: Pick<ContributionRecord, "eventId" | "eventName" | "requiredAmount" | "amountPaid" | "remainingBalance">): ContributionRow => ({
+      ...r,
+      key: `${s.id}:${r.eventId}`,
+      studentName: s.name,
+      yearLevel: s.yearLevel,
+      course: s.program,
+      section: s.section,
+      status: payStatusOf(r),
+    });
 
-  const contributionEvents = useMemo(
-    () =>
-      events.filter(
-        (event) => event.allocationAmount > 0 && !event.isNoContribution,
-      ),
-    [events],
-  );
-
-  const contributionReportRows = useMemo<ContributionReportRow[]>(() => {
-    const studentById = new Map(students.map((student) => [student.id, student]));
-    const contributionByStudentAndEvent = new Map(
-      contributionRecords.map((record) => [
-        `${record.studentId}:${record.eventId}`,
-        record,
-      ]),
-    );
-    const rows: ContributionReportRow[] = [];
-
-    // Include every persisted record first, including records for events that
-    // are no longer in the event catalog.
-    for (const record of contributionRecords) {
-      const student = studentById.get(record.studentId);
-      if (!student || officerStudentIds.has(student.id) || record.requiredAmount <= 0) continue;
-
-      const status = contributionStatus(record);
-      rows.push({
-        studentName: student.name,
-        studentId: student.studentId,
-        eventId: record.eventId,
-        yearLevel: student.yearLevel,
-        course: student.program,
-        section: student.section,
-        eventName: record.eventName,
-        requiredAmount: record.requiredAmount,
-        amountPaid: record.amountPaid,
-        remainingBalance: record.remainingBalance,
-        status: status.label as ContributionReportRow["status"],
-        statusValue:
-          status.label === "Unpaid"
-            ? "unpaid"
-            : status.label === "Partial Payment"
-              ? "partial"
-              : "paid",
-      });
-    }
-
-    // A missing contribution row represents no payment yet. Add those rows so
-    // the Unpaid filter reports students who have not made any payment.
+    // Every persisted record, including ones for events no longer in the catalog…
+    const all = contributions.flatMap((r) => {
+      const student = studentById.get(r.studentId);
+      return student && !officerIds.has(student.id) && r.requiredAmount > 0 ? [toRow(student, r)] : [];
+    });
+    // …plus a synthetic unpaid row wherever no payment exists yet, so "Unpaid" lists everyone who owes.
+    const contributionEvents = events.filter((e) => e.allocationAmount > 0 && !e.isNoContribution);
     for (const student of students) {
-      if (officerStudentIds.has(student.id)) continue;
-      for (const event of contributionEvents) {
-        const key = `${student.id}:${event.id}`;
-        if (contributionByStudentAndEvent.has(key)) continue;
-
-        rows.push({
-          studentName: student.name,
-          studentId: student.studentId,
-          eventId: event.id,
-          yearLevel: student.yearLevel,
-          course: student.program,
-          section: student.section,
-          eventName: event.name,
-          requiredAmount: event.allocationAmount,
-          amountPaid: 0,
-          remainingBalance: event.allocationAmount,
-          status: "Unpaid",
-          statusValue: "unpaid",
-        });
+      if (officerIds.has(student.id)) continue;
+      for (const e of contributionEvents) {
+        if (recorded.has(`${student.id}:${e.id}`)) continue;
+        all.push(toRow(student, { eventId: e.id, eventName: e.name, requiredAmount: e.allocationAmount, amountPaid: 0, remainingBalance: e.allocationAmount }));
       }
     }
 
-    return rows
+    return all
       .filter(
-        (row) =>
-          (!selectedEventId || row.eventId === selectedEventId) &&
-          (!selectedYear || row.yearLevel === Number(selectedYear)) &&
-          (!selectedCourse || row.course === selectedCourse) &&
-          (!selectedSection || row.section === selectedSection) &&
-          (!selectedContributionStatus ||
-            row.statusValue === selectedContributionStatus),
+        (r) =>
+          (!eventId || r.eventId === eventId) &&
+          (!year || r.yearLevel === Number(year)) &&
+          (!course || r.course === course) &&
+          (!section || r.section === section) &&
+          (!payStatus || r.status === payStatus),
       )
       .sort((a, b) => a.studentName.localeCompare(b.studentName));
-  }, [
-    contributionEvents,
-    contributionRecords,
-    selectedContributionStatus,
-    selectedCourse,
-    selectedEventId,
-    selectedSection,
-    selectedYear,
-    students,
-    officerStudentIds,
-  ]);
+  }, [contributions, events, students, officerIds, eventId, year, course, section, payStatus]);
 
-  const contributionReportTotalPages = Math.max(
-    1,
-    Math.ceil(contributionReportRows.length / CONTRIBUTION_REPORT_PAGE_SIZE),
+  // The unfiltered list is paged; any class or status filter shows every match at once.
+  const { pageItems, pagination } = usePagination(contributionRows, CONTRIBUTION_PAGE_SIZE, [eventId, year, course, section, payStatus].join("|"));
+  const paginate = !(payStatus || course || section || year);
+
+  const counts: Record<Status, number> = { Present: 0, Excused: 0, Absent: 0 };
+  rows.forEach((r) => counts[r.status]++);
+  const total = rows.length;
+  const percent = total > 0 ? ((counts.Present / total) * 100).toFixed(1) : "0.0";
+  const share = (n: number) => (total ? `${Math.round((n / total) * 100)}% of class` : undefined);
+
+  const totals = contributionRows.reduce(
+    (t, r) => ({ required: t.required + r.requiredAmount, paid: t.paid + r.amountPaid, balance: t.balance + r.remainingBalance }),
+    { required: 0, paid: 0, balance: 0 },
   );
-  const currentContributionReportPage = Math.min(
-    contributionReportPage,
-    contributionReportTotalPages,
-  );
-  const contributionReportPageStartIndex =
-    (currentContributionReportPage - 1) * CONTRIBUTION_REPORT_PAGE_SIZE;
-  const paginatedContributionReportRows = useMemo(
-    () =>
-      contributionReportRows.slice(
-        contributionReportPageStartIndex,
-        contributionReportPageStartIndex + CONTRIBUTION_REPORT_PAGE_SIZE,
-      ),
-    [contributionReportPageStartIndex, contributionReportRows],
-  );
-  const shouldPaginateContributionReport = !(
-    selectedContributionStatus ||
-    selectedCourse ||
-    selectedSection ||
-    selectedYear
-  );
-  const visibleContributionReportRows = shouldPaginateContributionReport
-    ? paginatedContributionReportRows
-    : contributionReportRows;
 
-  useEffect(() => {
-    setContributionReportPage(1);
-  }, [
-    selectedContributionStatus,
-    selectedCourse,
-    selectedEventId,
-    selectedSection,
-    selectedYear,
-  ]);
+  const isAttendance = reportType === "attendance";
+  const canDownload = isAttendance ? complete && total > 0 : contributionRows.length > 0;
 
-  useEffect(() => {
-    setContributionReportPage((page) =>
-      Math.min(page, contributionReportTotalPages),
-    );
-  }, [contributionReportTotalPages]);
-
-  const activeReportLoading =
-    reportType === "attendance" ? loading : contributionLoading;
-
-  // Self-contained printable HTML generation.
-  const generatePrintableReport = async () => {
-    if (!selectedEvent) return;
+  const download = async () => {
+    setGenerating(true);
     try {
-      setGenerating(true);
-
-      const [lscLogoResp, dsscLogoResp] = await Promise.all([
-        fetch("/lsc-logo.jpg"),
-        fetch("/DSSC-logo.png"),
-      ]);
-      const [lscBlob, dsscBlob] = await Promise.all([
-        lscLogoResp.blob(),
-        dsscLogoResp.blob(),
-      ]);
-      const [lscDataUri, dsscDataUri] = await Promise.all([
-        blobToDataUri(lscBlob),
-        blobToDataUri(dsscBlob),
-      ]);
-
-      const esc = (v: string) =>
-        String(v)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-
-      const yearLabel = `${selectedYear}${getOrdinalSuffix(Number(selectedYear))} Year`;
-
-      const tableRows = reportRows
-        .map(
-          (row, idx) =>
-            `<tr class="${idx % 2 === 0 ? "even" : "odd"}">
-              <td>${esc(row.studentName)}</td>
-              <td class="center">${row.yearLevel}${getOrdinalSuffix(row.yearLevel)}</td>
-              <td class="center">${esc(row.course)}</td>
-              <td class="center">${esc(row.section)}</td>
-              <td class="center"><span class="s-${row.status.toLowerCase()}">${row.status}</span></td>
-              <td>${esc(row.eventName)}</td>
-              <td class="center">${row.timeIn}</td>
-              <td class="center">${row.timeOut}</td>
-            </tr>`,
-        )
-        .join("");
-
-      const html = buildReportHtml({
-        lscDataUri,
-        dsscDataUri,
-        eventName: esc(selectedEvent.name),
-        yearLabel,
-        course: esc(selectedCourse),
-        section: esc(selectedSection),
-        totalStudents,
-        totalPresent,
-        totalAbsent,
-        attendancePercentage,
-        tableRows,
-      });
-
-      const safeName = selectedEvent.name.replace(/\s+/g, "-").toLowerCase();
-      const fileName = `attendance-report-${safeName}-${selectedYear}yr-${selectedCourse}-${selectedSection}.html`;
-      downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), fileName);
-      toast.success("Report downloaded.");
+      if (isAttendance) {
+        if (!event) return;
+        await downloadReport(`attendance-report-${slug(event.name)}-${year}yr-${course}-${section}.html`, {
+          title: "Student Attendance Report",
+          kind: "Attendance",
+          meta: [["Event", event.name], ["Year Level", classLabel], ["Course", course], ["Section", section]],
+          summary: [
+            { label: "Total Students", value: total },
+            { label: "Total Present", value: counts.Present, tone: "success" },
+            { label: "Total Excused", value: counts.Excused, tone: "accent" },
+            { label: "Total Absent", value: counts.Absent, tone: "danger" },
+            { label: "Attendance", value: `${percent}%`, tone: "brand" },
+          ],
+          tables: [printTable({ columns: ATTENDANCE_PRINT_COLUMNS, rows })],
+        });
+        toast.success("Report downloaded.");
+      } else {
+        await downloadReport(`contribution-report-${slug(event?.name ?? "all-events")}.html`, {
+          title: "Student Contribution Report",
+          kind: "Contribution",
+          meta: [
+            ["Event", event?.name ?? "All contribution events"],
+            ["Year Level", year ? classLabel : "All year levels"],
+            ["Course", course || "All courses"],
+            ["Section", section || "All sections"],
+            ["Payment Status", payStatus ? PAY_STATUS[payStatus].label : "All payment statuses"],
+          ],
+          tables: [printTable({ columns: CONTRIBUTION_COLUMNS, rows: contributionRows })],
+        });
+        toast.success("Contribution report downloaded. Open it in a browser and use Print → Save as PDF to export.");
+      }
     } catch (error) {
       console.error("Error generating report:", error);
-      toast.error("Failed to generate report");
+      toast.error(isAttendance ? "Failed to generate report" : "Failed to generate contribution report");
     } finally {
       setGenerating(false);
     }
   };
 
-  const generatePrintableContributionReport = async () => {
-    if (contributionReportRows.length === 0) return;
-    try {
-      setGenerating(true);
-
-      const [lscLogoResp, dsscLogoResp] = await Promise.all([
-        fetch("/lsc-logo.jpg"),
-        fetch("/DSSC-logo.png"),
-      ]);
-      const [lscBlob, dsscBlob] = await Promise.all([
-        lscLogoResp.blob(),
-        dsscLogoResp.blob(),
-      ]);
-      const [lscDataUri, dsscDataUri] = await Promise.all([
-        blobToDataUri(lscBlob),
-        blobToDataUri(dsscBlob),
-      ]);
-
-      const esc = (v: string) =>
-        String(v)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-
-      const tableRows = contributionReportRows
-        .map(
-          (row, idx) =>
-            `<tr class="${idx % 2 === 0 ? "even" : "odd"}">
-              <td>${esc(row.studentName)}</td>
-              <td class="center">${row.yearLevel}${getOrdinalSuffix(row.yearLevel)}</td>
-              <td class="center">${esc(row.course)}</td>
-              <td class="center">${esc(row.section)}</td>
-              <td>${esc(row.eventName)}</td>
-              <td class="amount">${formatPeso(row.requiredAmount)}</td>
-              <td class="amount">${formatPeso(row.amountPaid)}</td>
-              <td class="amount">${formatPeso(row.remainingBalance)}</td>
-              <td class="center"><span class="s-${row.statusValue}">${row.status}</span></td>
-            </tr>`,
-        )
-        .join("");
-
-      const html = buildContributionReportHtml({
-        lscDataUri,
-        dsscDataUri,
-        eventFilter: selectedEventId
-          ? selectedEvent?.name ?? "Selected event"
-          : "All contribution events",
-        yearFilter: selectedYear
-          ? `${selectedYear}${getOrdinalSuffix(Number(selectedYear))} Year`
-          : "All year levels",
-        courseFilter: selectedCourse || "All courses",
-        sectionFilter: selectedSection || "All sections",
-        statusFilter:
-          selectedContributionStatus === ""
-            ? "All payment statuses"
-            : selectedContributionStatus === "paid"
-              ? "Fully Paid"
-              : selectedContributionStatus === "partial"
-                ? "Partial Payment"
-                : "Unpaid",
-        tableRows,
-      });
-
-      const safeName = (selectedEvent?.name ?? "all-events")
-        .replace(/\s+/g, "-")
-        .toLowerCase();
-      downloadBlob(
-        new Blob([html], { type: "text/html;charset=utf-8" }),
-        `contribution-report-${safeName}.html`,
-      );
-      toast.success(
-        "Contribution report downloaded. Open it in a browser and use Print → Save as PDF to export.",
-      );
-    } catch (error) {
-      console.error("Error generating contribution report:", error);
-      toast.error("Failed to generate contribution report");
-    } finally {
-      setGenerating(false);
-    }
-  };
+  const pick = (attendance: string, contribution: string) => (isAttendance ? attendance : contribution);
+  const filters = [
+    { label: "Event", value: eventId, set: setEventId, placeholder: pick("Select event", "All events"), options: events.map((e) => [e.id, e.name]) },
+    {
+      label: "Year",
+      value: year,
+      set: (v: string) => (setYear(v), setCourse(""), setSection("")),
+      placeholder: pick("Select year", "All years"),
+      options: yearOptions.map((y) => [String(y), `${ord(y)} Year`]),
+    },
+    {
+      label: "Course",
+      value: course,
+      set: (v: string) => (setCourse(v), setSection("")),
+      placeholder: !year ? "Select year first" : pick("Select course", "All courses"),
+      options: courseOptions.map((c) => [c, c]),
+      disabled: !year,
+    },
+    {
+      label: "Section",
+      value: section,
+      set: setSection,
+      placeholder: !course ? "Select course first" : pick("Select section", "All sections"),
+      options: sectionOptions.map((s) => [s, s]),
+      disabled: !course,
+    },
+    ...(isAttendance
+      ? []
+      : [
+          {
+            label: "Payment status",
+            value: payStatus,
+            set: (v: string) => setPayStatus(v as PayStatus | ""),
+            placeholder: "All statuses",
+            options: Object.entries(PAY_STATUS).map(([value, { label }]) => [value, label]),
+          },
+        ]),
+  ];
 
   return (
-    <SectionLayout
-      title={reportType === "attendance" ? "Attendance Reports" : "Contribution Reports"}
-      subtitle={
-        reportType === "attendance"
-          ? "Generate official attendance reports with filters and printable download"
-          : "View student contribution records by payment status"
-      }
+    <Page
+      eyebrow="Reports"
+      title={pick("Attendance Reports", "Contribution Reports")}
+      subtitle={pick(
+        "Generate official attendance reports per event and class, ready to print.",
+        "Review student contribution records by payment status, ready to print.",
+      )}
       onBack={onBack}
+      actions={
+        !loading &&
+        canDownload && (
+          <button onClick={download} disabled={generating} className="btn btn-primary">
+            <Download className="h-4 w-4" />
+            {generating ? "Generating…" : "Download printable report"}
+          </button>
+        )
+      }
+      hero={
+        <div role="tablist" aria-label="Report type" className="glass inline-flex flex-wrap gap-1 rounded-full p-1">
+          {(Object.keys(REPORT_TYPES) as ReportType[]).map((key) => {
+            const { icon: Icon, label } = REPORT_TYPES[key];
+            const active = key === reportType;
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setReportType(key)}
+                className={`btn ${active ? "bg-white text-brand-700 shadow-soft" : "text-white/80 hover:bg-white/10 hover:text-white"}`}
+              >
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            );
+          })}
+        </div>
+      }
     >
-
-        {activeReportLoading && (
-          <SectionLoader
-            message={
-              reportType === "attendance"
-                ? "Loading report data..."
-                : "Loading contribution report..."
-            }
-          />
-        )}
-
-        {!activeReportLoading && (
-          <>
-            {/* Filters */}
-            <div className="glass-card p-5 lg:p-6 mb-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Filter className="w-4 h-4 text-red" />
-                </div>
-                <h3 className="font-display font-semibold text-lg text-dark">Report Filters</h3>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-dark mb-1.5">Report Type</label>
-                  <select
-                    value={reportType}
-                    onChange={(e) => setReportType(e.target.value as ReportType)}
-                    className="glass-input w-full px-4 py-2.5 text-sm"
-                  >
-                    <option value="attendance">Attendance Report</option>
-                    <option value="contribution">Contribution Report</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-dark mb-1.5">Event</label>
-                  <select value={selectedEventId} onChange={(e) => setSelectedEventId(e.target.value)} className="glass-input w-full px-4 py-2.5 text-sm">
-                    <option value="">Select event</option>
-                    {events.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-dark mb-1.5">Year</label>
-                  <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="glass-input w-full px-4 py-2.5 text-sm">
-                    <option value="">Select year</option>
-                    {yearOptions.map((year) => (<option key={year} value={year}>{year}{getOrdinalSuffix(year)} Year</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-dark mb-1.5">Course</label>
-                  <select value={selectedCourse} onChange={(e) => setSelectedCourse(e.target.value)} className="glass-input w-full px-4 py-2.5 text-sm" disabled={!selectedYear}>
-                    <option value="">{selectedYear ? "Select course" : "Select year first"}</option>
-                    {courseOptions.map((c) => (<option key={c} value={c}>{c}</option>))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-dark mb-1.5">Section</label>
-                  <select value={selectedSection} onChange={(e) => setSelectedSection(e.target.value)} className="glass-input w-full px-4 py-2.5 text-sm" disabled={!selectedCourse}>
-                    <option value="">{selectedCourse ? "Select section" : "Select course first"}</option>
-                    {sectionOptions.map((s) => (<option key={s} value={s}>{s}</option>))}
-                  </select>
-                </div>
-                {reportType === "contribution" && (
-                  <div>
-                    <label className="block text-sm font-medium text-dark mb-1.5">Payment Status</label>
-                    <select
-                      value={selectedContributionStatus}
-                      onChange={(e) =>
-                        setSelectedContributionStatus(
-                          e.target.value as ContributionReportStatus,
-                        )
-                      }
-                      className="glass-input w-full px-4 py-2.5 text-sm"
-                      disabled={contributionLoading}
-                    >
-                      <option value="">All statuses</option>
-                      <option value="paid">Fully Paid</option>
-                      <option value="partial">Partial Payment</option>
-                      <option value="unpaid">Unpaid</option>
-                    </select>
-                  </div>
-                )}
+      {loading ? (
+        <LoadingCard label={pick("Loading report data…", "Loading contribution report…")} />
+      ) : (
+        <>
+          <div className="card p-5 lg:p-6">
+            <div className="mb-4 flex items-center gap-3">
+              <span className="icon-tile"><Filter className="h-5 w-5" /></span>
+              <div>
+                <h2 className="font-bold text-ink">Report filters</h2>
+                <p className="text-xs text-muted">{pick("Pick an event and a class to build the report.", "Narrow the contribution records, or leave blank to see all.")}</p>
               </div>
             </div>
+            <div className={`grid gap-4 sm:grid-cols-2 ${isAttendance ? "lg:grid-cols-4" : "lg:grid-cols-5"}`}>
+              {filters.map((f) => (
+                <Field key={f.label} label={f.label}>
+                  <select className="input" value={f.value} onChange={(e) => f.set(e.target.value)} disabled={f.disabled}>
+                    <option value="">{f.placeholder}</option>
+                    {f.options.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </Field>
+              ))}
+            </div>
+          </div>
 
-            {reportType === "attendance" && filtersComplete && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">
-                <SummaryCard icon={Users} color="blue" value={totalStudents} label="Total Students" />
-                <SummaryCard icon={CheckCircle} color="green" value={totalPresent} label="Present" />
-                <SummaryCard icon={XCircle} color="red" value={totalAbsent} label="Absent" />
-                <div className="glass-card p-4 text-center col-span-2 sm:col-span-1">
-                  <div className="w-9 h-9 rounded-lg bg-royal-blue/10 flex items-center justify-center mx-auto mb-2">
-                    <FileText className="w-5 h-5 text-royal-blue" />
-                  </div>
-                  <p className="text-2xl font-bold text-royal-blue">{attendancePercentage}%</p>
-                  <p className="text-xs text-text-secondary uppercase tracking-wider">Attendance</p>
-                </div>
+          {!isAttendance ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <StatCard
+                  featured
+                  label="Records"
+                  value={contributionRows.length}
+                  icon={Receipt}
+                  hint={`${contributionRows.filter((r) => r.status === "paid").length} fully paid`}
+                />
+                <StatCard label="Required" value={formatPeso(totals.required)} icon={Wallet} />
+                <StatCard label="Paid" value={formatPeso(totals.paid)} icon={CheckCircle} tone="success" />
+                <StatCard label="Balance" value={formatPeso(totals.balance)} icon={XCircle} tone="danger" />
               </div>
-            )}
 
-            {reportType === "attendance" && filtersComplete && (
-              <div className="glass-card p-5 lg:p-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-red/10 flex items-center justify-center">
-                      <FileText className="w-4 h-4 text-red" />
-                    </div>
-                    <div>
-                      <h3 className="font-display font-semibold text-lg text-dark">Attendance Records</h3>
-                      <p className="text-xs text-text-secondary">
-                        {selectedEvent?.name} — {selectedYear}{getOrdinalSuffix(Number(selectedYear))} Year · {selectedCourse} · Section {selectedSection}
-                      </p>
-                    </div>
-                  </div>
-                  {reportRows.length > 0 && (
-                    <button
-                      onClick={generatePrintableReport}
-                      disabled={generating}
-                      className="btn-primary px-3.5 py-2 flex items-center gap-1.5 text-sm self-start"
-                    >
-                      {generating ? (
-                        <><Skeleton className="h-4 w-4 rounded-full" />Generating...</>
-                      ) : (
-                        <><Download className="w-4 h-4" />Download Printable Report</>
-                      )}
-                    </button>
-                  )}
-                </div>
-
-                {reportRows.length === 0 ? (
-                  <SectionEmptyState message="No students found for the selected filters." icon={Users} compact />
+              <TableCard title="Contribution records" subtitle="Contribution records matching the selected filters">
+                {contributionRows.length === 0 ? (
+                  <EmptyState icon={Users} title="No contribution records" description="No contribution records match the selected filters." />
                 ) : (
-                  <div className="overflow-x-auto -mx-5 lg:-mx-6 px-5 lg:px-6">
-                    <table className="glass-table w-full text-sm">
-                      <thead>
-                        <tr>
-                          <th className="text-left">Student</th>
-                          <th className="text-center">Year</th>
-                          <th className="text-center">Course</th>
-                          <th className="text-center">Section</th>
-                          <th className="text-center">Status</th>
-                          <th className="text-left">Event</th>
-                          <th className="text-center">Time In</th>
-                          <th className="text-center">Time Out</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reportRows.map((row, idx) => (
-                          <tr key={idx}>
-                            <td className="font-medium text-dark">{row.studentName}</td>
-                            <td className="text-center text-text-secondary">{row.yearLevel}{getOrdinalSuffix(row.yearLevel)}</td>
-                            <td className="text-center text-text-secondary">{row.course}</td>
-                            <td className="text-center text-text-secondary">{row.section}</td>
-                            <td className="text-center"><StatusBadge status={row.status} /></td>
-                            <td className="text-text-secondary">{row.eventName}</td>
-                            <td className="text-center text-text-secondary">{row.timeIn}</td>
-                            <td className="text-center text-text-secondary">{row.timeOut}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <ReportTable columns={CONTRIBUTION_COLUMNS} rows={paginate ? pageItems : contributionRows} />
                 )}
-              </div>
-            )}
-
-            {reportType === "contribution" && (
-              <div className="glass-card p-5 lg:p-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center">
-                      <FileText className="w-4 h-4 text-green-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-display font-semibold text-lg text-dark">
-                        Contribution Report
-                      </h3>
-                      <p className="text-xs text-text-secondary">
-                        Contribution records matching the selected filters
-                      </p>
+                {paginate && <Pagination {...pagination} />}
+              </TableCard>
+            </>
+          ) : !complete ? (
+            <div className="card">
+              <EmptyState icon={Filter} title="Choose your filters" description="Select an event, year, course and section above to generate an attendance report." />
+            </div>
+          ) : total === 0 ? (
+            <div className="card">
+              <EmptyState icon={Users} title="No students found" description="No students match the selected year, course and section." />
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="card flex items-center gap-5 p-5">
+                  <div className="relative h-36 w-36 shrink-0">
+                    <ResponsiveContainer>
+                      <PieChart>
+                        <Pie data={STATUSES.map((s) => ({ name: s, value: counts[s] }))} dataKey="value" innerRadius="70%" outerRadius="100%" paddingAngle={2} stroke="none">
+                          {STATUSES.map((s) => <Cell key={s} fill={STATUS[s].color} />)}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                      <div>
+                        <p className="text-xl font-extrabold text-ink">{percent}%</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">Present</p>
+                      </div>
                     </div>
                   </div>
-                  {contributionReportRows.length > 0 && (
-                    <button
-                      onClick={generatePrintableContributionReport}
-                      disabled={generating}
-                      className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm self-start"
-                    >
-                      {generating ? (
-                        <>
-                          <Skeleton className="h-4 w-4 rounded-full" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-4 h-4" />
-                          Download Printable Report
-                        </>
-                      )}
-                    </button>
-                  )}
+                  <ul className="space-y-2 text-sm">
+                    {STATUSES.map((s) => (
+                      <li key={s} className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS[s].color }} />
+                        <span className="text-muted">{s}</span>
+                        <b className="text-ink">{counts[s]}</b>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                {contributionReportRows.length === 0 ? (
-                  <SectionEmptyState
-                    message="No contribution records found for the selected filters."
-                    icon={Users}
-                    compact
-                  />
-                ) : (
-                  <div className="overflow-x-auto -mx-5 lg:-mx-6 px-5 lg:px-6">
-                    <table className="glass-table w-full text-sm">
-                      <thead>
-                        <tr>
-                          <th className="text-left">Student</th>
-                          <th className="text-center">Year</th>
-                          <th className="text-center">Course</th>
-                          <th className="text-center">Section</th>
-                          <th className="text-left">Event</th>
-                          <th className="text-right">Required</th>
-                          <th className="text-right">Paid</th>
-                          <th className="text-right">Balance</th>
-                          <th className="text-center">Payment Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleContributionReportRows.map((row) => (
-                          <tr key={`${row.studentId}-${row.eventId}`}>
-                            <td className="font-medium text-dark">{row.studentName}</td>
-                            <td className="text-center text-text-secondary">
-                              {row.yearLevel}{getOrdinalSuffix(row.yearLevel)}
-                            </td>
-                            <td className="text-center text-text-secondary">{row.course}</td>
-                            <td className="text-center text-text-secondary">{row.section}</td>
-                            <td className="text-text-secondary">{row.eventName}</td>
-                            <td className="text-right text-text-secondary">
-                              {formatPeso(row.requiredAmount)}
-                            </td>
-                            <td className="text-right text-text-secondary">
-                              {formatPeso(row.amountPaid)}
-                            </td>
-                            <td className="text-right text-text-secondary">
-                              {formatPeso(row.remainingBalance)}
-                            </td>
-                            <td className="text-center">
-                              <ContributionStatusBadge status={row.status} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {shouldPaginateContributionReport && (
-                  <Pagination
-                    page={currentContributionReportPage}
-                    totalPages={contributionReportTotalPages}
-                    totalItems={contributionReportRows.length}
-                    startIndex={contributionReportPageStartIndex}
-                    endIndex={
-                      contributionReportPageStartIndex +
-                      paginatedContributionReportRows.length
-                    }
-                    onPrev={() =>
-                      setContributionReportPage((page) =>
-                        Math.max(1, page - 1),
-                      )
-                    }
-                    onNext={() =>
-                      setContributionReportPage((page) =>
-                        Math.min(contributionReportTotalPages, page + 1),
-                      )
-                    }
-                    onJump={setContributionReportPage}
-                  />
-                )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2">
+                  <StatCard featured label="Total students" value={total} icon={Users} hint={`${event?.name} · ${classLabel} ${course}-${section}`} />
+                  <StatCard label="Present" value={counts.Present} icon={CheckCircle} tone="success" hint={share(counts.Present)} />
+                  <StatCard label="Excused" value={counts.Excused} icon={ClipboardCheck} hint={share(counts.Excused)} />
+                  <StatCard label="Absent" value={counts.Absent} icon={XCircle} tone="danger" hint={share(counts.Absent)} />
+                </div>
               </div>
-            )}
-          </>
-        )}
-    </SectionLayout>
+
+              <TableCard title="Attendance records" subtitle={`${event?.name} — ${classLabel} · ${course} · Section ${section}`}>
+                <ReportTable columns={ATTENDANCE_COLUMNS} rows={rows} />
+              </TableCard>
+            </>
+          )}
+        </>
+      )}
+    </Page>
   );
 }
 
-function StatusBadge({ status }: { status: ReportRow["status"] }) {
-  const className =
-    status === "Present"
-      ? "bg-green-100 text-green-600"
-      : status === "Excused"
-        ? "bg-purple-100 text-purple-700"
-        : "bg-red-100 text-red-500";
+function TableCard({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
-    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${className}`}>
-      {status}
-    </span>
+    <div className="card overflow-hidden">
+      <div className="px-5 py-4">
+        <h2 className="font-bold text-ink">{title}</h2>
+        <p className="text-xs text-muted">{subtitle}</p>
+      </div>
+      {children}
+    </div>
   );
 }
 
-function ContributionStatusBadge({
-  status,
-}: {
-  status: ContributionReportRow["status"];
-}) {
-  const className =
-    status === "Fully Paid"
-      ? "bg-green-100 text-green-600"
-      : status === "Partial Payment"
-        ? "bg-amber-100 text-amber-700"
-        : "bg-red-100 text-red-500";
-
-  return (
-    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${className}`}>
-      {status}
-    </span>
+/** On-screen rendering of the same columns the printable report uses. */
+function ReportTable<T extends ClassRow>({ columns, rows }: { columns: Column<T>[]; rows: T[] }) {
+  const screenColumns = columns.map(
+    (c, i): DataColumn<T> => ({
+      header: c.label,
+      right: c.align === "right",
+      className: i === 0 ? "font-semibold" : c.align ? "whitespace-nowrap tabular-nums text-muted" : "text-muted",
+      cell: (row) => (c.pill ? <span className={`chip whitespace-nowrap ${CHIP[c.pill(row)]}`}>{c.value(row)}</span> : c.value(row)),
+    }),
   );
-}
-
-interface PrintableReport {
-  lscDataUri: string;
-  dsscDataUri: string;
-  eventName: string;
-  yearLabel: string;
-  course: string;
-  section: string;
-  totalStudents: number;
-  totalPresent: number;
-  totalAbsent: number;
-  attendancePercentage: string;
-  tableRows: string;
-}
-
-interface PrintableContributionReport {
-  lscDataUri: string;
-  dsscDataUri: string;
-  eventFilter: string;
-  yearFilter: string;
-  courseFilter: string;
-  sectionFilter: string;
-  statusFilter: string;
-  tableRows: string;
-}
-
-/** Self-contained landscape document for browser Print → Save as PDF. */
-function buildReportHtml(report: PrintableReport): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/>
-<title>Student Attendance Report</title>
-<style>
-  @page{size:landscape;margin:0}
-  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
-  .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
-  .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:21px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.present{color:#047857}.absent{color:#b91c1c}.percent{color:#1b2e8c}
-  table{width:100%;border-collapse:collapse;font-size:12px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 9px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:7px 9px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.odd{background:#f9fafb}.even{background:#fff}
-  .s-present,.s-absent,.s-excused{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:700}.s-present{background:#d1fae5;color:#047857}.s-absent{background:#fee2e2;color:#b91c1c}.s-excused{background:#f3e8ff;color:#7e22ce}
-  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
-</style></head><body>
-  <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Attendance Report</h1><div class="sub">Official Attendance Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
-  <section class="metadata"><div><span class="label">Event:</span>${report.eventName}</div><div><span class="label">Year Level:</span>${report.yearLabel}</div><div><span class="label">Course:</span>${report.course}</div><div><span class="label">Section:</span>${report.section}</div></section>
-  <section class="summary"><div class="card"><div class="number">${report.totalStudents}</div><div class="caption">Total Students</div></div><div class="card"><div class="number present">${report.totalPresent}</div><div class="caption">Total Present</div></div><div class="card"><div class="number absent">${report.totalAbsent}</div><div class="caption">Total Absent</div></div><div class="card"><div class="number percent">${report.attendancePercentage}%</div><div class="caption">Attendance</div></div></section>
-  <table><thead><tr><th>Student</th><th class="center">Year</th><th class="center">Course</th><th class="center">Section</th><th class="center">Status</th><th>Event</th><th class="center">Time In</th><th class="center">Time Out</th></tr></thead><tbody>${report.tableRows}</tbody></table>
-  <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
-</body></html>`;
-}
-
-/** Self-contained landscape document for browser Print → Save as PDF. */
-function buildContributionReportHtml(
-  report: PrintableContributionReport,
-): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/>
-<title>Student Contribution Report</title>
-<style>
-  @page{size:landscape;margin:0}
-  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
-  .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
-  .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:105px}
-  table{width:100%;border-collapse:collapse;font-size:11px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.center{text-align:center}.amount{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
-  .s-paid{background:#d1fae5;color:#047857}.s-partial{background:#fef3c7;color:#b45309}.s-unpaid{background:#fee2e2;color:#b91c1c}.s-paid,.s-partial,.s-unpaid{padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
-  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}}
-</style></head><body>
-  <header class="header"><img src="${report.lscDataUri}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Contribution Report</h1><div class="sub">Official Contribution Record for Verification and Filing</div></div><img src="${report.dsscDataUri}" alt="DSSC logo"/></header>
-  <section class="metadata"><div><span class="label">Event:</span>${report.eventFilter}</div><div><span class="label">Year Level:</span>${report.yearFilter}</div><div><span class="label">Course:</span>${report.courseFilter}</div><div><span class="label">Section:</span>${report.sectionFilter}</div><div><span class="label">Payment Status:</span>${report.statusFilter}</div></section>
-  <table><thead><tr><th>Student</th><th class="center">Year</th><th class="center">Course</th><th class="center">Section</th><th>Event</th><th class="amount">Required</th><th class="amount">Paid</th><th class="amount">Balance</th><th class="center">Payment Status</th></tr></thead><tbody>${report.tableRows}</tbody></table>
-  <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
-</body></html>`;
+  return <DataTable columns={screenColumns} rows={rows} rowKey={(row) => row.key} />;
 }

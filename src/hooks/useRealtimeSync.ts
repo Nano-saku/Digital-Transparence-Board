@@ -5,55 +5,72 @@ import { offlineSyncService } from "@/lib/offlineSync";
 /** Supabase Realtime channel status values. */
 type ChannelStatus = "SUBSCRIBED" | "CHANNEL_ERROR" | "TIMED_OUT" | "CLOSED";
 
-/**
- * Tables whose offline cache must be invalidated when a realtime event
- * arrives, so the next getAll() call fetches fresh data from the server.
- */
-const CACHEABLE_TABLES = new Set([
-  "students", "events", "lsc_officers",
-  "attendance", "contributions", "payments",
-]);
-
-/**
- * Minimum interval between two consecutive realtime-triggered refetches.
- * Prevents flooding the database on bulk writes.
- */
+/** Tables whose offline cache is dropped on a realtime event so the next read refetches. */
+const CACHEABLE_TABLES = new Set(["students", "events", "lsc_officers", "attendance", "contributions", "payments"]);
+/** Coalesces bursts of events (bulk writes) into one refetch. */
 const DEBOUNCE_MS = 350;
+/** Delay before refetching after a channel error, giving Realtime time to stabilise. */
+const RECONNECT_REFETCH_DELAY_MS = 800;
+
+function invalidateCache(table: string): void {
+  if (!CACHEABLE_TABLES.has(table)) return;
+  offlineSyncService
+    .invalidate(table as Parameters<typeof offlineSyncService.invalidate>[0])
+    .catch((err) => console.warn(`[useRealtimeSync] invalidate(${table}):`, err));
+}
 
 /**
- * Delay before re-fetching after a channel reconnects. Gives Supabase
- * Realtime time to stabilise and reduces stale-read risk.
+ * One channel for `tables`: `onEvent(table)` runs per change, `onChange` once per
+ * debounced burst. Returns the teardown.
  */
-const RECONNECT_REFETCH_DELAY_MS = 800;
+function openChannel(
+  prefix: string,
+  tables: readonly string[],
+  onChange: () => void,
+  onEvent?: (table: string) => void,
+  onStatus?: (status: ChannelStatus) => void,
+): () => void {
+  const sb = getSupabase();
+  const channel = sb.channel(`${prefix}-${crypto.randomUUID()}`);
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let destroyed = false;
+
+  for (const table of tables) {
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+      if (destroyed) return;
+      onEvent?.(table);
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => !destroyed && onChange(), DEBOUNCE_MS);
+    });
+  }
+  channel.subscribe((status) => {
+    if (!destroyed) onStatus?.(status as ChannelStatus);
+  });
+
+  return () => {
+    destroyed = true;
+    clearTimeout(debounceTimer);
+    void sb.removeChannel(channel);
+  };
+}
 
 export interface UseRealtimeSyncOptions {
   /** Tables to subscribe to (subscribe only to what is needed). */
   tables: readonly string[];
-  /**
-   * Called when a committed database change is detected.
-   * Keep this callback stable (useCallback) to avoid channel recreation.
-   */
+  /** Called when a committed database change is detected. */
   onChange: () => void;
   /** Optional channel name prefix. Defaults to "rt-sync". */
   channelPrefix?: string;
-  /**
-   * When true, onChange is called once after mount so the caller can
-   * skip a separate `useEffect(() => loadData(), [loadData])`.
-   */
+  /** Also call onChange once after mount (replaces a separate initial-load effect). */
   triggerOnMount?: boolean;
   /** Optional callback when the Supabase channel status changes. */
   onStatusChange?: (status: ChannelStatus) => void;
 }
 
 /**
- * useRealtimeSync – authoritative Supabase Realtime subscription hook.
- *
- * Features:
- * - Single channel per call site — no duplicate subscriptions.
- * - Debounced onChange to prevent duplicate processing on bulk writes.
- * - Automatic cache invalidation for offline-capable tables.
- * - Reconnection recovery: re-fetches after channel error/timeout.
- * - Clean teardown on unmount (channel removed, timers cleared).
+ * Supabase Realtime subscription for a component: one channel per call site,
+ * debounced `onChange`, offline-cache invalidation, a refetch after a channel
+ * error/timeout (and again once it re-subscribes), and full teardown on unmount.
  */
 export function useRealtimeSync({
   tables,
@@ -64,101 +81,52 @@ export function useRealtimeSync({
 }: UseRealtimeSyncOptions): void {
   const onChangeRef = useRef(onChange);
   const onStatusRef = useRef(onStatusChange);
-  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
-  useEffect(() => { onStatusRef.current = onStatusChange; }, [onStatusChange]);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onStatusRef.current = onStatusChange;
+  }, [onChange, onStatusChange]);
 
   const tablesKey = [...tables].sort().join(",");
 
   useEffect(() => {
-    const sb = getSupabase();
-    const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let destroyed = false;
 
-    const clearTimers = () => {
-      if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
-      if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    const refetchSoon = () => {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined;
+        tables.forEach(invalidateCache);
+        onChangeRef.current();
+      }, RECONNECT_REFETCH_DELAY_MS);
     };
 
-    const debouncedOnChange = () => {
-      if (destroyed) return;
-      if (debounceTimer !== null) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        if (!destroyed) onChangeRef.current();
-      }, DEBOUNCE_MS);
-    };
-
-    const invalidateCaches = (table: string) => {
-      if (!CACHEABLE_TABLES.has(table)) return;
-      void offlineSyncService
-        .invalidate(table as Parameters<typeof offlineSyncService.invalidate>[0])
-        .catch((err) => console.warn(`[useRealtimeSync] invalidate(${table}):`, err));
-    };
-
-    for (const table of tables) {
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        () => {
-          if (destroyed) return;
-          invalidateCaches(table);
-          debouncedOnChange();
-        },
-      );
-    }
-
-    channel.subscribe((status: string) => {
-      if (destroyed) return;
-      const s = status as ChannelStatus;
-      onStatusRef.current?.(s);
-
-      if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
-        if (reconnectTimer !== null) clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          if (!destroyed) {
-            for (const table of tables) invalidateCaches(table);
-            onChangeRef.current();
-          }
-        }, RECONNECT_REFETCH_DELAY_MS);
-      }
-
-      if (s === "SUBSCRIBED" && reconnectTimer !== null) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          if (!destroyed) {
-            for (const table of tables) invalidateCaches(table);
-            onChangeRef.current();
-          }
-        }, RECONNECT_REFETCH_DELAY_MS);
-      }
+    const close = openChannel(channelPrefix, tables, () => onChangeRef.current(), invalidateCache, (status) => {
+      onStatusRef.current?.(status);
+      const recovering = status === "SUBSCRIBED" && reconnectTimer !== undefined;
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || recovering) refetchSoon();
     });
 
     if (triggerOnMount) {
-      Promise.resolve().then(() => { if (!destroyed) onChangeRef.current(); });
+      void Promise.resolve().then(() => !destroyed && onChangeRef.current());
     }
 
     return () => {
       destroyed = true;
-      clearTimers();
-      void sb.removeChannel(channel);
+      clearTimeout(reconnectTimer);
+      close();
     };
+    // `tables` is tracked through tablesKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tablesKey, channelPrefix, triggerOnMount]);
 }
 
 /**
- * Returns a stable callable that wraps a data-load function with
- * deduplication: simultaneous realtime events result in at most one
- * inflight fetch plus one pending follow-up, preventing duplicate
- * processing and double-counting of financial calculations.
+ * Wraps a data-load function so overlapping calls (e.g. simultaneous realtime
+ * events) run at most one fetch in flight plus one pending follow-up with the
+ * latest args, preventing double-counting in financial calculations.
  */
-export function useIdempotentLoader<T extends unknown[]>(
-  loader: (...args: T) => Promise<void>,
-): (...args: T) => void {
+export function useIdempotentLoader<T extends unknown[]>(loader: (...args: T) => Promise<void>): (...args: T) => void {
   const inFlightRef = useRef(false);
   const pendingRef = useRef<{ args: T } | null>(null);
 
@@ -176,7 +144,7 @@ export function useIdempotentLoader<T extends unknown[]>(
           inFlightRef.current = false;
           const next = pendingRef.current;
           pendingRef.current = null;
-          if (next !== null) void run(next.args);
+          if (next) void run(next.args);
         }
       };
       void run(args);
@@ -187,43 +155,13 @@ export function useIdempotentLoader<T extends unknown[]>(
 }
 
 /**
- * Plain (non-hook) subscription factory for use inside service classes
- * or outside React components. For React components, prefer
- * `useRealtimeSync` to get automatic cleanup on unmount.
+ * Non-hook subscription (debounced `onChange`, no cache invalidation) for use
+ * outside React components. Returns the teardown.
  */
 export function createRealtimeSubscription(
   tables: readonly string[],
   onChange: () => void,
   channelPrefix = "rt-svc",
 ): () => void {
-  const sb = getSupabase();
-  const channel = sb.channel(`${channelPrefix}-${crypto.randomUUID()}`);
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let destroyed = false;
-
-  const debouncedOnChange = () => {
-    if (destroyed) return;
-    if (debounceTimer !== null) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      if (!destroyed) onChange();
-    }, DEBOUNCE_MS);
-  };
-
-  for (const table of tables) {
-    channel.on(
-      "postgres_changes",
-      { event: "*", schema: "public", table },
-      () => { if (!destroyed) debouncedOnChange(); },
-    );
-  }
-
-  channel.subscribe();
-
-  return () => {
-    destroyed = true;
-    if (debounceTimer !== null) clearTimeout(debounceTimer);
-    void sb.removeChannel(channel);
-  };
+  return openChannel(channelPrefix, tables, onChange);
 }
-

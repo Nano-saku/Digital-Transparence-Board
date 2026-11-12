@@ -1,40 +1,18 @@
-/**
- * Shared date & formatting helpers.
- *
- * These were previously declared independently in several section components;
- * import them from here instead of re-declaring local copies.
- */
-
-/**
- * Formats a date (ISO string or Date) as e.g. `Sep 8, 2026`.
- * Returns "-" for empty input and the original string for invalid dates.
- */
-export function formatDate(dateString: string | Date): string {
-  if (!dateString) return "-";
-  const date =
-    dateString instanceof Date
-      ? dateString
-      : parseCalendarDate(dateString) ?? new Date(dateString);
-  if (Number.isNaN(date.getTime())) return String(dateString);
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+/** e.g. `Sep 8, 2026`; "-" for empty input, the raw value when unparseable. */
+export function formatDate(value: string | Date): string {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : parseCalendarDate(value) ?? new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
 /**
- * Formats an authoritative ISO/PostgreSQL timestamp in Philippine Time.
- *
- * The timezone is deliberately explicit so log timestamps do not change when
- * an officer views the application from a device configured for another zone.
+ * e.g. `September 8, 2026 • 3:05 PM`, always in Philippine Time so log timestamps
+ * read the same from devices set to another zone. "—" when empty or invalid.
  */
 export function formatPhilippineDateTime(value?: string | null): string {
-  if (!value) return "—";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-
+  const date = new Date(value ?? "");
+  if (!value || Number.isNaN(date.getTime())) return "—";
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Manila",
     year: "numeric",
@@ -44,21 +22,16 @@ export function formatPhilippineDateTime(value?: string | null): string {
     minute: "2-digit",
     hour12: true,
   }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? "";
-
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
   return `${part("month")} ${part("day")}, ${part("year")} • ${part("hour")}:${part("minute")} ${part("dayPeriod")}`;
 }
 
-/**
- * Formats a peso amount the way the rest of the app displays money, e.g.
- * `1500 -> "₱1,500"`. Use this instead of inline `₱{n.toLocaleString()}`.
- */
+/** e.g. `1500 -> "₱1,500"`. */
 export function formatPeso(amount: number): string {
   return `₱${amount.toLocaleString("en-US")}`;
 }
 
-/** Ordinal suffix for a number, e.g. `1 -> "st"`, `22 -> "nd"`. */
+/** e.g. `1 -> "st"`, `22 -> "nd"`, `13 -> "th"`. */
 export function getOrdinalSuffix(num: number): string {
   const suffixes = ["th", "st", "nd", "rd"];
   const v = num % 100;
@@ -66,141 +39,82 @@ export function getOrdinalSuffix(num: number): string {
 }
 
 /**
- * Parses a date-only value as a local calendar date.
- *
- * `new Date("YYYY-MM-DD")` parses the value as UTC, which can display the
- * previous day in timezones west of UTC. Event and deadline dates are calendar
- * dates selected by an administrator, so they must not go through that
- * conversion.
+ * Parses `YYYY-MM-DD` as a local calendar date (`new Date("YYYY-MM-DD")` is UTC and
+ * shows the previous day west of UTC). `null` when not a real date in that format.
  */
 export function parseCalendarDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return null;
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-
-  return date.getFullYear() === year &&
-      date.getMonth() === month - 1 &&
-      date.getDate() === day
-    ? date
-    : null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])];
+  const date = new Date(year, month, day);
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day ? date : null;
 }
 
-/** Creates a local wall-clock Date from a configured calendar date and time. */
+/** Local wall-clock Date from a calendar date and optional 24h "HH:MM" time. */
 export function dateAtLocalTime(dateValue: string, timeValue?: string): Date | null {
   const date = parseCalendarDate(dateValue);
-  if (!date) return null;
-
   const minutes = timeToMinutes(timeValue);
-  if (minutes === null) return date;
-
-  date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  if (date && minutes !== null) date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
   return date;
 }
 
-/** Returns the earliest configured scheduled start time. */
-export function getEarliestScheduledTime(
-  schedules?: Array<{ timeIn?: string }>,
-): string | undefined {
+/** The earliest configured schedule start time. */
+export function getEarliestScheduledTime(schedules?: Array<{ timeIn?: string }>): string | undefined {
   return schedules
     ?.map((schedule) => schedule.timeIn?.trim())
     .filter((time): time is string => Boolean(time))
     .sort((a, b) => (timeToMinutes(a) ?? Infinity) - (timeToMinutes(b) ?? Infinity))[0];
 }
 
-/** Whole days (rounded up) until a local calendar date and optional time. */
+/** Whole days (rounded up) from now until a local calendar date and optional time; NaN when invalid. */
 export function daysUntil(date: string, time?: string): number {
   const target = dateAtLocalTime(date, time);
-  if (!target) return NaN;
-  return Math.ceil((target.getTime() - Date.now()) / 86400000);
+  return target ? Math.ceil((target.getTime() - Date.now()) / 86400000) : NaN;
 }
 
-/** Today's local calendar date as a `YYYY-MM-DD` string. */
+/** Today's local calendar date as `YYYY-MM-DD`. */
 export function today(): string {
   const now = new Date();
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-/**
- * Converts a 24h `HH:MM` (or `H:MM`) time to a 12-hour label, e.g.
- * `"06:30" -> "6:30 AM"`, `"17:00" -> "5:00 PM"`. Returns "—" for empty
- * input and the raw string when it does not look like a time.
- */
+/** 24h "HH:MM" -> "6:30 AM"; "—" when empty, the raw value when not a time. */
 export function formatTime12(value?: string): string {
   if (!value) return "—";
   const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
   if (!match) return value;
   const hour = Number(match[1]);
-  const minute = match[2];
-  const period = hour >= 12 ? "PM" : "AM";
-  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
-  return `${hour12}:${minute} ${period}`;
+  return `${hour % 12 || 12}:${match[2]} ${hour >= 12 ? "PM" : "AM"}`;
 }
 
-/** "HH:MM AM" range label, e.g. "6:00 AM – 12:00 PM". */
+/** e.g. "6:00 AM – 12:00 PM". */
 export function formatTimeRange(timeIn?: string, timeOut?: string): string {
   return `${formatTime12(timeIn)} – ${formatTime12(timeOut)}`;
 }
 
-/**
- * Parses a 24h `HH:MM` (or `H:MM`) time into minutes since midnight. Returns
- * `null` when the value is missing or does not look like a valid clock time.
- */
+/** Minutes since midnight for a 24h "HH:MM" time; `null` when missing or invalid. */
 export function timeToMinutes(value?: string): number | null {
   const match = /^(\d{1,2}):(\d{2})/.exec((value ?? "").trim());
   if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (hour > 23 || minute > 59) return null;
-  return hour * 60 + minute;
+  const [hour, minute] = [Number(match[1]), Number(match[2])];
+  return hour > 23 || minute > 59 ? null : hour * 60 + minute;
 }
 
-/**
- * Splits a 24h `"HH:MM"` time into typeable 12-hour Hour / Minute / AM·PM
- * parts for editable time fields (separate hour and minute inputs plus an
- * AM/PM dropdown, with the `:` rendered between them rather than typed).
- * Returns blank hour/minute (defaulting to AM) when the value is empty or
- * unparseable, so the fields start empty instead of showing "12:00 AM".
- */
-export function splitTime24(value?: string): {
-  hour: string;
-  minute: string;
-  period: "AM" | "PM";
-} {
+/** Splits 24h "HH:MM" into 12-hour field values; blank (AM) when empty or unparseable. */
+export function splitTime24(value?: string): { hour: string; minute: string; period: "AM" | "PM" } {
   const match = value ? /^(\d{1,2}):(\d{2})/.exec(value.trim()) : null;
   if (!match) return { hour: "", minute: "", period: "AM" };
-  const hour24 = Number(match[1]);
-  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  return {
-    hour: String(hour12),
-    minute: match[2],
-    period: hour24 >= 12 ? "PM" : "AM",
-  };
+  const hour = Number(match[1]);
+  return { hour: String(hour % 12 || 12), minute: match[2], period: hour >= 12 ? "PM" : "AM" };
 }
 
-/**
- * Combines typed 12-hour Hour / Minute / AM·PM fields into the 24h `"HH:MM"`
- * format the database stores. Returns `null` when the hour or minute is not
- * a plain number or is out of range (hour 1-12, minute 00-59).
- */
-export function composeTime12(
-  hour: string,
-  minute: string,
-  period: "AM" | "PM",
-): string | null {
-  const h = hour.trim();
-  const m = minute.trim();
+/** Combines 12-hour fields into 24h "HH:MM"; `null` unless hour is 1-12 and minute 0-59. */
+export function composeTime12(hour: string, minute: string, period: "AM" | "PM"): string | null {
+  const [h, m] = [hour.trim(), minute.trim()];
   if (!/^\d{1,2}$/.test(h) || !/^\d{1,2}$/.test(m)) return null;
-  const hourNum = Number(h);
-  const minuteNum = Number(m);
+  const [hourNum, minuteNum] = [Number(h), Number(m)];
   if (hourNum < 1 || hourNum > 12 || minuteNum > 59) return null;
-  const hour24 = (hourNum % 12) + (period === "PM" ? 12 : 0);
-  return `${String(hour24).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad((hourNum % 12) + (period === "PM" ? 12 : 0))}:${pad(minuteNum)}`;
 }

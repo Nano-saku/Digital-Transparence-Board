@@ -1,10 +1,6 @@
-// ======================================================================
-// Receipt generation & export (no third-party dependencies)
-// ======================================================================
-// The module supports receipt uploads and the existing generated receipt
-// flows used by contribution records. Transaction ledger receipts are now
-// uploaded physical receipt scans/photos rather than generated automatically.
-// ======================================================================
+// Receipt upload, SVG generation and export (no third-party dependencies).
+// Transaction ledger receipts are uploaded scans; payment/contribution
+// receipts are generated as SVG.
 
 import { getSupabase } from "./supabase";
 
@@ -12,52 +8,56 @@ export type ReceiptFormat = "svg" | "png" | "jpg";
 
 const MAX_UPLOADED_RECEIPT_BYTES = 10 * 1024 * 1024;
 
-/**
- * Uploads a scanned physical receipt or receipt photo to the receipts bucket
- * and returns its public URL. Transaction ledger callers are role-gated in
- * the UI and by the Storage policy.
- */
+/** Uploads a scanned receipt (PDF/image) to the receipts bucket; returns its public URL. */
 export async function uploadReceiptFile(file: File): Promise<string> {
-  if (
-    file.type !== "application/pdf" &&
-    !file.type.toLowerCase().startsWith("image/")
-  ) {
+  if (file.type !== "application/pdf" && !file.type.toLowerCase().startsWith("image/")) {
     throw new Error("Receipt must be a PDF or an image file.");
   }
   if (file.size > MAX_UPLOADED_RECEIPT_BYTES) {
     throw new Error("Receipt files must be 10 MB or smaller.");
   }
-
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  const path = `manual/${crypto.randomUUID()}-${safeName || "receipt"}`;
-  const { error } = await getSupabase().storage.from("receipts").upload(path, file, {
-    upsert: false,
-    contentType: file.type,
-  });
-  if (error) throw new Error(error.message);
-
-  const { data } = getSupabase().storage.from("receipts").getPublicUrl(path);
-  return data.publicUrl;
+  return uploadToBucket(`manual/${crypto.randomUUID()}-${safeName || "receipt"}`, file, file.type);
 }
 
-/**
- * Converts a Blob to a base64 data URI. Shared by TransparencyBoardSection
- * and ReportManagementSection for self-contained printable HTML reports —
- * previously a local copy existed in each section.
- */
-export function blobToDataUri(blob: Blob): Promise<string> {
+async function uploadToBucket(path: string, body: Blob, contentType: string, upsert = false): Promise<string> {
+  const bucket = getSupabase().storage.from("receipts");
+  const { error } = await bucket.upload(path, body, { upsert, contentType });
+  if (error) throw new Error(error.message);
+  return bucket.getPublicUrl(path).data.publicUrl;
+}
+
+/** Blob -> base64 data URI (also used for self-contained printable reports). */
+export function blobToDataUri(blob: Blob, errorMessage = "Failed to read blob"): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("Failed to read blob"));
+    reader.onerror = () => reject(new Error(errorMessage));
     reader.readAsDataURL(blob);
   });
 }
 
+async function loadImage(src: string, errorMessage: string): Promise<HTMLImageElement> {
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error(errorMessage));
+    image.src = src;
+  });
+  return image;
+}
 
-// ----------------------------------------------------------------------
-// Logo data URI cache (browser-only, fetched once then reused)
-// ----------------------------------------------------------------------
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, errorMessage: string, quality?: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(errorMessage))), type, quality);
+  });
+}
+
+function canvasContext(canvas: HTMLCanvasElement, errorMessage: string): CanvasRenderingContext2D {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error(errorMessage);
+  return ctx;
+}
 
 /** Base64 data URIs for the two official logos embedded in every receipt. */
 export interface ReceiptLogoData {
@@ -67,53 +67,26 @@ export interface ReceiptLogoData {
 
 let logoCache: ReceiptLogoData | null = null;
 
-/**
- * Fetches an image from a public path, resizes it to fit within `maxDim`
- * while preserving its aspect ratio, and returns a PNG base64 data URI.
- */
+/** Fetches a public image, fits it within `maxDim` px and returns a PNG data URI. */
 async function imageToDataUri(path: string, maxDim: number): Promise<string> {
   const resp = await fetch(path);
   if (!resp.ok) throw new Error(`Failed to fetch logo ${path}: ${resp.status}`);
-  const blob = await resp.blob();
-  const objectUrl = URL.createObjectURL(blob);
+  const objectUrl = URL.createObjectURL(await resp.blob());
   try {
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error(`Failed to decode logo: ${path}`));
-      img.src = objectUrl;
-    });
+    const img = await loadImage(objectUrl, `Failed to decode logo: ${path}`);
     const scale = Math.min(maxDim / img.naturalWidth, maxDim / img.naturalHeight, 1);
-    const w = Math.round(img.naturalWidth * scale);
-    const h = Math.round(img.naturalHeight * scale);
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas not supported");
-    ctx.drawImage(img, 0, 0, w, h);
-    return new Promise<string>((resolve, reject) => {
-      canvas.toBlob((b) => {
-        if (!b) {
-          reject(new Error(`Failed to encode logo: ${path}`));
-          return;
-        }
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error(`Failed to read encoded logo: ${path}`));
-        reader.readAsDataURL(b);
-      }, "image/png");
-    });
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvasContext(canvas, "Canvas not supported").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = await canvasToBlob(canvas, "image/png", `Failed to encode logo: ${path}`);
+    return await blobToDataUri(png, `Failed to read encoded logo: ${path}`);
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
 }
 
-/**
- * Returns (and caches) base64 data URIs for both official logos.  The
- * logos are resized to ≤ 100 px on the longest side to keep the SVG
- * receipts lightweight while still looking crisp on screen.
- */
+/** Cached logo data URIs (≤100px keeps the SVG receipts light). */
 export async function getReceiptLogos(): Promise<ReceiptLogoData> {
   if (logoCache) return logoCache;
   const [lsc, dssc] = await Promise.all([
@@ -124,11 +97,7 @@ export async function getReceiptLogos(): Promise<ReceiptLogoData> {
   return logoCache;
 }
 
-/**
- * Shared SVG markup for the official receipt logos. `xlink:href` keeps the
- * embedded images visible in older SVG viewers while `href` serves current
- * browsers. The fixed boxes and preserveAspectRatio prevent distortion.
- */
+/** Logo markup; `xlink:href` keeps the images visible in older SVG viewers. */
 function receiptLogoMarkup(logos: ReceiptLogoData): string {
   return [
     `<image href="${logos.lsc}" xlink:href="${logos.lsc}" x="10" y="10" width="70" height="70" preserveAspectRatio="xMidYMid meet"/>`,
@@ -158,32 +127,22 @@ export interface ReceiptDetails {
   remainingBalance?: number;
   /** Contribution-record receipts only: status label (Unpaid / Partial / Fully Paid). */
   statusLabel?: string;
-  /**
-   * Cumulative payment history for contribution receipts. When present, the
-   * receipt renders a full payment history table instead of a single amount
-   * row. Each entry represents one installment payment.
-   */
+  /** Contribution receipts only: installment payments; when present a payment history table replaces the amount rows. */
   paymentItems?: Array<{ amount: number; date: string; status: string }>;
 }
 
 const xml = (s: string): string =>
-  String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const formatAmount = (n: number): string =>
   n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const peso = (n: number) => `₱${formatAmount(n)}`;
+
 const formatDateHuman = (iso: string): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  return date.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 };
 
 const ONES = [
@@ -205,262 +164,166 @@ function threeDigits(n: number): string {
   return words.join(" ");
 }
 
+/** e.g. `1500.5 -> "One Thousand, Five Hundred Pesos and 50/100 only"`. */
 export function amountInWords(amount: number): string {
   if (!Number.isFinite(amount)) return "";
   const whole = Math.floor(Math.abs(amount));
   const cents = Math.round((Math.abs(amount) - whole) * 100);
   const scales = ["", " Thousand", " Million", " Billion", " Trillion"];
-  let n = whole;
   const chunks: string[] = [];
-  let scale = 0;
-  while (n > 0) {
+  for (let n = whole, scale = 0; n > 0; n = Math.floor(n / 1000), scale++) {
     const chunk = n % 1000;
-    if (chunk > 0) chunks.unshift(`${threeDigits(chunk)}${scale === 0 ? "" : scales[scale]}`);
-    n = Math.floor(n / 1000);
-    scale += 1;
+    if (chunk > 0) chunks.unshift(`${threeDigits(chunk)}${scales[scale]}`);
   }
   const wholeText = chunks.length ? chunks.join(", ") : "Zero";
   const centsText = cents > 0 ? ` and ${String(cents).padStart(2, "0")}/100` : "";
   return `${wholeText} Pesos${centsText} only`;
 }
 
-export function buildReceiptSvg(details: ReceiptDetails, logos?: ReceiptLogoData): string {
-  const typeColor = details.type === "income" ? "#0f766e" : "#b91c1c";
-  const typeLabel = details.type === "income" ? "COLLECTION" : "EXPENSE";
-  const tag = details.tag ? xml(details.tag) : typeLabel;
+const SANS = "Arial, Helvetica, sans-serif";
+const ROWS_START = 352; // y of the first detail label
+const ROW_PITCH = 64; // vertical space per label/value pair
+const HIST_ROW_H = 28;
+const [GREEN, AMBER, RED, INK] = ["#16a34a", "#d97706", "#dc2626", "#111827"];
 
-  const isContribution = details.requiredAmount !== undefined;
-  const hasHistory = isContribution && Array.isArray(details.paymentItems) && details.paymentItems.length > 0;
+type DetailRow = [label: string, value: string, color?: string];
 
-  // ── Static header rows (Received From, Event) ─────────────────────────────
-  const headerRows: [string, string][] = [
-    ["RECEIVED FROM / PAID TO", xml(details.issuedTo) || "—"],
-    ["EVENT / PURPOSE", xml(details.eventName || details.description || "—")],
-    ...(details.description && details.eventName
-      ? [["DETAILS", xml(details.description)] as [string, string]]
-      : []),
-  ];
-
-  // ── Layout constants ───────────────────────────────────────────────────────
-  const ROWS_START = 352;  // y of the first detail label
-  const ROW_PITCH  = 64;   // vertical space per label/value pair
-
-  // ── When payment history is present render the cumulative history receipt ──
-  if (hasHistory) {
-    const items = details.paymentItems!;
-
-    const headerRowsSvg = headerRows
-      .map(([label, value], index) => {
-        const ry = ROWS_START + index * ROW_PITCH;
-        return `<text x="60" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="bold" fill="#111827">${value}</text>`;
-      })
-      .join("\n    ");
-
-    // Contribution summary rows beneath the header rows
-    const summaryStartY = ROWS_START + headerRows.length * ROW_PITCH + 16;
-    const summaryRows: [string, string, string][] = [
-      ["REQUIRED AMOUNT",   `\u20B1${formatAmount(details.requiredAmount ?? 0)}`, "#111827"],
-      ["TOTAL AMOUNT PAID", `\u20B1${formatAmount(details.amount)}`,              "#111827"],
-      ["REMAINING BALANCE", `\u20B1${formatAmount(details.remainingBalance ?? 0)}`,
-        (details.remainingBalance ?? 0) > 0 ? "#dc2626" : "#16a34a"],
-      ["OVERALL STATUS", xml(details.statusLabel || "—"),
-        details.statusLabel === "Fully Paid" ? "#16a34a" : "#d97706"],
-    ];
-    const summaryRowsSvg = summaryRows
-      .map(([label, value, color], index) => {
-        const ry = summaryStartY + index * ROW_PITCH;
-        return `<text x="60" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="bold" fill="${color}">${value}</text>`;
-      })
-      .join("\n    ");
-
-    // Payment history table
-    const historyStartY = summaryStartY + summaryRows.length * ROW_PITCH + 20;
-    const tableHeaderY  = historyStartY + 22;
-    const COL_NUM    = 60;
-    const COL_AMOUNT = 130;
-    const COL_DATE   = 300;
-    const COL_STATUS = 440;
-    const HIST_ROW_H = 28;
-
-    const historyHeaderSvg = [
-      `<text x="${COL_NUM}" y="${historyStartY}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">PAYMENT HISTORY</text>`,
-      `<rect x="52" y="${tableHeaderY - 14}" width="496" height="20" rx="3" fill="#e2e8f0"/>`,
-      `<text x="${COL_NUM}"    y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">#</text>`,
-      `<text x="${COL_AMOUNT}" y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">AMOUNT</text>`,
-      `<text x="${COL_DATE}"   y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">DATE</text>`,
-      `<text x="${COL_STATUS}" y="${tableHeaderY}" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#374151">STATUS</text>`,
-    ].join("\n    ");
-
-    const historyRowsSvg = items
-      .map((item, i) => {
-        const ry  = tableHeaderY + (i + 1) * HIST_ROW_H;
-        const bg  = i % 2 === 0 ? "#f8fafc" : "#ffffff";
-        const sc  = item.status === "Fully Paid" ? "#16a34a" : "#d97706";
-        return [
-          `<rect x="52" y="${ry - 16}" width="496" height="${HIST_ROW_H}" fill="${bg}"/>`,
-          `<text x="${COL_NUM}"    y="${ry}" font-family="monospace" font-size="12" fill="#374151">${i + 1}</text>`,
-          `<text x="${COL_AMOUNT}" y="${ry}" font-family="monospace" font-size="12" fill="#111827">\u20B1${formatAmount(item.amount)}</text>`,
-          `<text x="${COL_DATE}"   y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#374151">${xml(formatDateHuman(item.date))}</text>`,
-          `<text x="${COL_STATUS}" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="${sc}">${xml(item.status)}</text>`,
-        ].join("\n    ");
-      })
-      .join("\n    ");
-
-    const lineY     = tableHeaderY + (items.length + 1) * HIST_ROW_H + 8;
-    const boxBottom = lineY + 148;
-    const boxHeight = boxBottom - 272 + 18;
-    const footerLine  = boxBottom + 26;
-    const thankYouTop = footerLine + 70;
-    const height      = thankYouTop + 92;
-    const words      = xml(amountInWords(details.amount));
-    const wordsShort = words.length > 86 ? words.slice(0, 83) + "..." : words;
-
-    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="${height}" viewBox="0 0 600 ${height}">
-  <rect width="600" height="${height}" fill="#ffffff"/>
-  <rect width="600" height="96" fill="${typeColor}"/>
-  <text x="300" y="46" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="2">OFFICIAL RECEIPT</text>
-  <text x="300" y="76" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#ffe4ea" text-anchor="middle" letter-spacing="1">LOCAL STUDENT COUNCIL &#x2014; DIGITAL TRANSPARENCY</text>
-  ${logos ? receiptLogoMarkup(logos) : ""}
-  <text x="40" y="132" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#1f2937">Local Student Council &#x2014; Digital Transparency Board</text>
-  <text x="40" y="156" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#6b7280">${xml(details.fiscalYear || dynamicSchoolYear())}</text>
-  <line x1="40" y1="176" x2="560" y2="176" stroke="#e5e7eb" stroke-width="2"/>
-  <text x="40" y="212" font-family="monospace" font-size="13" fill="#374151">${xml(details.receiptNumber)}</text>
-  <text x="40" y="236" font-family="monospace" font-size="13" fill="#374151">Issued: ${xml(formatDateHuman(details.date))}</text>
-  <text x="40" y="262" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="${typeColor}" letter-spacing="2">${tag}</text>
-  <rect x="40" y="272" width="520" height="${boxHeight}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
-    ${headerRowsSvg}
-    ${summaryRowsSvg}
-    ${historyHeaderSvg}
-    ${historyRowsSvg}
-  <line x1="60" y1="${lineY}" x2="540" y2="${lineY}" stroke="#e5e7eb" stroke-width="1"/>
-  <text x="60" y="${lineY + 40}" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#374151">TOTAL AMOUNT PAID</text>
-  <text x="540" y="${lineY + 46}" font-family="monospace" font-size="26" font-weight="bold" fill="${typeColor}" text-anchor="end">PHP ${xml(formatAmount(details.amount))}</text>
-  <text x="60" y="${lineY + 88}" font-family="monospace" font-size="11" fill="#6b7280">${wordsShort}</text>
-  <text x="60" y="${lineY + 114}" font-family="monospace" font-size="11" fill="#9ca3af">PREPARED BY: ${xml(details.recordedBy || "Council Officer")}</text>
-  <line x1="40" y1="${footerLine}" x2="560" y2="${footerLine}" stroke="#e5e7eb" stroke-width="2"/>
-  <text x="40" y="${footerLine + 36}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Authorized signature: ________________________</text>
-  <text x="40" y="${footerLine + 56}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Recorded by: ${xml(details.recordedBy || "Council Officer")}</text>
-  <rect x="40" y="${thankYouTop}" width="520" height="56" rx="6" fill="${typeColor}"/>
-  <text x="300" y="${thankYouTop + 35}" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="3">THANK YOU FOR YOUR SUPPORT!</text>
-</svg>`;
-  }
-
-  // ── Original layout: no payment history (non-contribution or legacy) ───────
-  const rows: [string, string][] = [
-    ...headerRows,
-    ...(isContribution
-      ? [
-          ["REQUIRED AMOUNT",   `\u20B1${formatAmount(details.requiredAmount ?? 0)}`] as [string, string],
-          ["AMOUNT PAID",       `\u20B1${formatAmount(details.amount)}`]               as [string, string],
-          ["REMAINING BALANCE", `\u20B1${formatAmount(details.remainingBalance ?? 0)}`] as [string, string],
-          ["STATUS", xml(details.statusLabel || "\u2014")]                             as [string, string],
-        ]
-      : []),
-  ];
-  // Layout is computed from the row count so the TOTAL AMOUNT block and the
-  // footer always stay inside the details box. The SVG height grows with the
-  // rows, so the PNG / PDF export adapts automatically.
-  const lineY       = ROWS_START + rows.length * ROW_PITCH - 12;
-  const boxBottom   = lineY + 148;
-  const footerLine  = boxBottom + 26;
-  const thankYouTop = footerLine + 70;
-  const height      = thankYouTop + 92;
-  const boxHeight   = boxBottom - 272 + 18;
-  const words      = xml(amountInWords(details.amount));
-  const wordsShort = words.length > 86 ? words.slice(0, 83) + "..." : words;
-
-  const rowsSvg = rows
-    .map(([label, value], index) => {
-      const ry = ROWS_START + index * ROW_PITCH;
-      return `<text x="60" y="${ry}" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="bold" fill="#111827">${value}</text>`;
+const detailRowsSvg = (rows: DetailRow[], startY: number): string =>
+  rows
+    .map(([label, value, color = INK], index) => {
+      const ry = startY + index * ROW_PITCH;
+      return `<text x="60" y="${ry}" font-family="${SANS}" font-size="12" letter-spacing="1" fill="#6b7280">${label}</text>\n    <text x="60" y="${ry + 26}" font-family="${SANS}" font-size="17" font-weight="bold" fill="${color}">${value}</text>`;
     })
     .join("\n    ");
 
+/** "PAYMENT HISTORY" caption, column header band and one striped row per installment. */
+function historyTableSvg(items: NonNullable<ReceiptDetails["paymentItems"]>, captionY: number, headerY: number): string {
+  const [num, amount, date, status] = [60, 130, 300, 440];
+  const head = (x: number, label: string) =>
+    `<text x="${x}" y="${headerY}" font-family="${SANS}" font-size="11" font-weight="bold" fill="#374151">${label}</text>`;
+  return [
+    `<text x="${num}" y="${captionY}" font-family="${SANS}" font-size="12" letter-spacing="1" fill="#6b7280">PAYMENT HISTORY</text>`,
+    `<rect x="52" y="${headerY - 14}" width="496" height="20" rx="3" fill="#e2e8f0"/>`,
+    head(num, "#"),
+    head(amount, "AMOUNT"),
+    head(date, "DATE"),
+    head(status, "STATUS"),
+    ...items.flatMap((item, i) => {
+      const ry = headerY + (i + 1) * HIST_ROW_H;
+      return [
+        `<rect x="52" y="${ry - 16}" width="496" height="${HIST_ROW_H}" fill="${i % 2 === 0 ? "#f8fafc" : "#ffffff"}"/>`,
+        `<text x="${num}" y="${ry}" font-family="monospace" font-size="12" fill="#374151">${i + 1}</text>`,
+        `<text x="${amount}" y="${ry}" font-family="monospace" font-size="12" fill="${INK}">${peso(item.amount)}</text>`,
+        `<text x="${date}" y="${ry}" font-family="${SANS}" font-size="12" fill="#374151">${xml(formatDateHuman(item.date))}</text>`,
+        `<text x="${status}" y="${ry}" font-family="${SANS}" font-size="12" font-weight="bold" fill="${item.status === "Fully Paid" ? GREEN : AMBER}">${xml(item.status)}</text>`,
+      ];
+    }),
+  ].join("\n    ");
+}
+
+export function buildReceiptSvg(details: ReceiptDetails, logos?: ReceiptLogoData): string {
+  const typeColor = details.type === "income" ? "#0f766e" : "#b91c1c";
+  const tag = details.tag ? xml(details.tag) : details.type === "income" ? "COLLECTION" : "EXPENSE";
+  const isContribution = details.requiredAmount !== undefined;
+  const history = isContribution ? (details.paymentItems ?? []) : [];
+
+  const headerRows: DetailRow[] = [
+    ["RECEIVED FROM / PAID TO", xml(details.issuedTo) || "—"],
+    ["EVENT / PURPOSE", xml(details.eventName || details.description || "—")],
+    ...(details.description && details.eventName ? [["DETAILS", xml(details.description)] as DetailRow] : []),
+  ];
+
+  // The layout grows with the rows so the total and footer stay inside the box
+  // (and the PNG/JPG export adapts automatically).
+  let rowsSvg: string;
+  let lineY: number; // separator above the total
+  if (history.length > 0) {
+    const remaining = details.remainingBalance ?? 0;
+    const summaryY = ROWS_START + headerRows.length * ROW_PITCH + 16;
+    const summaryRows: DetailRow[] = [
+      ["REQUIRED AMOUNT", peso(details.requiredAmount ?? 0)],
+      ["TOTAL AMOUNT PAID", peso(details.amount)],
+      ["REMAINING BALANCE", peso(remaining), remaining > 0 ? RED : GREEN],
+      ["OVERALL STATUS", xml(details.statusLabel || "—"), details.statusLabel === "Fully Paid" ? GREEN : AMBER],
+    ];
+    const captionY = summaryY + summaryRows.length * ROW_PITCH + 20;
+    const tableHeaderY = captionY + 22;
+    rowsSvg = [
+      detailRowsSvg(headerRows, ROWS_START),
+      detailRowsSvg(summaryRows, summaryY),
+      historyTableSvg(history, captionY, tableHeaderY),
+    ].join("\n    ");
+    lineY = tableHeaderY + (history.length + 1) * HIST_ROW_H + 8;
+  } else {
+    const rows: DetailRow[] = [
+      ...headerRows,
+      ...(isContribution
+        ? ([
+            ["REQUIRED AMOUNT", peso(details.requiredAmount ?? 0)],
+            ["AMOUNT PAID", peso(details.amount)],
+            ["REMAINING BALANCE", peso(details.remainingBalance ?? 0)],
+            ["STATUS", xml(details.statusLabel || "—")],
+          ] as DetailRow[])
+        : []),
+    ];
+    rowsSvg = detailRowsSvg(rows, ROWS_START);
+    lineY = ROWS_START + rows.length * ROW_PITCH - 12;
+  }
+
+  const totalLabel = history.length > 0 ? "TOTAL AMOUNT PAID" : isContribution ? "AMOUNT PAID" : "TOTAL AMOUNT";
+  const boxBottom = lineY + 148;
+  const footerLine = boxBottom + 26;
+  const thankYouTop = footerLine + 70;
+  const height = thankYouTop + 92;
+  const words = xml(amountInWords(details.amount));
+  const wordsShort = words.length > 86 ? words.slice(0, 83) + "..." : words;
+  const recordedBy = xml(details.recordedBy || "Council Officer");
+
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="${height}" viewBox="0 0 600 ${height}">
   <rect width="600" height="${height}" fill="#ffffff"/>
-  <!-- header band -->
   <rect width="600" height="96" fill="${typeColor}"/>
-  <text x="300" y="46" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="2">OFFICIAL RECEIPT</text>
-  <text x="300" y="76" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#ffe4ea" text-anchor="middle" letter-spacing="1">LOCAL STUDENT COUNCIL — DIGITAL TRANSPARENCY</text>
+  <text x="300" y="46" font-family="${SANS}" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="2">OFFICIAL RECEIPT</text>
+  <text x="300" y="76" font-family="${SANS}" font-size="13" fill="#ffe4ea" text-anchor="middle" letter-spacing="1">LOCAL STUDENT COUNCIL — DIGITAL TRANSPARENCY</text>
   ${logos ? receiptLogoMarkup(logos) : ""}
-  <!-- org block -->
-  <text x="40" y="132" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#1f2937">Local Student Council — Digital Transparency Board</text>
-  <text x="40" y="156" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#6b7280">${xml(details.fiscalYear || dynamicSchoolYear())}</text>
+  <text x="40" y="132" font-family="${SANS}" font-size="14" fill="#1f2937">Local Student Council — Digital Transparency Board</text>
+  <text x="40" y="156" font-family="${SANS}" font-size="13" fill="#6b7280">${xml(details.fiscalYear || dynamicSchoolYear())}</text>
   <line x1="40" y1="176" x2="560" y2="176" stroke="#e5e7eb" stroke-width="2"/>
-  <!-- meta -->
   <text x="40" y="212" font-family="monospace" font-size="13" fill="#374151">${xml(details.receiptNumber)}</text>
-  <text x="40" y="236" font-family="monospace" font-size="13" fill="#374151">Date: ${xml(formatDateHuman(details.date))}</text>
-  <text x="40" y="262" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="${typeColor}" letter-spacing="2">${tag}</text>
-  <!-- details box -->
-  <rect x="40" y="272" width="520" height="${boxHeight}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
-${rowsSvg}
+  <text x="40" y="236" font-family="monospace" font-size="13" fill="#374151">${history.length > 0 ? "Issued" : "Date"}: ${xml(formatDateHuman(details.date))}</text>
+  <text x="40" y="262" font-family="${SANS}" font-size="11" font-weight="bold" fill="${typeColor}" letter-spacing="2">${tag}</text>
+  <rect x="40" y="272" width="520" height="${boxBottom - 272 + 18}" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    ${rowsSvg}
   <line x1="60" y1="${lineY}" x2="540" y2="${lineY}" stroke="#e5e7eb" stroke-width="1"/>
-  <text x="60" y="${lineY + 40}" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#374151">${isContribution ? "AMOUNT PAID" : "TOTAL AMOUNT"}</text>
+  <text x="60" y="${lineY + 40}" font-family="${SANS}" font-size="14" fill="#374151">${totalLabel}</text>
   <text x="540" y="${lineY + 46}" font-family="monospace" font-size="26" font-weight="bold" fill="${typeColor}" text-anchor="end">PHP ${xml(formatAmount(details.amount))}</text>
   <text x="60" y="${lineY + 88}" font-family="monospace" font-size="11" fill="#6b7280">${wordsShort}</text>
-  <text x="60" y="${lineY + 114}" font-family="monospace" font-size="11" fill="#9ca3af">PREPARED BY: ${xml(details.recordedBy || "Council Officer")}</text>
-  <!-- footer -->
+  <text x="60" y="${lineY + 114}" font-family="monospace" font-size="11" fill="#9ca3af">PREPARED BY: ${recordedBy}</text>
   <line x1="40" y1="${footerLine}" x2="560" y2="${footerLine}" stroke="#e5e7eb" stroke-width="2"/>
-  <text x="40" y="${footerLine + 36}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Authorized signature: ________________________</text>
-  <text x="40" y="${footerLine + 56}" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6b7280">Recorded by: ${xml(details.recordedBy || "Council Officer")}</text>
+  <text x="40" y="${footerLine + 36}" font-family="${SANS}" font-size="12" fill="#6b7280">Authorized signature: ________________________</text>
+  <text x="40" y="${footerLine + 56}" font-family="${SANS}" font-size="12" fill="#6b7280">Recorded by: ${recordedBy}</text>
   <rect x="40" y="${thankYouTop}" width="520" height="56" rx="6" fill="${typeColor}"/>
-  <text x="300" y="${thankYouTop + 35}" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="3">THANK YOU FOR YOUR SUPPORT!</text>
+  <text x="300" y="${thankYouTop + 35}" font-family="${SANS}" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="3">THANK YOU FOR YOUR SUPPORT!</text>
 </svg>`;
 }
 
-// ----------------------------------------------------------------------
-// SVG -> PNG / JPG converters (browser only)
-// ----------------------------------------------------------------------
-
-/** Renders an SVG string onto a canvas (white background, 2x for crispness). */
-async function svgToCanvas(svg: string, scale = 2): Promise<HTMLCanvasElement> {
-  const blob = new Blob([svg], { type: "image/svg+xml" });
-  const url = URL.createObjectURL(blob);
+/** Rasterizes an SVG receipt to PNG or JPG (white background, 2x for crispness). */
+async function svgToImageBlob(svg: string, format: "png" | "jpg", scale = 2): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("Unable to render the receipt image."));
-      image.src = url;
-    });
+    const image = await loadImage(url, "Unable to render the receipt image.");
     const canvas = document.createElement("canvas");
     canvas.width = image.naturalWidth * scale;
     canvas.height = image.naturalHeight * scale;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas is not supported in this browser.");
+    const ctx = canvasContext(canvas, "Canvas is not supported in this browser.");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas;
+    // The quality argument only applies to JPEG.
+    return await canvasToBlob(canvas, `image/${format === "png" ? "png" : "jpeg"}`, `${format.toUpperCase()} export failed.`, 0.92);
   } finally {
     URL.revokeObjectURL(url);
   }
 }
-
-async function svgToPngBlob(svg: string): Promise<Blob> {
-  const canvas = await svgToCanvas(svg);
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("PNG export failed."))),
-      "image/png"
-    );
-  });
-}
-
-async function svgToJpgBlob(svg: string): Promise<Blob> {
-  const canvas = await svgToCanvas(svg);
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("JPG export failed."))),
-      "image/jpeg",
-      0.92
-    );
-  });
-}
-
-// ----------------------------------------------------------------------
-// Public helpers
-// ----------------------------------------------------------------------
 
 /** Triggers a browser download for a blob. */
 export function downloadBlob(blob: Blob, fileName: string): void {
@@ -478,189 +341,88 @@ export const isSvgUrl = (url: string): boolean => {
   return normalizedUrl.endsWith(".svg") || normalizedUrl.startsWith("data:image/svg+xml");
 };
 
-/**
- * Adds the official logos to older SVG receipts that were generated before
- * logo embedding was enabled. New receipts already contain image elements,
- * so they are returned unchanged.
- */
+/** Adds the logos to old SVG receipts generated before logos were embedded. */
 async function ensureReceiptLogos(svg: string): Promise<string> {
   if (/<image\b/i.test(svg)) return svg;
-
-  const logos = await getReceiptLogos();
-  const logoMarkup = receiptLogoMarkup(logos);
-
+  const logoMarkup = receiptLogoMarkup(await getReceiptLogos());
   return svg.replace(/(<rect[^>]*width=["']600["'][^>]*height=["']96["'][^>]*\/?>)/i, `$1\n  ${logoMarkup}`);
 }
 
-/**
- * Local fallback counter for the sequential portion of the Official Receipt
- * (OR) number. It is only used when the database is unavailable (offline), so
- * a valid OR-YYYY-NNNNNN number can still be produced. The authoritative,
- * atomic number always comes from the backend `get_next_or_number()` RPC so
- * numbers are unique and continuous across sessions and devices.
- */
+/** Offline-only fallback for the OR sequence (the RPC is authoritative). */
 let orFallbackSequence = 0;
 
-/** Zero-pads an integer to the given width, e.g. 1 -> "000001". */
-function padSix(n: number): string {
-  return String(n).padStart(6, "0");
-}
-
-/** Current calendar year as a string, e.g. "2026". */
-function currentYear(): string {
-  return String(new Date().getFullYear());
-}
-
-/**
- * Current school year label derived from the system calendar, e.g. "School
- * Year 2026 – 2027". Uses the current year and the following year so the
- * label is always up to date (never hardcoded). Exposed only for the receipt
- * footer fallback when no explicit fiscal year is supplied.
- */
+/** e.g. "School Year 2026 – 2027"; used when no fiscal year is supplied. */
 function dynamicSchoolYear(): string {
   const year = new Date().getFullYear();
   return `School Year ${year} – ${year + 1}`;
 }
 
 /**
- * Returns the next Official Receipt number in the format OR-YYYY-NNNNNN
- * (Official Receipt, current year, six-digit sequential number), e.g.
- * "OR-2026-000001".
- *
- * The next number is allocated atomically by the backend function
- * `public.get_next_or_number()` (which reads the current calendar year from
- * the database server's system clock), so the sequence is unique and
- * continuous across sessions, devices, and years. When the database is
- * unavailable, a local counter keeps producing correctly-formatted numbers so
- * the flow never blocks.
+ * Next Official Receipt number (OR-YYYY-NNNNNN), allocated atomically by the
+ * `get_next_or_number()` RPC; falls back to a local counter when offline.
  */
 export async function officialReceiptNumber(): Promise<string> {
   try {
-    const supabase = getSupabase();
-    const { data, error } = await supabase.rpc("get_next_or_number");
-    if (!error && typeof data === "string" && data.length > 0) {
-      return data;
-    }
-    if (error) {
-      console.warn("get_next_or_number RPC failed:", error.message);
-    }
+    const { data, error } = await getSupabase().rpc("get_next_or_number");
+    if (!error && typeof data === "string" && data.length > 0) return data;
+    if (error) console.warn("get_next_or_number RPC failed:", error.message);
   } catch (err) {
     console.warn("get_next_or_number RPC error:", err);
   }
   orFallbackSequence += 1;
-  return `OR-${currentYear()}-${padSix(orFallbackSequence)}`;
+  return `OR-${new Date().getFullYear()}-${String(orFallbackSequence).padStart(6, "0")}`;
 }
 
 /**
- * Uploads an auto-generated SVG receipt to the public "receipts" bucket and
- * returns its public URL. Throws when storage is not configured/available.
- *
- * When the `details.receiptNumber` is an OR number (OR-YYYY-NNNNNN), the file
- * is stored at a deterministic path derived from that number so that subsequent
- * payments to the same contribution overwrite the same file — one receipt per
- * contribution, always up-to-date.  Random UUIDs are used as a fallback for
- * non-OR receipts to preserve backwards compatibility.
+ * Generates an SVG receipt, uploads it to the "receipts" bucket and returns its
+ * public URL. An OR-numbered receipt is stored at a path derived from the number
+ * and overwritten on later payments, so each contribution keeps one current receipt.
  */
 export async function autoCreateReceipt(details: ReceiptDetails): Promise<string> {
-  const logos = await getReceiptLogos();
-  const svg = buildReceiptSvg(details, logos);
-
-  // Derive a stable, deterministic path from the OR number so overwriting
-  // the same file on each subsequent payment is safe and idempotent.
-  const orSlug =
-    details.receiptNumber && /^OR-\d{4}-\d{6}$/.test(details.receiptNumber)
-      ? details.receiptNumber.toLowerCase()       // e.g. "or-2026-000001"
-      : crypto.randomUUID();
-
-  const path = `auto/${orSlug}.svg`;
-  const { error } = await getSupabase()
-    .storage.from("receipts")
-    .upload(path, new Blob([svg], { type: "image/svg+xml" }), {
-      // upsert:true overwrites the existing file on subsequent payments so
-      // there is always exactly one receipt SVG per contribution.
-      upsert: true,
-      contentType: "image/svg+xml",
-    });
-  if (error) throw new Error(error.message);
-  const { data } = getSupabase().storage.from("receipts").getPublicUrl(path);
-  return data.publicUrl;
+  const svg = buildReceiptSvg(details, await getReceiptLogos());
+  const slug = /^OR-\d{4}-\d{6}$/.test(details.receiptNumber) ? details.receiptNumber.toLowerCase() : crypto.randomUUID();
+  return uploadToBucket(`auto/${slug}.svg`, new Blob([svg], { type: "image/svg+xml" }), "image/svg+xml", true);
 }
 
-/**
- * Downloads a receipt URL in the requested format. Auto-generated SVG
- * receipts are converted to PNG/JPG on the fly; any other file (photo
- * upload) is downloaded as-is.
- */
-export async function downloadReceipt(
-  url: string,
-  format: ReceiptFormat
-): Promise<string> {
+/** Downloads a receipt URL; SVG receipts can be converted to PNG/JPG, other files download as-is. */
+export async function downloadReceipt(url: string, format: ReceiptFormat): Promise<string> {
   const baseName = (url.split("/").pop()?.split("?")[0] || "receipt").replace(/\.[^.]+$/, "");
-
-  if (isSvgUrl(url) && format !== "svg") {
-    const response = await fetch(url, { mode: "cors" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const svg = await ensureReceiptLogos(await response.text());
-    const blob = format === "png" ? await svgToPngBlob(svg) : await svgToJpgBlob(svg);
-    downloadBlob(blob, `${baseName}.${format}`);
-    return format === "png" ? "Receipt downloaded as PNG" : "Receipt downloaded as JPG";
-  }
-
   const response = await fetch(url, { mode: "cors" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const blob = isSvgUrl(url)
-    ? new Blob([await ensureReceiptLogos(await response.text())], { type: "image/svg+xml" })
-    : await response.blob();
-  const ext = isSvgUrl(url) ? "svg" : url.split(".").pop()?.split("?")[0] || "png";
-  downloadBlob(blob, `${baseName}.${ext}`);
-  return "Receipt downloaded";
+
+  if (!isSvgUrl(url)) {
+    downloadBlob(await response.blob(), `${baseName}.${url.split(".").pop()?.split("?")[0] || "png"}`);
+    return "Receipt downloaded";
+  }
+  const svg = await ensureReceiptLogos(await response.text());
+  if (format === "svg") {
+    downloadBlob(new Blob([svg], { type: "image/svg+xml" }), `${baseName}.svg`);
+    return "Receipt downloaded";
+  }
+  downloadBlob(await svgToImageBlob(svg, format), `${baseName}.${format}`);
+  return `Receipt downloaded as ${format.toUpperCase()}`;
 }
 
-/**
- * Builds and immediately downloads a contribution-record receipt for the
- * exact Contribution Records table row (student, event, required, paid,
- * balance, status). Unlike {@link autoCreateReceipt} this never talks to the
- * storage bucket, so it works instantly and offline. Supports SVG, PNG, and
- * JPG formats. Returns a success message for the caller's toast.
- */
+/** Builds a contribution receipt locally (no upload); only for records with a payment. */
+async function buildContributionReceipt(details: ReceiptDetails): Promise<string> {
+  if (details.amount <= 0) {
+    throw new Error("Receipt is only available when the paid amount is greater than zero.");
+  }
+  return buildReceiptSvg(details, await getReceiptLogos());
+}
+
+/** Downloads a contribution-record receipt (works offline). Returns a toast message. */
 export async function downloadContributionReceipt(
   details: ReceiptDetails,
-  format: ReceiptFormat = "svg"
+  format: ReceiptFormat = "svg",
 ): Promise<string> {
-  // Enforce that a receipt can only be issued when an actual payment has been
-  // made. This keeps unpaid records from producing receipts even if the UI
-  // button is bypassed, while allowing both partial and fully paid records.
-  if (details.amount <= 0) {
-    throw new Error(
-      "Receipt is only available when the paid amount is greater than zero."
-    );
-  }
-  const logos = await getReceiptLogos();
-  const svg = buildReceiptSvg(details, logos);
-  const baseName = `contribution-receipt-${details.receiptNumber}.${format}`;
-  if (format === "svg") {
-    downloadBlob(new Blob([svg], { type: "image/svg+xml" }), baseName);
-  } else {
-    const blob = format === "png" ? await svgToPngBlob(svg) : await svgToJpgBlob(svg);
-    downloadBlob(blob, baseName);
-  }
+  const svg = await buildContributionReceipt(details);
+  const blob = format === "svg" ? new Blob([svg], { type: "image/svg+xml" }) : await svgToImageBlob(svg, format);
+  downloadBlob(blob, `contribution-receipt-${details.receiptNumber}.${format}`);
   return `Contribution receipt downloaded (${format.toUpperCase()})`;
 }
 
-/**
- * Creates an in-memory SVG URL for previewing a contribution-record receipt.
- * This uses the same receipt markup as the download action, without uploading
- * a temporary file to storage.
- */
-export async function createContributionReceiptPreview(
-  details: ReceiptDetails,
-): Promise<string> {
-  if (details.amount <= 0) {
-    throw new Error(
-      "Receipt is only available when the paid amount is greater than zero."
-    );
-  }
-  const logos = await getReceiptLogos();
-  const svg = buildReceiptSvg(details, logos);
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+/** In-memory data URL for previewing a contribution-record receipt. */
+export async function createContributionReceiptPreview(details: ReceiptDetails): Promise<string> {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(await buildContributionReceipt(details))}`;
 }
