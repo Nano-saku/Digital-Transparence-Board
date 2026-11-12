@@ -1,58 +1,36 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import {
-  Calendar,
-  Plus,
-  Save,
-  UserCheck,
-  Pencil,
-  Trash2,
-  MoreVertical,
-  Loader2,
-} from "lucide-react";
-import {
-  eventsService,
-  contributionsService,
-  financialReportingService,
-  boardMembersService,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import { notificationsService } from "@/services/notificationsService";
-import type {
-  Event,
-  EventSchedule,
-  EventSession,
-  UserRole,
-  BoardMember,
-} from "@/types";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  formatDate,
-  daysUntil,
-  today,
-  getEarliestScheduledTime,
-  formatTimeRange,
-  formatPeso,
-} from "@/lib/format";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
-import SectionLoader from "@/components/SectionLoader";
-import Skeleton from "@/components/Skeleton";
-import SectionEmptyState from "@/components/SectionEmptyState";
-import SectionBackButton from "@/components/SectionBackButton";
-import TimeInput12 from "@/features/events/TimeInput12";
-import ConfirmDialog from "@/components/common/ConfirmDialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Calendar,
+  CalendarClock,
+  ClipboardCheck,
+  Clock,
+  CloudSun,
+  Moon,
+  Pencil,
+  Plus,
+  Sun,
+  Target,
+  Trash2,
+  UserCheck,
+  Wallet,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { boardMembersService, contributionsService, eventsService, financialReportingService } from "@/services/db";
+import { notificationsService } from "@/services/notificationsService";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import type { BoardMember, Event, EventSchedule, EventSession, UserRole } from "@/types";
+import { daysUntil, formatDate, formatPeso, formatTimeRange, getEarliestScheduledTime, parseCalendarDate, today } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import Page from "@/components/ui/Page";
+import Modal from "@/components/ui/Modal";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Field from "@/components/ui/Field";
+import StatCard from "@/components/ui/StatCard";
+import EmptyState from "@/components/ui/EmptyState";
+import Skeleton from "@/components/ui/Skeleton";
+import { Menu, MenuContent, MenuItem, MenuSeparator, RowActionsTrigger } from "@/components/ui/Menu";
+import TimeInput12 from "@/components/TimeInput12";
 
 interface EventManagementSectionProps {
   onBack: () => void;
@@ -61,495 +39,229 @@ interface EventManagementSectionProps {
   userId?: string;
 }
 
-export default function EventManagementSection({
-  onBack,
-  role,
-}: EventManagementSectionProps) {
+const SESSIONS: Record<EventSession, { label: string; icon: LucideIcon }> = {
+  morning: { label: "Morning", icon: Sun },
+  afternoon: { label: "Afternoon", icon: CloudSun },
+  evening: { label: "Evening", icon: Moon },
+};
+
+type EventForm = {
+  name: string;
+  allocationAmount: number;
+  isNonConducting: boolean;
+  isNoContribution: boolean;
+  autoMarkAbsent: boolean;
+  date: string;
+  tbd: boolean;
+  contributionDeadline: string;
+  schedules: EventSchedule[];
+};
+
+const EMPTY_FORM: EventForm = {
+  name: "",
+  allocationAmount: 0,
+  isNonConducting: false,
+  isNoContribution: false,
+  autoMarkAbsent: false,
+  date: "",
+  tbd: false,
+  contributionDeadline: "",
+  schedules: [],
+};
+
+const isTbd = (e: Event) => !e.date || e.date === "TBD";
+const errorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : (error as { message?: string })?.message || fallback;
+
+/** Countdown to the event's earliest session start, so the day isn't deducted early. */
+function eventStatus(event: Event) {
+  if (event.isNonConducting) return { label: "Non-conducting", tone: "chip-neutral" };
+  if (isTbd(event)) return { label: "Date TBD", tone: "chip-warning" };
+  if (event.date! < today()) return { label: "Done", tone: "chip-neutral" };
+  const d = daysUntil(event.date!, getEarliestScheduledTime(event.schedules));
+  if (d <= 0) return { label: "Today", tone: "chip-danger" };
+  return { label: `In ${d}d`, tone: d <= 7 ? "chip-warning" : "chip-success" };
+}
+
+function deadlineChip(date: string) {
+  const d = daysUntil(date);
+  if (d < 0) return { label: "Overdue", tone: "chip-danger" };
+  if (d === 0) return { label: "Today", tone: "chip-danger" };
+  return { label: `In ${d}d`, tone: d <= 7 ? "chip-warning" : "chip-success" };
+}
+
+export default function EventManagementSection({ onBack, role }: EventManagementSectionProps) {
   const [events, setEvents] = useState<Event[]>([]);
-  const [eventTotals, setEventTotals] = useState<Record<string, number>>({});
-  const [expectedAmounts, setExpectedAmounts] = useState<Record<string, number>>(
-    {},
-  );
+  const [collected, setCollected] = useState<Record<string, number>>({});
+  const [expected, setExpected] = useState<Record<string, number>>({});
   const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Role-based permissions
-  const canManageEvents = role === "admin" || role === "board-member";
+  // `editing`: null = closed, "new" = create, Event = edit.
+  const [editing, setEditing] = useState<Event | "new" | null>(null);
+  const [form, setForm] = useState<EventForm>(EMPTY_FORM);
+  const [sessionToAdd, setSessionToAdd] = useState<EventSession | "">("");
+  const [toDelete, setToDelete] = useState<Event | null>(null);
+  const [evaluating, setEvaluating] = useState<Event | null>(null);
+  const [formUrl, setFormUrl] = useState("");
 
-  // Three-dot action menu
-  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+  const canManage = role === "admin" || role === "board-member";
 
-  // Event form
-  const [showEventModal, setShowEventModal] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-
-  // Delete confirmation dialog state
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
-
-  // Evaluation rollout dialog state
-  const [evaluationTarget, setEvaluationTarget] = useState<Event | null>(null);
-  const [evaluationFormUrlInput, setEvaluationFormUrlInput] = useState("");
-  const [savingEvaluation, setSavingEvaluation] = useState(false);
-
-  const [eventForm, setEventForm] = useState<{
-    name: string;
-    allocationAmount: number;
-    isNonConducting: boolean;
-    isNoContribution: boolean;
-    autoMarkAbsent: boolean;
-    date: string;
-    contributionDeadline: string;
-    schedules: EventSchedule[];
-  }>({
-    name: "",
-    allocationAmount: 0,
-    isNonConducting: false,
-    isNoContribution: false,
-    autoMarkAbsent: false,
-    date: "",
-    contributionDeadline: "",
-    schedules: [],
-  });
-
-  const [scheduleToAdd, setScheduleToAdd] = useState<EventSession | "">("");
-  const [eventDateTbd, setEventDateTbd] = useState(false);
-
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const isLoadingRef = useRef(false);
-  const pendingRefreshRef = useRef(false);
+  // Realtime bursts coalesce: a change during a fetch queues one follow-up fetch.
+  const isLoading = useRef(false);
+  const pendingRefresh = useRef(false);
 
   const loadData = useCallback(async (showLoader = true) => {
-    if (isLoadingRef.current) {
-      pendingRefreshRef.current = true;
+    if (isLoading.current) {
+      pendingRefresh.current = true;
       return;
     }
-    isLoadingRef.current = true;
-
+    isLoading.current = true;
+    if (showLoader) setLoading(true);
     try {
-      if (showLoader) {
-        setLoading(true);
-      }
-
-      const [eventsData, totalsData, financialReport] =
-        await Promise.all([
-          eventsService.getAll(),
-          contributionsService.getTotalsByEvent().catch((err) => {
-            console.warn("Could not load contribution totals:", err);
-            return {};
-          }),
-          financialReportingService.getReport().catch((err) => {
-            console.warn("Could not load financial report:", err);
-            return {
-              summary: {
-                totalBudget: 0,
-                totalFundsCollected: 0,
-                totalFundsSpent: 0,
-                remainingBudget: 0,
-                totalExpectedContributions: 0,
-              },
-              eventAllocations: [],
-            };
-          }),
-        ]);
-
+      const [eventsData, totals, report] = await Promise.all([
+        eventsService.getAll(),
+        contributionsService.getTotalsByEvent().catch((err) => {
+          console.warn("Could not load contribution totals:", err);
+          return {};
+        }),
+        financialReportingService.getReport().catch((err) => {
+          console.warn("Could not load financial report:", err);
+          return { eventAllocations: [] };
+        }),
+      ]);
       setEvents(eventsData);
-      setEventTotals(totalsData);
-      setExpectedAmounts(
+      setCollected(totals);
+      // Expected collection comes from the financial report so currently
+      // appointed LSC officers are excluded.
+      setExpected(
         Object.fromEntries(
-          (financialReport.eventAllocations ?? [])
-            .filter((allocation) => allocation.expectedAmount != null)
-            .map((allocation) => [
-              allocation.eventId,
-              Number(allocation.expectedAmount),
-            ]),
+          (report.eventAllocations ?? []).filter((a) => a.expectedAmount != null).map((a) => [a.eventId, Number(a.expectedAmount)]),
         ),
       );
-
-      try {
-        setBoardMembers(await boardMembersService.listBoardMembers());
-      } catch (membersError) {
-        console.warn("Could not load board members:", membersError);
-        setBoardMembers([]);
-      }
+      setBoardMembers(
+        await boardMembersService.listBoardMembers().catch((err) => {
+          console.warn("Could not load board members:", err);
+          return [];
+        }),
+      );
     } catch (error) {
       console.error("Error loading data:", error);
-      if (showLoader) {
-        toast.error("Failed to load data");
-      }
+      if (showLoader) toast.error("Failed to load data");
     } finally {
-      isLoadingRef.current = false;
-      if (showLoader) {
-        setLoading(false);
-      }
-      if (pendingRefreshRef.current) {
-        pendingRefreshRef.current = false;
+      isLoading.current = false;
+      if (showLoader) setLoading(false);
+      if (pendingRefresh.current) {
+        pendingRefresh.current = false;
         void loadData(false);
       }
     }
   }, []);
 
-  // Initial read
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Live updates — useRealtimeSync handles reconnection recovery to prevent
-  // missed officer-exemption, event-allocation, or financial changes.
+  // Reconnect-safe live updates for officer exemptions, allocations and collections.
   useRealtimeSync({
-    tables: [
-      "events",
-      "students",
-      "lsc_officers",
-      "contributions",
-      "board_members",
-    ],
+    tables: ["events", "students", "lsc_officers", "contributions", "board_members"],
     onChange: () => loadData(false),
     channelPrefix: "event-management",
   });
 
-  useSectionEntrance(sectionRef, [
-    {
-      ref: contentRef,
-      from: { y: "6vh", opacity: 0 },
-      to: { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" },
-    },
-  ]);
-
-  const addSchedule = () => {
-    if (!scheduleToAdd) return;
-
-    const alreadyExists = eventForm.schedules.some(
-      (schedule) => schedule.period === scheduleToAdd,
-    );
-
-    if (alreadyExists) {
-      toast.error("This schedule has already been added");
-      return;
-    }
-
-    setEventForm((prev) => ({
-      ...prev,
-      schedules: [
-        ...prev.schedules,
-        {
-          period: scheduleToAdd,
-          timeInEnabled: true,
-          timeOutEnabled: true,
-          timeIn: "",
-          timeOut: "",
-        },
-      ],
-    }));
-
-    setScheduleToAdd("");
-  };
-
-  const removeSchedule = (period: EventSession) => {
-    setEventForm((prev) => ({
-      ...prev,
-      schedules: prev.schedules.filter(
-        (schedule) => schedule.period !== period,
+  // Dated events soonest first, then TBD / non-conducting events alphabetically.
+  const sortedEvents = useMemo(
+    () =>
+      [...events].sort((a, b) =>
+        isTbd(a) !== isTbd(b) ? (isTbd(a) ? 1 : -1) : isTbd(a) ? a.name.localeCompare(b.name) : a.date!.localeCompare(b.date!),
       ),
-    }));
-  };
+    [events],
+  );
 
-  const updateSchedule = (
-    period: EventSession,
-    updates: Partial<EventSchedule>,
-  ) => {
-    setEventForm((prev) => ({
-      ...prev,
-      schedules: prev.schedules.map((schedule) =>
-        schedule.period === period
-          ? {
-              ...schedule,
-              ...updates,
-            }
-          : schedule,
-      ),
-    }));
-  };
+  const replaceEvent = (id: string, patch: Partial<Event>) => setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  const patchForm = (patch: Partial<EventForm>) => setForm((prev) => ({ ...prev, ...patch }));
+  const updateSchedule = (period: EventSession, patch: Partial<EventSchedule>) =>
+    patchForm({ schedules: form.schedules.map((s) => (s.period === period ? { ...s, ...patch } : s)) });
 
-  const openAddEventModal = () => {
-    setEditingEvent(null);
+  // Existing assignments are kept; otherwise every board member oversees the event.
+  const assignedMembers =
+    editing && editing !== "new" && editing.assignedMembers?.length
+      ? editing.assignedMembers
+      : boardMembers.map((m) => ({ memberId: m.id, memberName: m.name }));
 
-    setEventForm({
-      name: "",
-      allocationAmount: 0,
-      isNonConducting: false,
-      isNoContribution: false,
-      autoMarkAbsent: false,
-      date: "",
-      contributionDeadline: "",
-      schedules: [],
-    });
-
-    setEventDateTbd(false);
-    setShowEventModal(true);
-  };
-
-  const handleOpenEditEvent = (event: Event) => {
-    setEditingEvent(event);
-
-    setEventForm({
-      name: event.name,
-      allocationAmount: event.allocationAmount,
-      date: event.date && event.date !== "TBD" ? event.date : "",
-      isNonConducting: event.isNonConducting ?? false,
-      isNoContribution: event.isNoContribution ?? false,
-      autoMarkAbsent: event.autoMarkAbsent ?? false,
-      contributionDeadline: event.contributionDeadline ?? "",
-      schedules: event.schedules ?? [],
-    });
-
-    setEventDateTbd(!event.date || event.date === "TBD");
-    setShowEventModal(true);
-  };
-
-  const handleAddEvent = async () => {
-    if (saving) return;
-
-    const trimmedName = eventForm.name.trim();
-    if (!trimmedName) {
-      toast.error("Please enter an event name.");
-      return;
-    }
-
-    if (!eventForm.isNonConducting && !eventDateTbd && !eventForm.date) {
-      toast.error("Please specify an event date or mark date as To Be Determined.");
-      return;
-    }
-
-    // Prevent duplicate event creation
-    const duplicate = events.some(
-      (e) => e.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+  const openForm = (event?: Event) => {
+    setEditing(event ?? "new");
+    setSessionToAdd("");
+    setForm(
+      event
+        ? {
+            name: event.name,
+            allocationAmount: event.allocationAmount,
+            isNonConducting: event.isNonConducting ?? false,
+            isNoContribution: event.isNoContribution ?? false,
+            autoMarkAbsent: event.autoMarkAbsent ?? false,
+            date: isTbd(event) ? "" : event.date!,
+            tbd: isTbd(event),
+            contributionDeadline: event.contributionDeadline ?? "",
+            schedules: event.schedules ?? [],
+          }
+        : EMPTY_FORM,
     );
-    if (duplicate) {
-      toast.error(`An event named "${trimmedName}" already exists.`);
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      const assignedMembers = boardMembers.map((m) => ({
-        memberId: m.id,
-        memberName: m.name,
-      }));
-
-      const newEvent = await eventsService.create({
-        name: trimmedName,
-        allocationAmount: Number(eventForm.allocationAmount) || 0,
-        isNonConducting: eventForm.isNonConducting,
-        isNoContribution: eventForm.isNoContribution,
-        autoMarkAbsent: eventForm.autoMarkAbsent,
-        date: eventForm.isNonConducting
-          ? ""
-          : eventDateTbd
-          ? "TBD"
-          : eventForm.date,
-        contributionDeadline: eventForm.contributionDeadline,
-        schedules: eventForm.schedules,
-        assignedMembers,
-      });
-
-      setEvents((prev) => [...prev, newEvent]);
-      setShowEventModal(false);
-
-      setEventForm({
-        name: "",
-        allocationAmount: 0,
-        isNonConducting: false,
-        isNoContribution: false,
-        autoMarkAbsent: false,
-        date: "",
-        contributionDeadline: "",
-        schedules: [],
-      });
-
-      setEventDateTbd(false);
-
-      toast.success("Event created successfully");
-    } catch (error) {
-      console.error("Error creating event:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : (error as { message?: string })?.message || "Failed to create event";
-      toast.error(message);
-    } finally {
-      setSaving(false);
-    }
   };
 
-  const handleUpdateEvent = async () => {
-    if (!editingEvent || saving) return;
+  const addSession = () => {
+    if (!sessionToAdd) return;
+    if (form.schedules.some((s) => s.period === sessionToAdd)) return void toast.error("This schedule has already been added");
+    patchForm({ schedules: [...form.schedules, { period: sessionToAdd, timeInEnabled: true, timeOutEnabled: true, timeIn: "", timeOut: "" }] });
+    setSessionToAdd("");
+  };
 
-    const trimmedName = eventForm.name.trim();
-    if (!trimmedName) {
-      toast.error("Please enter an event name.");
-      return;
-    }
+  const saveEvent = async () => {
+    if (!editing || saving) return;
+    const name = form.name.trim();
+    if (!name) return void toast.error("Please enter an event name.");
+    if (!form.isNonConducting && !form.tbd && !form.date)
+      return void toast.error("Please specify an event date or mark date as To Be Determined.");
+    if (editing === "new" && events.some((e) => e.name.trim().toLowerCase() === name.toLowerCase()))
+      return void toast.error(`An event named "${name}" already exists.`);
 
-    if (!eventForm.isNonConducting && !eventDateTbd && !eventForm.date) {
-      toast.error("Please specify an event date or mark date as To Be Determined.");
-      return;
-    }
-
+    const { tbd, autoMarkAbsent, ...rest } = form;
+    const payload = {
+      ...rest,
+      name,
+      allocationAmount: Number(form.allocationAmount) || 0,
+      date: form.isNonConducting ? "" : tbd ? "TBD" : form.date,
+      assignedMembers,
+    };
+    setSaving(true);
     try {
-      setSaving(true);
-
-      const assignedMembers =
-        editingEvent.assignedMembers && editingEvent.assignedMembers.length > 0
-          ? editingEvent.assignedMembers
-          : boardMembers.map((m) => ({
-              memberId: m.id,
-              memberName: m.name,
-            }));
-
-      const eventChanges: Partial<Event> = {
-        name: trimmedName,
-        allocationAmount: Number(eventForm.allocationAmount) || 0,
-        isNonConducting: eventForm.isNonConducting,
-        isNoContribution: eventForm.isNoContribution,
-        date: eventForm.isNonConducting
-          ? ""
-          : eventDateTbd
-          ? "TBD"
-          : eventForm.date,
-        contributionDeadline: eventForm.contributionDeadline,
-        schedules: eventForm.schedules,
-        assignedMembers,
-      };
-      const autoMarkAbsentChanged =
-        editingEvent.autoMarkAbsent !== eventForm.autoMarkAbsent;
-      if (autoMarkAbsentChanged) {
-        eventChanges.autoMarkAbsent = eventForm.autoMarkAbsent;
+      if (editing === "new") {
+        const created = await eventsService.create({ ...payload, autoMarkAbsent });
+        setEvents((prev) => [...prev, created]);
+      } else if (editing.autoMarkAbsent !== autoMarkAbsent) {
+        // The auto-absent switch must reach the server immediately, never the offline queue.
+        replaceEvent(editing.id, await eventsService.updateOnlineOnly(editing.id, { ...payload, autoMarkAbsent }));
+      } else {
+        replaceEvent(editing.id, await eventsService.update(editing.id, payload));
       }
-
-      const updated = autoMarkAbsentChanged
-        ? await eventsService.updateOnlineOnly(editingEvent.id, eventChanges)
-        : await eventsService.update(editingEvent.id, eventChanges);
-
-      setEvents(events.map((e) => (e.id === editingEvent.id ? updated : e)));
-
-      setEditingEvent(null);
-      setShowEventModal(false);
-
-      setEventForm({
-        name: "",
-        allocationAmount: 0,
-        isNonConducting: false,
-        isNoContribution: false,
-        autoMarkAbsent: false,
-        date: "",
-        contributionDeadline: "",
-        schedules: [],
-      });
-
-      setEventDateTbd(false);
-
-      toast.success("Event updated successfully");
+      toast.success(`Event ${editing === "new" ? "created" : "updated"} successfully`);
+      setEditing(null);
     } catch (error) {
-      console.error("Error updating event:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : (error as { message?: string })?.message || "Failed to update event";
-      toast.error(message);
+      console.error("Error saving event:", error);
+      toast.error(errorMessage(error, `Failed to ${editing === "new" ? "create" : "update"} event`));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleOpenDeleteConfirm = (event: Event) => {
-    setOpenActionMenu(null);
-    setEventToDelete(event);
-    setShowDeleteConfirm(true);
-  };
-
-  const handleOpenEvaluationRollout = (event: Event) => {
-    setOpenActionMenu(null);
-    setEvaluationTarget(event);
-    setEvaluationFormUrlInput(event.evaluationFormUrl ?? "");
-  };
-
-  const handleConfirmEvaluationRollout = async () => {
-    if (!evaluationTarget) return;
-    if (!evaluationFormUrlInput.trim()) {
-      toast.error("Paste this event's evaluation Form URL first.");
-      return;
-    }
-
+  const deleteEvent = async () => {
+    if (!toDelete) return;
+    setSaving(true);
     try {
-      setSavingEvaluation(true);
-
-      await eventsService.update(evaluationTarget.id, {
-        evaluationActive: true,
-        evaluationFormUrl: evaluationFormUrlInput.trim(),
-      });
-
-      await notificationsService.sendAnnouncement({
-        recipientKind: "all_students",
-        title: `Evaluation open: ${evaluationTarget.name}`,
-        body: "Please complete the evaluation for this event — it's required before you can access your record again.",
-      });
-
-      setEvents(
-        events.map((e) =>
-          e.id === evaluationTarget.id
-            ? {
-                ...e,
-                evaluationActive: true,
-                evaluationFormUrl: evaluationFormUrlInput.trim(),
-              }
-            : e,
-        ),
-      );
-
-      setEvaluationTarget(null);
-      toast.success("Evaluation rolled out and students notified");
-    } catch (error) {
-      console.error("Error rolling out evaluation:", error);
-      toast.error("Failed to roll out evaluation");
-    } finally {
-      setSavingEvaluation(false);
-    }
-  };
-
-  const handleStopEvaluationRollout = async (event: Event) => {
-    setOpenActionMenu(null);
-
-    try {
-      await eventsService.update(event.id, { evaluationActive: false });
-      setEvents(
-        events.map((e) =>
-          e.id === event.id ? { ...e, evaluationActive: false } : e,
-        ),
-      );
-      toast.success("Evaluation requirement turned off");
-    } catch (error) {
-      console.error("Error stopping evaluation rollout:", error);
-      toast.error("Failed to update event");
-    }
-  };
-
-  const handleDeleteEvent = async () => {
-    if (!eventToDelete) return;
-
-    try {
-      setSaving(true);
-
-      await eventsService.delete(eventToDelete.id);
-
-      setEvents(events.filter((e) => e.id !== eventToDelete.id));
-
-      setEventToDelete(null);
-      setShowDeleteConfirm(false);
-
+      await eventsService.delete(toDelete.id);
+      setEvents((prev) => prev.filter((e) => e.id !== toDelete.id));
+      setToDelete(null);
       toast.success("Event deleted successfully");
     } catch (error) {
       console.error("Error deleting event:", error);
@@ -559,890 +271,422 @@ export default function EventManagementSection({
     }
   };
 
-  // Expected collection comes from the financial report so currently
-  // appointed LSC officers are excluded. Fall back to the legacy calculation
-  // while an older deployed RPC is still in use.
-  const expectedCollection = (event: Event) => {
-    return expectedAmounts[event.id] ?? 0;
-  };
-
-  // Actual collection:
-  // Sum of amountPaid for all contributions belonging to this event,
-  // computed in Postgres via get_event_contribution_totals() rather than
-  // downloading every contribution row to sum client-side.
-  const collectedAmount = (event: Event) => {
-    return eventTotals[event.id] ?? 0;
-  };
-
-  /** Schedule label for the events list. */
-  const scheduleLabel = (event: Event): React.ReactNode => {
-    if (!event.schedules || event.schedules.length === 0) {
-      return "-";
+  const rollOutEvaluation = async () => {
+    if (!evaluating) return;
+    const url = formUrl.trim();
+    if (!url) return void toast.error("Paste this event's evaluation Form URL first.");
+    setSaving(true);
+    try {
+      await eventsService.update(evaluating.id, { evaluationActive: true, evaluationFormUrl: url });
+      await notificationsService.sendAnnouncement({
+        recipientKind: "all_students",
+        title: `Evaluation open: ${evaluating.name}`,
+        body: "Please complete the evaluation for this event — it's required before you can access your record again.",
+      });
+      replaceEvent(evaluating.id, { evaluationActive: true, evaluationFormUrl: url });
+      setEvaluating(null);
+      toast.success("Evaluation rolled out and students notified");
+    } catch (error) {
+      console.error("Error rolling out evaluation:", error);
+      toast.error("Failed to roll out evaluation");
+    } finally {
+      setSaving(false);
     }
-
-    return (
-      <div className="flex flex-col gap-1">
-        {event.schedules.map((schedule) => {
-          const label =
-            schedule.period === "morning"
-              ? "☀ Morning"
-              : schedule.period === "afternoon"
-                ? "🌤 Afternoon"
-                : "🌙 Evening";
-
-          const time =
-            schedule.timeIn || schedule.timeOut
-              ? formatTimeRange(schedule.timeIn, schedule.timeOut)
-              : "Time not set";
-
-          return (
-            <span key={schedule.period} className="whitespace-nowrap">
-              {label}: {time}
-            </span>
-          );
-        })}
-      </div>
-    );
   };
 
-  // Upcoming events listed soonest first.
-  const todaysISO = today();
+  const stopEvaluation = async (event: Event) => {
+    try {
+      await eventsService.update(event.id, { evaluationActive: false });
+      replaceEvent(event.id, { evaluationActive: false });
+      toast.success("Evaluation requirement turned off");
+    } catch (error) {
+      console.error("Error stopping evaluation rollout:", error);
+      toast.error("Failed to update event");
+    }
+  };
 
-  const sortedEvents = useMemo(() => {
-    return [...events].sort((a, b) => {
-      const aTbd = !a.date || a.date === "TBD";
-      const bTbd = !b.date || b.date === "TBD";
-
-      if (aTbd && !bTbd) return 1;
-      if (!aTbd && bTbd) return -1;
-
-      if (aTbd && bTbd) {
-        return a.name.localeCompare(b.name);
-      }
-
-      return (a.date ?? "").localeCompare(b.date ?? "");
-    });
-  }, [events]);
+  const todayISO = today();
+  const upcoming = events.filter((e) => !e.isNonConducting && !isTbd(e) && e.date! >= todayISO).length;
+  const contributionEvents = events.filter((e) => !e.isNoContribution);
+  const totalExpected = contributionEvents.reduce((sum, e) => sum + (expected[e.id] ?? 0), 0);
+  const totalCollected = contributionEvents.reduce((sum, e) => sum + (collected[e.id] ?? 0), 0);
 
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
+    <Page
+      eyebrow="Events"
+      title="Event Management"
+      subtitle="Plan events, attendance sessions and per-student allocations."
+      onBack={onBack}
+      actions={
+        canManage && (
+          <button onClick={() => openForm()} className="btn btn-primary">
+            <Plus className="h-4 w-4" /> Create event
+          </button>
+        )
+      }
+      hero={
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard featured label="Total events" value={events.length} icon={Calendar} />
+          <StatCard label="Upcoming" value={upcoming} icon={CalendarClock} tone="warning" />
+          <StatCard label="Expected" value={formatPeso(totalExpected)} icon={Target} hint="Excludes LSC officers" />
+          <StatCard label="Collected" value={formatPeso(totalCollected)} icon={Wallet} tone="success" />
+        </div>
+      }
     >
-      {/* Content */}
-      <div
-        ref={contentRef}
-        className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12"
+      {loading ? (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }, (_, i) => (
+            <Skeleton key={i} className="h-72 rounded-3xl" />
+          ))}
+        </div>
+      ) : sortedEvents.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={Calendar}
+            title="No events yet"
+            description="Create an event to start tracking attendance and contributions."
+            action={canManage && <button onClick={() => openForm()} className="btn btn-primary btn-sm"><Plus className="h-4 w-4" /> Create event</button>}
+          />
+        </div>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {sortedEvents.map((event) => (
+            <EventCard
+              key={event.id}
+              event={event}
+              expected={expected[event.id] ?? 0}
+              collected={collected[event.id] ?? 0}
+              actions={
+                canManage && (
+                  <Menu>
+                    <RowActionsTrigger label={`Actions for ${event.name}`} />
+                    <MenuContent>
+                      <MenuItem onSelect={() => openForm(event)}><Pencil /> Edit</MenuItem>
+                      {event.evaluationActive ? (
+                        <MenuItem onSelect={() => stopEvaluation(event)}><ClipboardCheck /> Turn off evaluation</MenuItem>
+                      ) : (
+                        <MenuItem onSelect={() => { setEvaluating(event); setFormUrl(event.evaluationFormUrl ?? ""); }}>
+                          <ClipboardCheck /> Roll out evaluation
+                        </MenuItem>
+                      )}
+                      <MenuSeparator />
+                      <MenuItem danger onSelect={() => setToDelete(event)}><Trash2 /> Delete</MenuItem>
+                    </MenuContent>
+                  </Menu>
+                )
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        size="lg"
+        icon={<Calendar className="h-5 w-5 text-brand-500" />}
+        title={editing === "new" ? "Create event" : "Edit event"}
+        description="Sessions define which attendance scans this event expects."
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setEditing(null)} disabled={saving}>Cancel</button>
+            <button
+              className="btn btn-primary"
+              onClick={saveEvent}
+              disabled={saving || !form.name.trim() || (!form.isNonConducting && !form.tbd && !form.date)}
+            >
+              {saving ? "Saving…" : editing === "new" ? "Create event" : "Save changes"}
+            </button>
+          </>
+        }
       >
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            <SectionBackButton onClick={onBack} />
+        <div className="space-y-4">
+          <Field label="Event name">
+            <input className="input" value={form.name} onChange={(e) => patchForm({ name: e.target.value })} placeholder="e.g., General Assembly" />
+          </Field>
 
-            <div>
-              <h1 className="font-display font-bold text-2xl lg:text-3xl text-dark">
-                Event Management
-              </h1>
-
-              <p className="text-text-secondary text-sm">
-                Manage events and allocations
-              </p>
-            </div>
+          <div className="space-y-2">
+            <Toggle
+              label="Non-conducting event"
+              hint="No date or attendance required."
+              checked={form.isNonConducting}
+              onChange={(on) => patchForm(on ? { isNonConducting: true, date: "", schedules: [] } : { isNonConducting: false })}
+            />
+            <Toggle
+              label="No contribution required"
+              hint="Excludes this event from collection tracking & performance."
+              checked={form.isNoContribution}
+              onChange={(on) => patchForm(on ? { isNoContribution: true, contributionDeadline: "", allocationAmount: 0 } : { isNoContribution: false })}
+            />
+            {canManage && (
+              <Toggle
+                label="Auto mark absent"
+                hint="After the event day ends, students without attendance are marked absent automatically."
+                checked={form.autoMarkAbsent}
+                onChange={(on) => patchForm({ autoMarkAbsent: on })}
+              />
+            )}
           </div>
 
-          {canManageEvents && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={openAddEventModal}
-                className="btn-primary px-4 py-2.5 flex items-center gap-2 text-sm"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Event</span>
-              </button>
+          {!(form.isNonConducting && form.isNoContribution) && (
+            <div className={cn("grid gap-4", !form.isNonConducting && !form.isNoContribution && "sm:grid-cols-2")}>
+              {!form.isNonConducting && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="label">Date</span>
+                    <label className="mb-1.5 flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted">
+                      <input type="checkbox" className="accent-brand-500" checked={form.tbd} onChange={(e) => patchForm({ tbd: e.target.checked, date: "" })} />
+                      To be determined
+                    </label>
+                  </div>
+                  <input type="date" className="input" value={form.date} disabled={form.tbd} onChange={(e) => patchForm({ date: e.target.value })} />
+                </div>
+              )}
+              {!form.isNoContribution && (
+                <Field label="Contribution deadline" hint="Last on-time day. Blank = no deadline.">
+                  <input type="date" className="input" value={form.contributionDeadline} onChange={(e) => patchForm({ contributionDeadline: e.target.value })} />
+                </Field>
+              )}
             </div>
           )}
-        </div>
 
-        {/* Loading State */}
-        {loading && <SectionLoader message="Loading data..." />}
-
-        {/* Events Table */}
-        {!loading && (
-          <div className="glass-card p-5 lg:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-red/10 flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-red" />
-                </div>
-
-                <h3 className="font-display font-semibold text-lg text-dark">
-                  Upcoming Events & Allocations
-                </h3>
-              </div>
-            </div>
-
-            <div className="rounded-xl overflow-hidden border border-gray-200">
-              <div className="overflow-x-auto">
-                <table className="glass-table">
-                  <thead>
-                    <tr>
-                      <th>Event Name</th>
-                      <th>Date</th>
-                      <th>Deadline</th>
-                      <th>Schedule</th>
-                      <th>Allocation</th>
-                      <th>Expected Collection</th>
-                      <th>Collected</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {sortedEvents.map((event) => (
-                      <tr key={event.id}>
-                        {/* Event Name */}
-                        <td className="font-medium text-dark">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {event.name}
-                            {event.isNoContribution && (
-                              <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700">
-                                No Contribution
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Date */}
-                        <td className="text-text-secondary whitespace-nowrap">
-                          {event.isNonConducting ? (
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
-                              N/A
-                            </span>
-                          ) : event.date && event.date !== "TBD" ? (
-                            <div className="flex items-center gap-2">
-                              <span>{formatDate(event.date)}</span>
-
-                              {event.date >= todaysISO && (
-                                <span
-                                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
-                                    daysUntil(
-                                      event.date,
-                                      getEarliestScheduledTime(event.schedules),
-                                    ) === 0
-                                      ? "bg-red-500 text-white"
-                                      : "bg-green-100 text-green-600"
-                                  }`}
-                                >
-                                  {daysUntil(
-                                    event.date,
-                                    getEarliestScheduledTime(event.schedules),
-                                  ) === 0
-                                    ? "Today"
-                                    : `In ${daysUntil(
-                                        event.date,
-                                        getEarliestScheduledTime(event.schedules),
-                                      )}d`}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
-                              TBD
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Deadline */}
-                        <td className="text-text-secondary whitespace-nowrap">
-                          {event.contributionDeadline ? (
-                            <div className="flex items-center gap-2">
-                              <span>
-                                {formatDate(event.contributionDeadline)}
-                              </span>
-
-                              <span
-                                className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
-                                  daysUntil(event.contributionDeadline) < 0
-                                    ? "bg-red-500 text-white"
-                                    : daysUntil(event.contributionDeadline) ===
-                                        0
-                                      ? "bg-red-500 text-white"
-                                      : "bg-green-100 text-green-600"
-                                }`}
-                              >
-                                {daysUntil(event.contributionDeadline) < 0
-                                  ? "Overdue"
-                                  : daysUntil(event.contributionDeadline) === 0
-                                    ? "Today"
-                                    : `In ${daysUntil(event.contributionDeadline)}d`}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-text-secondary/60">
-                              Deadline not set
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Schedule */}
-                        <td className="text-text-secondary whitespace-nowrap">
-                          {scheduleLabel(event)}
-                        </td>
-
-                        {/* Allocation */}
-                        <td className="text-text-secondary whitespace-nowrap">
-                          {event.isNoContribution ? (
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
-                              N/A
-                            </span>
-                          ) : (
-                            formatPeso(event.allocationAmount)
-                          )}
-                        </td>
-
-                        {/* Expected Collection */}
-                        <td className="font-medium text-green-600 whitespace-nowrap">
-                          {event.isNoContribution ? (
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
-                              N/A
-                            </span>
-                          ) : (
-                            formatPeso(expectedCollection(event))
-                          )}
-                        </td>
-
-                        {/* Actual Collected */}
-                        <td className="font-medium text-blue-600 whitespace-nowrap">
-                          {event.isNoContribution ? (
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
-                              N/A
-                            </span>
-                          ) : (
-                            formatPeso(collectedAmount(event))
-                          )}
-                        </td>
-
-                        {/* Actions */}
-                        <td>
-                          {canManageEvents && (
-                            <DropdownMenu
-                              open={openActionMenu === event.id}
-                              onOpenChange={(open) =>
-                                setOpenActionMenu(open ? event.id : null)
-                              }
-                            >
-                              <DropdownMenuTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-soft hover:text-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                                  title="Event actions"
-                                  aria-label={`Actions for ${event.name}`}
-                                >
-                                  <MoreVertical className="h-5 w-5" />
-                                </button>
-                              </DropdownMenuTrigger>
-
-                              <DropdownMenuContent
-                                align="end"
-                                sideOffset={6}
-                                className="w-48 max-w-[calc(100vw-2rem)] rounded-xl border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
-                              >
-                                <DropdownMenuItem
-                                  onSelect={() => handleOpenEditEvent(event)}
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                  Edit
-                                </DropdownMenuItem>
-
-                                {event.evaluationActive ? (
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      handleStopEvaluationRollout(event)
-                                    }
-                                  >
-                                    <UserCheck className="h-4 w-4" />
-                                    Turn off evaluation
-                                  </DropdownMenuItem>
-                                ) : (
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      handleOpenEvaluationRollout(event)
-                                    }
-                                  >
-                                    <UserCheck className="h-4 w-4" />
-                                    Roll out evaluation
-                                  </DropdownMenuItem>
-                                )}
-
-                                <DropdownMenuSeparator />
-
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  onSelect={() =>
-                                    handleOpenDeleteConfirm(event)
-                                  }
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {events.length === 0 && (
-              <SectionEmptyState message="No events found" icon={Calendar} />
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Add/Edit Event Modal */}
-      <Dialog
-        open={showEventModal || !!editingEvent}
-        onOpenChange={(open) => {
-          if (!open) {
-            setShowEventModal(false);
-            setEditingEvent(null);
-            setEventDateTbd(false);
-          }
-        }}
-      >
-        <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              {editingEvent ? "Edit Event" : "Create New Event"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            {/* Event Name */}
-            <div>
-              <label className="block text-sm font-medium text-dark mb-1">
-                Event Name
-              </label>
-
+          {!form.isNoContribution && (
+            <Field label="Allocation per student (₱)">
               <input
-                type="text"
-                value={eventForm.name}
-                onChange={(e) =>
-                  setEventForm({
-                    ...eventForm,
-                    name: e.target.value,
-                  })
-                }
-                className="glass-input w-full px-4 py-2"
-                placeholder="e.g., General Assembly"
+                type="number"
+                min={0}
+                className="input"
+                placeholder="0"
+                value={form.allocationAmount || ""}
+                onChange={(e) => patchForm({ allocationAmount: parseInt(e.target.value) || 0 })}
               />
-            </div>
+            </Field>
+          )}
 
-            {/* Event Type */}
-            <div className="flex items-center justify-between rounded-xl border border-border bg-surface-soft/50 px-4 py-3">
+          {!form.isNonConducting && (
+            <div className="space-y-3 rounded-2xl border border-line bg-surface-2 p-4">
               <div>
-                <p className="text-sm font-semibold text-dark">
-                  Non-conducting event
-                </p>
-                <p className="text-xs text-text-secondary">
-                  No date or attendance required
-                </p>
+                <p className="text-sm font-semibold text-ink">Attendance schedule</p>
+                <p className="text-xs text-muted">Add only the sessions required for this event.</p>
               </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={eventForm.isNonConducting}
-                aria-label="Toggle non-conducting event"
-                onClick={() =>
-                  setEventForm((prev) => ({
-                    ...prev,
-                    isNonConducting: !prev.isNonConducting,
-                    ...(!prev.isNonConducting
-                      ? { date: "", schedules: [] }
-                      : {}),
-                  }))
-                }
-                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                  eventForm.isNonConducting ? "bg-red" : "bg-gray-300"
-                }`}
-              >
-                <span
-                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                    eventForm.isNonConducting
-                      ? "translate-x-4.5"
-                      : "translate-x-0.5"
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* No Contribution toggle */}
-            <div className="flex items-center justify-between rounded-xl border border-border bg-surface-soft/50 px-4 py-3">
-              <div>
-                <p className="text-sm font-semibold text-dark">
-                  No contribution required
-                </p>
-                <p className="text-xs text-text-secondary">
-                  Excludes this event from collection tracking & performance
-                </p>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={eventForm.isNoContribution}
-                aria-label="Toggle no-contribution event"
-                onClick={() =>
-                  setEventForm((prev) => ({
-                    ...prev,
-                    isNoContribution: !prev.isNoContribution,
-                    ...(!prev.isNoContribution
-                      ? { contributionDeadline: "", allocationAmount: 0 }
-                      : {}),
-                  }))
-                }
-                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                  eventForm.isNoContribution ? "bg-purple-500" : "bg-gray-300"
-                }`}
-              >
-                <span
-                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                    eventForm.isNoContribution
-                      ? "translate-x-4.5"
-                      : "translate-x-0.5"
-                  }`}
-                />
-              </button>
-            </div>
-
-            {canManageEvents && (
-              <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-soft/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-dark">
-                    Auto Mark Absent
-                  </p>
-                  <p className="text-xs text-text-secondary">
-                    After the event day ends, students without attendance are marked absent automatically.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={eventForm.autoMarkAbsent}
-                  aria-label="Toggle automatic absent marking"
-                  onClick={() =>
-                    setEventForm((prev) => ({
-                      ...prev,
-                      autoMarkAbsent: !prev.autoMarkAbsent,
-                    }))
-                  }
-                  className={`relative inline-flex min-h-9 w-full shrink-0 items-center justify-center rounded-full px-3 text-xs font-semibold transition-colors sm:w-20 ${
-                    eventForm.autoMarkAbsent
-                      ? "bg-green-600 text-white"
-                      : "bg-gray-300 text-gray-700"
-                  }`}
-                >
-                  <span className="relative z-10">
-                    {eventForm.autoMarkAbsent ? "ON" : "OFF"}
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-[left,right] ${
-                      eventForm.autoMarkAbsent
-                        ? "right-1"
-                        : "left-1"
-                    }`}
-                  />
+              <div className="flex gap-2">
+                <select className="input flex-1" value={sessionToAdd} onChange={(e) => setSessionToAdd(e.target.value as EventSession | "")}>
+                  <option value="">Select time of day</option>
+                  {Object.entries(SESSIONS).map(([key, { label }]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+                <button type="button" className="btn btn-secondary h-11" onClick={addSession} disabled={!sessionToAdd}>
+                  <Plus className="h-4 w-4" /> Add
                 </button>
               </div>
-            )}
 
-            {/* Date */}
-            {!eventForm.isNonConducting && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-sm font-medium text-dark">
-                    Date
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextValue = !eventDateTbd;
-
-                      setEventDateTbd(nextValue);
-
-                      if (nextValue) {
-                        setEventForm((prev) => ({
-                          ...prev,
-                          date: "",
-                        }));
-                      }
-                    }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                      eventDateTbd ? "bg-red" : "bg-gray-300"
-                    }`}
-                    aria-label="Toggle date TBD"
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        eventDateTbd ? "translate-x-4.5" : "translate-x-0.5"
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-text-secondary">
-                    Mark date as To Be Determined
-                  </span>
-
-                  {eventDateTbd && (
-                    <span className="text-xs font-semibold text-red">TBD</span>
-                  )}
-                </div>
-
-                <input
-                  type="date"
-                  value={eventForm.date}
-                  onChange={(e) =>
-                    setEventForm((prev) => ({
-                      ...prev,
-                      date: e.target.value,
-                    }))
-                  }
-                  disabled={eventDateTbd}
-                  className={`glass-input w-full px-4 py-2 ${
-                    eventDateTbd ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                />
-              </div>
-            )}
-
-            {/* Contribution deadline */}
-            {!eventForm.isNoContribution && (
-              <div>
-                <label className="block text-sm font-medium text-dark mb-1">
-                  Contribution deadline
-                </label>
-
-                <p className="text-xs text-text-secondary mb-2">
-                  Last day a student's contribution counts as on-time. Leave blank
-                  for no deadline.
-                </p>
-
-                <input
-                  type="date"
-                  value={eventForm.contributionDeadline}
-                  onChange={(e) =>
-                    setEventForm({
-                      ...eventForm,
-                      contributionDeadline: e.target.value,
-                    })
-                  }
-                  className="glass-input w-full px-4 py-2"
-                />
-              </div>
-            )}
-
-            {/* Attendance Schedule */}
-            {!eventForm.isNonConducting && (
-              <div className="rounded-xl border border-white/50 bg-white/30 p-4 space-y-4">
-                <div>
-                  <p className="text-sm font-semibold text-dark">
-                    Attendance Schedule
-                  </p>
-
-                  <p className="text-xs text-text-secondary mt-1">
-                    Add only the sessions required for this event.
-                  </p>
-                </div>
-
-                <div className="flex gap-2">
-                  <select
-                    value={scheduleToAdd}
-                    onChange={(e) =>
-                      setScheduleToAdd(e.target.value as EventSession | "")
-                    }
-                    className="glass-input flex-1 px-3 py-2"
-                  >
-                    <option value="">Select time of day</option>
-                    <option value="morning">☀ Morning</option>
-                    <option value="afternoon">🌤 Afternoon</option>
-                    <option value="evening">🌙 Evening</option>
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={addSchedule}
-                    disabled={!scheduleToAdd}
-                    className="btn-primary px-4 py-2 flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </button>
-                </div>
-
-                {eventForm.schedules.map((schedule) => (
-                  <div
-                    key={schedule.period}
-                    className="rounded-lg border border-white/50 bg-white/40 p-3 space-y-3"
-                  >
+              {form.schedules.map((s) => {
+                const { label, icon: Icon } = SESSIONS[s.period];
+                return (
+                  <div key={s.period} className="space-y-3 rounded-xl border border-line bg-surface p-3">
                     <div className="flex items-center justify-between">
-                      <p className="font-semibold text-dark capitalize">
-                        {schedule.period === "morning" && "☀ Morning"}
-                        {schedule.period === "afternoon" && "🌤 Afternoon"}
-                        {schedule.period === "evening" && "🌙 Evening"}
-                      </p>
-
-                      <button
-                        type="button"
-                        onClick={() => removeSchedule(schedule.period)}
-                        className="text-xs text-red hover:underline"
-                      >
+                      <p className="flex items-center gap-2 text-sm font-semibold text-ink"><Icon className="h-4 w-4 text-brand-500" /> {label}</p>
+                      <button type="button" className="btn btn-ghost btn-sm text-danger" onClick={() => patchForm({ schedules: form.schedules.filter((x) => x.period !== s.period) })}>
                         Remove
                       </button>
                     </div>
-
-                    {/* TIME IN */}
-                    <div>
-                      <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
-                        <input
-                          type="checkbox"
-                          checked={schedule.timeInEnabled}
-                          onChange={(e) =>
-                            updateSchedule(schedule.period, {
-                              timeInEnabled: e.target.checked,
-                              timeIn: e.target.checked ? schedule.timeIn : "",
-                            })
-                          }
-                        />
-                        Enable Time In
-                      </label>
-
-                      {schedule.timeInEnabled && (
-                        <TimeInput12
-                          value={schedule.timeIn ?? ""}
-                          onChange={(value) =>
-                            updateSchedule(schedule.period, {
-                              timeIn: value,
-                            })
-                          }
-                          ariaLabel={`${schedule.period} time in`}
-                        />
-                      )}
-                    </div>
-
-                    {/* TIME OUT */}
-                    <div>
-                      <label className="flex items-center gap-2 text-sm font-medium text-dark mb-2">
-                        <input
-                          type="checkbox"
-                          checked={schedule.timeOutEnabled}
-                          onChange={(e) =>
-                            updateSchedule(schedule.period, {
-                              timeOutEnabled: e.target.checked,
-                              timeOut: e.target.checked ? schedule.timeOut : "",
-                            })
-                          }
-                        />
-                        Enable Time Out
-                      </label>
-
-                      {schedule.timeOutEnabled && (
-                        <TimeInput12
-                          value={schedule.timeOut ?? ""}
-                          onChange={(value) =>
-                            updateSchedule(schedule.period, {
-                              timeOut: value,
-                            })
-                          }
-                          ariaLabel={`${schedule.period} time out`}
-                        />
-                      )}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(["In", "Out"] as const).map((dir) => {
+                        const enabledKey = `time${dir}Enabled` as const;
+                        const timeKey = `time${dir}` as const;
+                        return (
+                          <div key={dir}>
+                            <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted">
+                              <input
+                                type="checkbox"
+                                className="accent-brand-500"
+                                checked={s[enabledKey]}
+                                onChange={(e) => updateSchedule(s.period, { [enabledKey]: e.target.checked, [timeKey]: e.target.checked ? s[timeKey] : "" })}
+                              />
+                              Time {dir.toLowerCase()}
+                            </label>
+                            {s[enabledKey] && (
+                              <TimeInput12 value={s[timeKey] ?? ""} onChange={(v) => updateSchedule(s.period, { [timeKey]: v })} ariaLabel={`${s.period} time ${dir.toLowerCase()}`} />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
+                );
+              })}
+
+              {form.schedules.length === 0 && (
+                <p className="py-2 text-center text-xs text-muted">No sessions added — this event won't require scheduled attendance.</p>
+              )}
+            </div>
+          )}
+
+          {canManage && assignedMembers.length > 0 && (
+            <div>
+              <p className="label flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-muted" /> Assigned board members</p>
+              <div data-lenis-prevent className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                {assignedMembers.map((m) => (
+                  <span key={m.memberId} className="chip chip-neutral">{m.memberName}</span>
                 ))}
-
-                {eventForm.schedules.length === 0 && (
-                  <div className="text-center py-4 text-sm text-text-secondary">
-                    No attendance schedules added. This event will not require
-                    scheduled attendance.
-                  </div>
-                )}
               </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!evaluating}
+        onClose={() => setEvaluating(null)}
+        icon={<ClipboardCheck className="h-5 w-5 text-brand-500" />}
+        title="Roll out evaluation"
+        description={
+          <>
+            Paste the Google Form URL for <b className="text-ink">{evaluating?.name}</b>. Every student not yet in this event's response Sheet must
+            fill it out before viewing their record, and all students will be notified.
+          </>
+        }
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setEvaluating(null)} disabled={saving}>Cancel</button>
+            <button className="btn btn-primary" onClick={rollOutEvaluation} disabled={saving}>{saving ? "Rolling out…" : "Roll out & notify"}</button>
+          </>
+        }
+      >
+        <Field label="Evaluation form URL">
+          <input type="url" className="input" value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://docs.google.com/forms/d/e/.../viewform" />
+        </Field>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={deleteEvent}
+        loading={saving}
+        title="Delete event"
+        confirmLabel="Delete event"
+        description={
+          <>
+            Delete <b className="text-ink">{toDelete?.name}</b>? This also removes related payments, contributions, attendance records and
+            transactions, and cannot be undone.
+          </>
+        }
+      />
+    </Page>
+  );
+}
+
+function Toggle({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex w-full items-center gap-3 rounded-2xl border border-line bg-surface-2 p-4 text-left"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-ink">{label}</span>
+        <span className="block text-xs text-muted">{hint}</span>
+      </span>
+      <span className={cn("relative h-6 w-10 shrink-0 rounded-full transition-colors", checked ? "bg-brand-500" : "bg-line")}>
+        <span className={cn("absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform", checked ? "translate-x-5" : "translate-x-1")} />
+      </span>
+    </button>
+  );
+}
+
+function EventCard({ event, expected, collected, actions }: { event: Event; expected: number; collected: number; actions: React.ReactNode }) {
+  const date = event.isNonConducting || isTbd(event) ? null : parseCalendarDate(event.date!);
+  const status = eventStatus(event);
+  const deadline = event.contributionDeadline ? deadlineChip(event.contributionDeadline) : null;
+  const pct = expected > 0 ? Math.min(100, Math.round((collected / expected) * 100)) : 0;
+
+  return (
+    <article className="card card-hover flex flex-col p-5">
+      <div className="flex items-start gap-4">
+        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-brand-500/10 text-center leading-none text-brand-600">
+          {date ? (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider">{date.toLocaleDateString("en-US", { month: "short" })}</p>
+              <p className="mt-0.5 text-xl font-extrabold">{date.getDate()}</p>
+            </div>
+          ) : (
+            <p className="text-xs font-bold">{event.isNonConducting ? "N/A" : "TBD"}</p>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-bold text-ink" title={event.name}>{event.name}</h3>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <span className={cn("chip", status.tone)}>{status.label}</span>
+            {event.isNoContribution && <span className="chip chip-neutral">No contribution</span>}
+            {event.evaluationActive && <span className="chip chip-brand"><ClipboardCheck className="h-3 w-3" /> Evaluation open</span>}
+          </div>
+        </div>
+        {actions}
+      </div>
+
+      <dl className="mt-5 space-y-2.5 text-sm">
+        {!event.isNoContribution && (
+          <div className="flex items-center justify-between gap-3">
+            <dt className="text-muted">Contribution deadline</dt>
+            <dd className="flex items-center gap-1.5 text-right text-ink">
+              {deadline ? (
+                <>
+                  {formatDate(event.contributionDeadline!)} <span className={cn("chip", deadline.tone)}>{deadline.label}</span>
+                </>
+              ) : (
+                <span className="text-muted">Not set</span>
+              )}
+            </dd>
+          </div>
+        )}
+        <div className="flex items-start justify-between gap-3">
+          <dt className="text-muted">Sessions</dt>
+          <dd className="space-y-1 text-right">
+            {event.isNonConducting ? (
+              <span className="text-muted">No attendance required</span>
+            ) : event.schedules?.length ? (
+              event.schedules.map((s) => {
+                const { label, icon: Icon } = SESSIONS[s.period];
+                return (
+                  <p key={s.period} className="flex items-center justify-end gap-1.5 whitespace-nowrap text-ink">
+                    <Icon className="h-3.5 w-3.5 text-brand-500" aria-label={label} />
+                    {s.timeIn || s.timeOut ? formatTimeRange(s.timeIn, s.timeOut) : <span className="text-muted">{label} · time not set</span>}
+                  </p>
+                );
+              })
+            ) : (
+              <span className="flex items-center gap-1.5 text-muted"><Clock className="h-3.5 w-3.5" /> No sessions</span>
             )}
+          </dd>
+        </div>
+      </dl>
 
-            {/* Allocation Amount */}
-            {!eventForm.isNoContribution && (
-              <div>
-                <label className="block text-sm font-medium text-dark mb-1">
-                  Allocation Amount (₱)
-                </label>
-
-                <input
-                  type="number"
-                  value={eventForm.allocationAmount || ""}
-                  onChange={(e) =>
-                    setEventForm({
-                      ...eventForm,
-                      allocationAmount: parseInt(e.target.value) || 0,
-                    })
-                  }
-                  className="glass-input w-full px-4 py-2"
-                  placeholder="0.00"
-                  min="0"
-                />
-              </div>
-            )}
-
-            {/* Assigned Board Members */}
-            {canManageEvents && boardMembers.length > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-dark mb-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <UserCheck className="w-4 h-4 text-text-secondary" />
-                    Assigned Board Members
-                  </span>
-                </label>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto rounded-xl border border-white/50 p-3 bg-white/30">
-                  {boardMembers.map((member) => (
-                    <label
-                      key={member.id}
-                      className="flex items-center gap-2 cursor-pointer text-sm hover:text-red transition-colors"
-                    >
-                      <span className="truncate">{member.name}</span>
-                    </label>
-                  ))}
+      <div className="mt-auto pt-5">
+        <div className="rounded-2xl bg-surface-2 p-4">
+          {event.isNoContribution ? (
+            <p className="text-center text-xs text-muted">No contribution required — excluded from collection tracking.</p>
+          ) : (
+            <>
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs text-muted">Collected</p>
+                  <p className="text-lg font-extrabold text-ink">{formatPeso(collected)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted">{formatPeso(event.allocationAmount)} / student</p>
+                  <p className="text-xs font-semibold text-muted">of {formatPeso(expected)} expected</p>
                 </div>
               </div>
-            )}
-
-            {/* Modal Buttons */}
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowEventModal(false);
-                  setEditingEvent(null);
-                  setEventDateTbd(false);
-                }}
-                className="flex-1 glass-button px-4 py-2.5"
-                disabled={saving}
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={editingEvent ? handleUpdateEvent : handleAddEvent}
-                className="flex-1 btn-primary px-4 py-2.5 flex items-center justify-center gap-2"
-                disabled={
-                  saving ||
-                  !eventForm.name ||
-                  (!eventForm.isNonConducting &&
-                    !eventDateTbd &&
-                    !eventForm.date)
-                }
-              >
-                {saving ? (
-                  <>
-                    <Skeleton className="h-4 w-4 rounded-full" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    {editingEvent ? (
-                      <Save className="w-4 h-4" />
-                    ) : (
-                      <Plus className="w-4 h-4" />
-                    )}
-
-                    {editingEvent ? "Update Event" : "Create Event"}
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Evaluation Rollout Dialog */}
-      <Dialog
-        open={!!evaluationTarget}
-        onOpenChange={(open) => {
-          if (!open) setEvaluationTarget(null);
-        }}
-      >
-        <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display font-bold text-xl text-dark">
-              Roll out evaluation
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 mt-4">
-            <p className="text-sm text-text-secondary">
-              Paste the Google Form URL for{" "}
-              <span className="font-medium">{evaluationTarget?.name}</span>.
-              Every student not yet recorded in this event's response Sheet will
-              be required to fill it out before they can view their record, and
-              all students will be notified.
-            </p>
-
-            <input
-              type="url"
-              value={evaluationFormUrlInput}
-              onChange={(e) => setEvaluationFormUrlInput(e.target.value)}
-              placeholder="https://docs.google.com/forms/d/e/.../viewform"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setEvaluationTarget(null)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmEvaluationRollout}
-                disabled={savingEvaluation}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground disabled:opacity-60 flex items-center gap-2"
-              >
-                {savingEvaluation && (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                )}
-                Roll out & notify
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Event Confirmation Dialog */}
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        onClose={() => {
-          setShowDeleteConfirm(false);
-          setEventToDelete(null);
-        }}
-        onConfirm={handleDeleteEvent}
-        title="Delete Event"
-        description={`Are you sure you want to delete ${
-          eventToDelete?.name ?? "this event"
-        }? This action cannot be undone.`}
-        warningText="Deleting this event will also remove related payments, contributions, attendance records, and transactions."
-        confirmLabel="Delete Event"
-        loading={saving}
-      />
-    </section>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-indigo-500" style={{ width: `${pct}%` }} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </article>
   );
 }

@@ -1,25 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Calendar,
-  HeartHandshake,
-  QrCode,
-  ShieldCheck,
-} from "lucide-react";
-import type { Event, EventVolunteer, LscOfficer, Student, UserRole } from "@/types";
-import {
-  eventVolunteersService,
-  eventsService,
-  formatLscPositions,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import StudentQrModal from "@/components/StudentQrModal";
-import SectionBackButton from "@/components/SectionBackButton";
-import SectionLoader from "@/components/SectionLoader";
-import AnimatedNetwork from "@/components/ui/animated-network";
-import { useSectionEntrance } from "@/hooks/useSectionEntrance";
-import { getOrdinalSuffix } from "@/lib/format";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { HeartHandshake, QrCode, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import type { Event, EventVolunteer, LscOfficer, Student, UserRole } from "@/types";
+import { eventVolunteersService, eventsService, formatLscPositions } from "@/services/db";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { getOrdinalSuffix } from "@/lib/format";
+import StudentQrModal from "@/components/StudentQrModal";
 import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
+import Page from "@/components/ui/Page";
+import EmptyState from "@/components/ui/EmptyState";
+import { LoadingCard } from "@/components/ui/Skeleton";
 
 interface OfficerRecordSectionProps {
   student: Student;
@@ -29,37 +19,24 @@ interface OfficerRecordSectionProps {
   currentUserRole?: UserRole | null;
 }
 
+const VOLUNTEER_CHIP: Record<EventVolunteer["status"], string> = {
+  assigned: "chip-neutral",
+  active: "chip-brand",
+  completed: "chip-success",
+};
+
 /** The dedicated record view shown only after App verifies an appointment. */
-export default function OfficerRecordSection({
-  student,
-  appointments,
-  onBack,
-  currentUserId,
-  currentUserRole,
-}: OfficerRecordSectionProps) {
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const profileRef = useRef<HTMLDivElement>(null);
-  const [qrStudent, setQrStudent] = useState<Student | null>(null);
+export default function OfficerRecordSection({ student, appointments, onBack, currentUserId, currentUserRole }: OfficerRecordSectionProps) {
+  const [showQr, setShowQr] = useState(false);
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<Event[]>([]);
   const [volunteers, setVolunteers] = useState<EventVolunteer[]>([]);
-  const [profilePhotoUrl, setProfilePhotoUrl] = useState(student.profilePhotoUrl);
   const canEditProfilePhoto =
-    currentUserRole === "admin" ||
-    currentUserRole === "secretary" ||
-    currentUserId === student.accountUserId;
-
-  useEffect(() => {
-    setProfilePhotoUrl(student.profilePhotoUrl);
-  }, [student.id, student.profilePhotoUrl]);
+    currentUserRole === "admin" || currentUserRole === "secretary" || (!!currentUserId && currentUserId === student.accountUserId);
 
   const loadActivities = useCallback(async () => {
     try {
-      setLoading(true);
-      const [eventsData, volunteersData] = await Promise.all([
-        eventsService.getAll(),
-        eventVolunteersService.getByStudentId(student.studentId),
-      ]);
+      const [eventsData, volunteersData] = await Promise.all([eventsService.getAll(), eventVolunteersService.getByStudentId(student.studentId)]);
       setEvents(eventsData);
       setVolunteers(volunteersData);
     } catch (error) {
@@ -74,138 +51,87 @@ export default function OfficerRecordSection({
     void loadActivities();
   }, [loadActivities]);
 
-  // useRealtimeSync handles reconnection recovery for volunteer/event updates.
+  // Reconnection-safe realtime refresh for volunteer/event updates.
   useRealtimeSync({
     tables: ["event_volunteers", "events"],
     onChange: () => void loadActivities(),
     channelPrefix: `officer-record-${student.id}`,
   });
 
-  useSectionEntrance(sectionRef, [
-    {
-      ref: profileRef,
-      from: { x: "-60vw", opacity: 0 },
-      to: { x: 0, opacity: 1, duration: 0.8 },
-    },
-  ]);
+  const positionLabel = useMemo(() => [...new Set(appointments.flatMap((a) => a.positions))].join(" / "), [appointments]);
+  const eventName = (v: EventVolunteer) => events.find((e) => e.id === v.eventId)?.name ?? v.eventName ?? "Campus Event";
+  const details = [student.studentId, student.program, `${student.yearLevel}${getOrdinalSuffix(student.yearLevel)} Year · Section ${student.section}`];
 
-  const positionLabel = useMemo(
-    () =>
-      appointments
-        .flatMap((appointment) => appointment.positions)
-        .filter((position, index, all) => all.indexOf(position) === index)
-        .join(" / "),
-    [appointments],
-  );
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen w-full gradient-bg-orange relative overflow-hidden py-20 lg:py-24"
-    >
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <AnimatedNetwork nodeCount={45} maxEdgeDistance={150} speed={0.3} />
-      </div>
-
-      <div className="relative z-10 w-full px-4 sm:px-6 lg:px-8 xl:px-12">
-        <div className="mb-6">
-          <SectionBackButton onClick={onBack} label="Back to Search" />
-        </div>
-
-        {loading ? (
-          <SectionLoader message="Loading officer activities..." variant="detail" />
-        ) : (
-          <>
-            <div ref={profileRef} className="glass-card p-5 lg:p-6 mb-8">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
-                <div className="flex items-center gap-4">
-                  <ProfilePhotoUploader
-                    studentId={student.id}
-                    photoUrl={profilePhotoUrl}
-                    name={student.name}
-                    editable={canEditProfilePhoto}
-                    sizeClassName="h-16 w-16"
-                    onUploaded={setProfilePhotoUrl}
-                  />
-                  <div>
-                    <p className="text-xs text-text-secondary uppercase tracking-wider">
-                      Verified LSC Officer Record
-                    </p>
-                    <h2 className="font-display font-bold text-2xl text-dark">
-                      {student.name}
-                    </h2>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-text-secondary mt-1">
-                      <span>{student.studentId}</span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-4 h-4" />
-                        {student.program}
-                      </span>
-                      <span>
-                        {student.yearLevel}
-                        {getOrdinalSuffix(student.yearLevel)} Year - Section {student.section}
-                      </span>
-                    </div>
-                    <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-amber-700">
-                      <ShieldCheck className="h-4 w-4 text-amber-600" />
-                      {positionLabel || formatLscPositions(appointments[0]?.positions)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setQrStudent(student)}
-                  className="glass-button px-4 py-2.5 flex items-center gap-2 text-sm"
-                  title="Download your attendance QR code"
-                >
-                  <QrCode className="w-4 h-4" />
-                  QR Code
-                </button>
-              </div>
+    <Page
+      eyebrow="Verified LSC officer record"
+      title="Your officer record"
+      subtitle="Your council appointment and the event engagements assigned to you."
+      onBack={onBack}
+      hero={
+        <div className="glass flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:p-6">
+          <ProfilePhotoUploader
+            studentId={student.id}
+            photoUrl={student.profilePhotoUrl}
+            name={student.name}
+            editable={canEditProfilePhoto}
+            sizeClassName="h-20 w-20"
+            className="bg-white/15 text-white ring-white/25"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xl font-bold sm:text-2xl">{student.name}</p>
+            <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-powder">
+              <ShieldCheck className="h-4 w-4 shrink-0" />
+              {positionLabel || formatLscPositions(appointments[0]?.positions)}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {details.map((d) => (
+                <span key={d} className="chip bg-white/10 font-medium text-white/85">
+                  {d}
+                </span>
+              ))}
             </div>
-
-            {volunteers.length > 0 && (
-              <div className="glass-card p-5 lg:p-6 mb-8 border border-primary-500/30 bg-white/70">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center">
-                    <HeartHandshake className="w-5 h-5 text-primary-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-display font-bold text-lg text-dark">
-                      Volunteer Activities
-                    </h3>
-                    <p className="text-xs text-text-secondary">
-                      Assigned event engagements ({volunteers.length})
+          </div>
+          <button onClick={() => setShowQr(true)} className="btn btn-light self-start sm:self-center" title="Download your attendance QR code">
+            <QrCode className="h-4 w-4" /> My QR code
+          </button>
+        </div>
+      }
+    >
+      {loading ? (
+        <LoadingCard rows={4} label="Loading officer activities…" />
+      ) : (
+        <section className="card overflow-hidden">
+          <div className="flex items-center gap-3 p-5">
+            <div className="icon-tile">
+              <HeartHandshake className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-lg font-bold">Volunteer activities</h2>
+              <p className="text-xs text-muted">Assigned event engagements ({volunteers.length})</p>
+            </div>
+          </div>
+          {volunteers.length === 0 ? (
+            <EmptyState icon={HeartHandshake} title="No volunteer activities yet" description="Event engagements assigned to you will appear here." />
+          ) : (
+            <ul className="space-y-2 px-5 pb-5">
+              {volunteers.map((v) => (
+                <li key={v.id} className="flex items-start justify-between gap-3 rounded-2xl border border-line bg-surface-2 p-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-ink">{eventName(v)}</p>
+                    <p className="mt-0.5 text-sm text-muted">
+                      Role / task: <span className="font-medium text-ink">{v.roleOrTask}</span>
                     </p>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  {volunteers.map((volunteer) => {
-                    const event = events.find((item) => item.id === volunteer.eventId);
-                    return (
-                      <div
-                        key={volunteer.id}
-                        className="flex items-start justify-between gap-2 p-3 rounded-lg bg-white/80 border border-white/90 text-xs"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-dark truncate">
-                            {event?.name ?? volunteer.eventName ?? "Campus Event"}
-                          </p>
-                          <p className="text-text-secondary mt-0.5">
-                            Role / Task: <span className="font-medium text-dark">{volunteer.roleOrTask}</span>
-                          </p>
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 shrink-0 capitalize">
-                          {volunteer.status || "Assigned"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+                  <span className={`chip capitalize ${VOLUNTEER_CHIP[v.status] ?? "chip-neutral"}`}>{v.status || "assigned"}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
-      <StudentQrModal student={qrStudent} onClose={() => setQrStudent(null)} />
-    </section>
+      <StudentQrModal student={showQr ? student : null} onClose={() => setShowQr(false)} />
+    </Page>
   );
 }

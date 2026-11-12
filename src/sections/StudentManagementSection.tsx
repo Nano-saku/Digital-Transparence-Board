@@ -19,6 +19,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import { LoadingCard } from "@/components/ui/Skeleton";
 import { Menu, MenuContent, MenuItem, MenuSeparator, RowActionsTrigger } from "@/components/ui/Menu";
 import StudentQrModal from "@/components/StudentQrModal";
+import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
 
 type StudentForm = Omit<Student, "id">;
 const EMPTY_FORM: StudentForm = { studentId: "", name: "", program: "", yearLevel: 1, section: "" };
@@ -82,6 +83,13 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
   const openForm = (student: Student | "new") => {
     setForm(student === "new" ? EMPTY_FORM : { ...student });
     setEditing(student);
+  };
+
+  // A new photo is saved immediately (not on "Update"), so mirror it into the list right away.
+  const photoUploaded = (student: Student, profilePhotoUrl: string) => {
+    const updated = { ...student, profilePhotoUrl };
+    setEditing((cur) => (cur !== null && cur !== "new" && cur.id === updated.id ? updated : cur));
+    setStudents((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   };
 
   const save = async () => {
@@ -261,9 +269,13 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
                       <tr key={s.id}>
                         <td>
                           <div className="flex items-center gap-3">
-                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/10 text-xs font-bold text-brand-600">
-                              {initials(s.name)}
-                            </span>
+                            {s.profilePhotoUrl ? (
+                              <img src={s.profilePhotoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                            ) : (
+                              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/10 text-xs font-bold text-brand-600">
+                                {initials(s.name)}
+                              </span>
+                            )}
                             <div className="min-w-0">
                               <p className="truncate font-semibold">{s.name}</p>
                               <p className="text-xs text-muted">{s.studentId}</p>
@@ -317,6 +329,18 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
             save();
           }}
         >
+          {editing && editing !== "new" && (
+            <div className="flex items-center gap-4 rounded-2xl border border-line bg-surface-2 p-3">
+              <ProfilePhotoUploader
+                studentId={editing.id}
+                photoUrl={editing.profilePhotoUrl}
+                name={editing.name}
+                sizeClassName="h-16 w-16"
+                onUploaded={(url) => photoUploaded(editing, url)}
+              />
+              <p className="text-xs text-muted">This photo is saved to the student record and is also used for LSC officer displays.</p>
+            </div>
+          )}
           <Field label="Student ID">
             <input className="input" value={form.studentId} onChange={(e) => set("studentId", e.target.value)} placeholder="e.g. 2021-00001" disabled={saving} />
           </Field>

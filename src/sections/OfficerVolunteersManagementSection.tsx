@@ -1,34 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertCircle,
+  Award,
+  CheckCircle2,
+  Edit2,
+  Info,
+  Layers,
+  Plus,
   ShieldCheck,
+  Sparkles,
+  Trash2,
   UserPlus,
   Users,
-  Search,
-  Plus,
-  Trash2,
-  Edit2,
   X,
-  CheckCircle2,
-  Award,
-  Layers,
-  Sparkles,
-  Info,
-  AlertCircle,
 } from "lucide-react";
-import SectionLayout from "@/components/common/SectionLayout";
-import SectionLoader from "@/components/SectionLoader";
-import SectionEmptyState from "@/components/SectionEmptyState";
-import ConfirmDialog from "@/components/common/ConfirmDialog";
-import SearchFilterBar from "@/components/common/SearchFilterBar";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
 import {
   lscOfficersService,
   eventVolunteersService,
@@ -38,6 +24,8 @@ import {
   OFFICIAL_LSC_POSITIONS,
 } from "@/services/db";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type {
   LscOfficer,
   EventVolunteer,
@@ -46,7 +34,14 @@ import type {
   UserRole,
   OfficialLscPosition,
 } from "@/types";
-import { toast } from "sonner";
+import Page from "@/components/ui/Page";
+import Modal from "@/components/ui/Modal";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Field from "@/components/ui/Field";
+import SearchInput from "@/components/ui/SearchInput";
+import StatCard from "@/components/ui/StatCard";
+import EmptyState from "@/components/ui/EmptyState";
+import { LoadingCard } from "@/components/ui/Skeleton";
 
 interface OfficerVolunteersManagementSectionProps {
   onBack: () => void;
@@ -558,743 +553,334 @@ export default function OfficerVolunteersManagementSection({
 
   if (role !== "admin") {
     return (
-      <SectionLayout
-        title="LSC Officers & Event Volunteers"
-        subtitle="Manage official positions and volunteers"
-        onBack={onBack}
-      >
-        <div className="glass-card p-8 text-center max-w-lg mx-auto my-12">
-          <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-dark mb-2">
-            Administrator Access Required
-          </h2>
-          <p className="text-sm text-text-secondary mb-6">
-            Only the Admin has permission to select LSC Officers, assign official
-            positions, and manage event volunteers.
-          </p>
-          <button onClick={onBack} className="btn-primary px-6 py-2">
-            Return to Dashboard
-          </button>
+      <Page title="LSC Officers & Event Volunteers" subtitle="Manage official positions and volunteers" onBack={onBack}>
+        <div className="card">
+          <EmptyState
+            icon={AlertCircle}
+            title="Administrator Access Required"
+            description="Only the Admin has permission to select LSC Officers, assign official positions, and manage event volunteers."
+            action={
+              <button onClick={onBack} className="btn btn-primary">
+                Return to Dashboard
+              </button>
+            }
+          />
         </div>
-      </SectionLayout>
+      </Page>
     );
   }
 
+  const isOfficerFiltered = officerSearch !== "" || roleFilter !== "all" || programFilter !== "all";
+  const isVolunteerFiltered = volunteerSearch !== "" || eventFilter !== "all";
+  const editingExistingOfficer =
+    !!selectedStudentForOfficer && officerStudentIdMap.has(selectedStudentForOfficer.studentId.trim().toLowerCase());
+  const assignOfficerButton = (
+    <button onClick={() => handleOpenAssignOfficer()} className="btn btn-primary">
+      <UserPlus className="h-4 w-4" /> Assign LSC Officer
+    </button>
+  );
+  const assignVolunteerButton = (
+    <button onClick={handleOpenAssignVolunteer} className="btn btn-primary">
+      <Plus className="h-4 w-4" /> Assign Event Volunteer
+    </button>
+  );
+
   return (
-    <SectionLayout
+    <Page
+      eyebrow="Council roster"
       title="LSC Officers & Event Volunteers"
       subtitle="Strict manual assignment of official positions and event volunteers"
       onBack={onBack}
-      headerActions={
-        <div className="flex items-center gap-2">
-          {activeTab === "officers" ? (
-            <button
-              onClick={() => handleOpenAssignOfficer()}
-              className="btn-primary flex items-center gap-2 px-4 py-2 text-sm shadow-md hover:shadow-lg transition-all"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>Assign LSC Officer</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleOpenAssignVolunteer}
-              className="btn-primary flex items-center gap-2 px-4 py-2 text-sm shadow-md hover:shadow-lg transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Assign Event Volunteer</span>
-            </button>
-          )}
+      actions={activeTab === "officers" ? assignOfficerButton : assignVolunteerButton}
+      hero={
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard featured icon={ShieldCheck} label="Total Officers" value={stats.totalOfficers} hint="Officially appointed" />
+          <StatCard icon={Award} label="Board Members" value={stats.boardMembersCount} hint="Manual board roles" />
+          <StatCard icon={Layers} tone="warning" label="Committees" value={stats.committeeCount} hint="Creatives & Tech" />
+          <StatCard icon={Users} tone="success" label="Event Volunteers" value={stats.totalVolunteers} hint="Active assignments" />
         </div>
       }
     >
-      <div className="space-y-6">
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-3 border-b border-white/10 pb-2">
-          <button
-            onClick={() => setActiveTab("officers")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-              activeTab === "officers"
-                ? "bg-lsc-gold text-navy-dark shadow-sm font-semibold"
-                : "text-text-secondary hover:text-dark hover:bg-white/5"
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>LSC Officers ({officers.length})</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("volunteers")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-              activeTab === "volunteers"
-                ? "bg-lsc-gold text-navy-dark shadow-sm font-semibold"
-                : "text-text-secondary hover:text-dark hover:bg-white/5"
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Event Volunteers ({volunteers.length})</span>
-          </button>
+      <div className="card space-y-3 p-4">
+        <div role="tablist" className="flex flex-wrap gap-1">
+          {(
+            [
+              { tab: "officers", label: "LSC Officers", icon: ShieldCheck, count: officers.length },
+              { tab: "volunteers", label: "Event Volunteers", icon: Users, count: volunteers.length },
+            ] as const
+          ).map(({ tab, label, icon: Icon, count }) => {
+            const active = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(tab)}
+                className={cn("btn btn-sm", active ? "btn-primary" : "btn-ghost")}
+              >
+                <Icon className="h-3.5 w-3.5" /> {label}
+                <span className={cn("rounded-full px-1.5 text-[11px]", active ? "bg-white/20" : "bg-surface-2")}>{count}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Top Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="glass-card p-4 rounded-xl border border-white/10">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Total Officers
-              </span>
-              <ShieldCheck className="w-4 h-4 text-lsc-gold" />
-            </div>
-            <p className="text-2xl font-bold text-dark">{stats.totalOfficers}</p>
-            <p className="text-xs text-text-secondary mt-1">Officially appointed</p>
-          </div>
-
-          <div className="glass-card p-4 rounded-xl border border-white/10">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Board Members
-              </span>
-              <Award className="w-4 h-4 text-blue-400" />
-            </div>
-            <p className="text-2xl font-bold text-blue-400">
-              {stats.boardMembersCount}
-            </p>
-            <p className="text-xs text-text-secondary mt-1">Manual board roles</p>
-          </div>
-
-          <div className="glass-card p-4 rounded-xl border border-white/10">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Committees
-              </span>
-              <Layers className="w-4 h-4 text-purple-400" />
-            </div>
-            <p className="text-2xl font-bold text-purple-400">
-              {stats.committeeCount}
-            </p>
-            <p className="text-xs text-text-secondary mt-1">
-              Creatives & Tech
-            </p>
-          </div>
-
-          <div className="glass-card p-4 rounded-xl border border-white/10">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Event Volunteers
-              </span>
-              <Users className="w-4 h-4 text-emerald-400" />
-            </div>
-            <p className="text-2xl font-bold text-emerald-400">
-              {stats.totalVolunteers}
-            </p>
-            <p className="text-xs text-text-secondary mt-1">Active assignments</p>
-          </div>
-        </div>
-
-        {/* TAB 1: LSC OFFICERS */}
-        {activeTab === "officers" && (
-          <div className="space-y-4">
-            {/* Search and Filters */}
-            <div className="glass-card p-4 rounded-xl space-y-3">
-              <div className="flex flex-col md:flex-row gap-3">
-                <div className="flex-1">
-                  <SearchFilterBar
-                    value={officerSearch}
-                    onChange={setOfficerSearch}
-                    placeholder="Search officers by name, student ID, or position..."
-                  />
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <select
-                    value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value)}
-                    className="glass-select text-sm px-3 py-2 rounded-lg min-w-[180px]"
-                  >
-                    <option value="all">All Official Roles</option>
-                    {OFFICIAL_LSC_POSITIONS.map((pos) => (
-                      <option key={pos} value={pos}>
-                        {pos}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={programFilter}
-                    onChange={(e) => setProgramFilter(e.target.value)}
-                    className="glass-select text-sm px-3 py-2 rounded-lg min-w-[140px]"
-                  >
-                    <option value="all">All Programs</option>
-                    {programOptions.map((prog) => (
-                      <option key={prog} value={prog}>
-                        {prog}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Policy note */}
-              <div className="flex items-center gap-2 text-xs text-text-secondary bg-white/5 p-2 rounded-lg">
-                <Info className="w-3.5 h-3.5 text-lsc-gold shrink-0" />
-                <span>
-                  <strong>Strict Policy:</strong> Zero automatic inferences. Adding a
-                  role never replaces existing roles; removing an individual role
-                  leaves remaining roles intact.
-                </span>
-              </div>
-            </div>
-
-            {/* Officers Grid */}
-            {loading ? (
-              <SectionLoader />
-            ) : filteredOfficers.length === 0 ? (
-              <SectionEmptyState
-                message={
-                  officerSearch || roleFilter !== "all" || programFilter !== "all"
-                    ? "No officers match the selected search or filter criteria."
-                    : "No students have been assigned as LSC Officers yet. Click 'Assign LSC Officer' above to appoint an officer."
-                }
-                icon={ShieldCheck}
-                card
+        {activeTab === "officers" ? (
+          <>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <SearchInput
+                value={officerSearch}
+                onChange={setOfficerSearch}
+                placeholder="Search officers by name, student ID, or position…"
+                className="flex-1"
               />
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredOfficers.map((officer) => (
-                  <div
-                    key={officer.id}
-                    className="glass-card p-5 rounded-xl border border-white/10 flex flex-col justify-between hover:border-lsc-gold/40 transition-all shadow-sm"
-                  >
-                    <div>
-                      {/* Officer Header */}
-                      <div className="flex items-start gap-3 mb-3">
-                        <div className="w-12 h-12 rounded-full overflow-hidden border border-white/20 bg-navy-card shrink-0 flex items-center justify-center">
-                          {studentByStudentId.get(officer.studentId.trim().toLowerCase())?.profilePhotoUrl ? (
-                            <img
-                              src={studentByStudentId.get(officer.studentId.trim().toLowerCase())?.profilePhotoUrl}
-                              alt={`${officer.name}'s profile`}
-                              className="h-full w-full object-cover"
-                              draggable={false}
-                            />
-                          ) : (
-                            <div className="w-full h-full bg-lsc-gold/20 flex items-center justify-center text-lsc-gold font-bold text-base">
-                              {officer.name.charAt(0)}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h3 className="font-bold text-lg text-dark leading-tight truncate">
-                            {officer.name}
-                          </h3>
-                          <p className="text-xs text-text-secondary mt-0.5">
-                            ID: <span className="font-mono text-dark">{officer.studentId}</span>
-                          </p>
-                        </div>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-primary-500/10 text-primary-400 border border-primary-500/20 shrink-0">
-                          {officer.program} {officer.yearLevel ? `-${officer.yearLevel}` : ""} {officer.section}
-                        </span>
-                      </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="input lg:w-52" aria-label="Official role">
+                  <option value="all">All Official Roles</option>
+                  {OFFICIAL_LSC_POSITIONS.map((pos) => (
+                    <option key={pos} value={pos}>
+                      {pos}
+                    </option>
+                  ))}
+                </select>
+                <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)} className="input lg:w-40" aria-label="Program">
+                  <option value="all">All Programs</option>
+                  {programOptions.map((prog) => (
+                    <option key={prog} value={prog}>
+                      {prog}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="flex items-start gap-2 rounded-2xl bg-surface-2 px-3.5 py-2.5 text-xs text-muted">
+              <Info className="mt-px h-3.5 w-3.5 shrink-0 text-brand-500" />
+              <span>
+                <b className="text-ink">Strict Policy:</b> Zero automatic inferences. Adding a role never replaces existing roles; removing an
+                individual role leaves remaining roles intact.
+              </span>
+            </p>
+          </>
+        ) : (
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <SearchInput
+              value={volunteerSearch}
+              onChange={setVolunteerSearch}
+              placeholder="Search volunteers by student name, ID, or task…"
+              className="flex-1"
+            />
+            <select value={eventFilter} onChange={(e) => setEventFilter(e.target.value)} className="input lg:w-60" aria-label="Event">
+              <option value="all">All Events</option>
+              {events.map((ev) => (
+                <option key={ev.id} value={ev.id}>
+                  {ev.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
-                      {/* Official Formatted Position Banner */}
-                      <div className="mb-3 p-2.5 rounded-lg bg-navy-card/90 border border-lsc-gold/30">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-lsc-gold flex items-center gap-1 mb-1">
-                          <ShieldCheck className="w-3 h-3" />
-                          Official Position Display
-                        </span>
-                        <p className="text-sm font-bold text-dark leading-snug">
-                          {formatLscPositions(officer.positions)}
-                        </p>
-                      </div>
-
-                      {/* Individual Roles with independent remove (x) */}
-                      <div className="mb-4">
-                        <p className="text-xs text-text-secondary mb-1.5 font-medium">
-                          Individual Assigned Roles:
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(officer.positions as string[]).map((roleName) => (
-                            <span
-                              key={roleName}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-white/10 text-dark border border-white/15"
-                            >
-                              <span>{roleName}</span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setConfirmRemoveRole({ officer, role: roleName })
-                                }
-                                title={`Remove ${roleName} role only`}
-                                className="text-text-secondary hover:text-red-400 transition-colors p-0.5 rounded"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Officer Actions */}
-                    <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-2">
+      {loading ? (
+        <LoadingCard label={activeTab === "officers" ? "Loading officers…" : "Loading volunteers…"} />
+      ) : activeTab === "officers" ? (
+        filteredOfficers.length === 0 ? (
+          <div className="card">
+            <EmptyState
+              icon={ShieldCheck}
+              title={isOfficerFiltered ? "No officers found" : "No LSC Officers yet"}
+              description={
+                isOfficerFiltered
+                  ? "No officers match the selected search or filter criteria."
+                  : "No students have been assigned as LSC Officers yet. Appoint the first officer to get started."
+              }
+              action={!isOfficerFiltered && assignOfficerButton}
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredOfficers.map((officer) => (
+              <OfficerCard
+                key={officer.id}
+                officer={officer}
+                photoUrl={studentByStudentId.get(officer.studentId.trim().toLowerCase())?.profilePhotoUrl}
+                onManage={() => handleOpenAssignOfficer(officer)}
+                onRemoveRole={(roleName) => setConfirmRemoveRole({ officer, role: roleName })}
+                onRemove={() => setConfirmDeleteOfficer(officer)}
+              />
+            ))}
+          </div>
+        )
+      ) : filteredVolunteers.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={Users}
+            title={isVolunteerFiltered ? "No volunteers found" : "No event volunteers yet"}
+            description={
+              isVolunteerFiltered
+                ? "No volunteers match your criteria."
+                : "No students have been assigned as volunteers for events yet. Assign a student to an event to get started."
+            }
+            action={!isVolunteerFiltered && assignVolunteerButton}
+          />
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div data-lenis-prevent className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Program / Section</th>
+                  <th>Event</th>
+                  <th>Assigned Task / Role</th>
+                  <th>Assigned On</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredVolunteers.map((vol) => (
+                  <tr key={vol.id}>
+                    <td className="min-w-[12rem]">
+                      <p className="font-semibold">{vol.studentName}</p>
+                      <p className="font-mono text-xs text-muted">{studentMap.get(vol.studentId)?.studentId || vol.studentId}</p>
+                    </td>
+                    <td className="whitespace-nowrap text-xs text-muted">{classLabel(vol.program || "N/A", vol.yearLevel, vol.section)}</td>
+                    <td className="font-medium">{vol.eventName}</td>
+                    <td>
+                      <span className="chip chip-success">
+                        <Sparkles className="h-3 w-3" /> {vol.roleOrTask}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap text-xs text-muted">{formatDate(vol.createdAt)}</td>
+                    <td className="text-right">
                       <button
-                        onClick={() => handleOpenAssignOfficer(officer)}
-                        className="glass-button flex-1 py-1.5 px-3 text-xs flex items-center justify-center gap-1.5 text-dark hover:text-lsc-gold font-medium"
+                        onClick={() => setConfirmDeleteVolunteer(vol)}
+                        className="btn btn-ghost btn-sm btn-icon hover:bg-danger/10 hover:text-danger"
+                        aria-label={`Remove ${vol.studentName} from ${vol.eventName}`}
+                        title="Remove Volunteer Assignment"
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        <span>Manage Roles</span>
+                        <Trash2 className="h-4 w-4" />
                       </button>
-                      <button
-                        onClick={() => setConfirmDeleteOfficer(officer)}
-                        className="glass-button p-2 text-text-secondary hover:text-red-400 hover:border-red-400/30 transition-colors"
-                        title="Remove Officer Status"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            )}
+              </tbody>
+            </table>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* TAB 2: EVENT VOLUNTEERS */}
-        {activeTab === "volunteers" && (
-          <div className="space-y-4">
-            {/* Search and Filters */}
-            <div className="glass-card p-4 rounded-xl flex flex-col md:flex-row gap-3">
-              <div className="flex-1">
-                <SearchFilterBar
-                  value={volunteerSearch}
-                  onChange={setVolunteerSearch}
-                  placeholder="Search volunteers by student name, ID, or task..."
-                />
-              </div>
-              <div>
-                <select
-                  value={eventFilter}
-                  onChange={(e) => setEventFilter(e.target.value)}
-                  className="glass-select text-sm px-3 py-2 rounded-lg min-w-[200px]"
-                >
-                  <option value="all">All Events</option>
-                  {events.map((ev) => (
-                    <option key={ev.id} value={ev.id}>
-                      {ev.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Volunteers Table */}
-            {loading ? (
-              <SectionLoader />
-            ) : filteredVolunteers.length === 0 ? (
-              <SectionEmptyState
-                message={
-                  volunteerSearch || eventFilter !== "all"
-                    ? "No volunteers match your criteria."
-                    : "No students have been assigned as volunteers for events yet. Click 'Assign Event Volunteer' above to assign a student."
-                }
-                icon={Users}
-                card
-              />
-            ) : (
-              <div className="glass-card overflow-hidden rounded-xl border border-white/10">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-white/5 border-b border-white/10 text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                      <tr>
-                        <th className="p-4">Student</th>
-                        <th className="p-4">Program / Section</th>
-                        <th className="p-4">Event</th>
-                        <th className="p-4">Assigned Task / Role</th>
-                        <th className="p-4">Assigned On</th>
-                        <th className="p-4 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5 font-normal">
-                      {filteredVolunteers.map((vol) => {
-                        const studentInfo = studentMap.get(vol.studentId);
-                        const displayStudentId = studentInfo?.studentId || vol.studentId;
-                        return (
-                          <tr key={vol.id} className="hover:bg-white/5 transition-colors">
-                            <td className="p-4">
-                              <div className="font-semibold text-dark">{vol.studentName}</div>
-                              <div className="text-xs font-mono text-text-secondary">
-                                {displayStudentId}
-                              </div>
-                            </td>
-                            <td className="p-4 text-text-secondary text-xs">
-                              {vol.program || "N/A"}{" "}
-                              {vol.yearLevel ? `-${vol.yearLevel}` : ""} {vol.section || ""}
-                            </td>
-                            <td className="p-4">
-                              <span className="font-medium text-dark">{vol.eventName}</span>
-                            </td>
-                            <td className="p-4">
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                                <Sparkles className="w-3 h-3" />
-                                {vol.roleOrTask}
-                              </span>
-                            </td>
-                            <td className="p-4 text-xs text-text-secondary">
-                              {new Date(vol.createdAt).toLocaleDateString()}
-                            </td>
-                            <td className="p-4 text-right">
-                              <button
-                                onClick={() => setConfirmDeleteVolunteer(vol)}
-                                className="p-1.5 rounded-lg text-text-secondary hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                title="Remove Volunteer Assignment"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ================= ASSIGN OFFICER MODAL ================= */}
-        <Dialog open={isAssignOfficerOpen} onOpenChange={setIsAssignOfficerOpen}>
-          <DialogContent
-            noScrollArea
-            showCloseButton={false}
-            className="lsc-officer-modal glass-card-strong w-[calc(100vw-32px)] max-w-[520px] max-h-[90vh] flex flex-col gap-0 overflow-hidden rounded-xl border-white/20 p-0"
-          >
-            <DialogHeader className="lsc-officer-modal__header shrink-0 flex-row items-center justify-between gap-3 border-b border-white/10 px-6 py-0 text-left">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <ShieldCheck className="h-[18px] w-[18px] shrink-0 text-lsc-gold" />
-                <DialogTitle className="truncate text-lg font-semibold leading-[1.2] text-dark">
-                  {selectedStudentForOfficer &&
-                  officerStudentIdMap.has(
-                    selectedStudentForOfficer.studentId.trim().toLowerCase(),
-                  )
-                    ? "Manage LSC Officer Roles"
-                    : "Appoint LSC Officer"}
-                </DialogTitle>
-              </div>
-              <DialogClose className="lsc-officer-modal__close ring-offset-background focus:ring-ring flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary opacity-80 transition-opacity hover:bg-white/10 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2">
-                <X className="h-[18px] w-[18px]" />
-                <span className="sr-only">Close</span>
-              </DialogClose>
-            </DialogHeader>
-
-            <ScrollArea type="always" className="lsc-officer-modal__content min-h-0 flex-1">
-              <div className="lsc-officer-modal__content-inner w-full min-w-0 space-y-3">
-                {/* Step 1: Select Student */}
-                <div className="lsc-officer-modal__section w-full min-w-0">
-                <label className="lsc-officer-modal__section-title block text-xs font-semibold uppercase tracking-[0.03em] text-text-secondary">
-                  1. Select Student
-                </label>
-                {selectedStudentForOfficer ? (
-                  <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between gap-3 w-full min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold text-sm text-dark truncate">
-                        {selectedStudentForOfficer.name}
-                      </p>
-                      <p className="text-xs text-text-secondary truncate">
-                        ID: <span className="font-mono text-dark">{selectedStudentForOfficer.studentId}</span> • {selectedStudentForOfficer.program} {selectedStudentForOfficer.yearLevel ? `-${selectedStudentForOfficer.yearLevel}` : ""} {selectedStudentForOfficer.section}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedStudentForOfficer(null);
-                        setSelectedPositions([]);
-                      }}
-                      className="text-xs text-text-secondary hover:text-red-400 p-1 shrink-0 font-medium transition-colors"
-                    >
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <div className="w-full min-w-0">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
-                      <input
-                        type="text"
-                        value={studentSearchInModal}
-                        onChange={(e) => setStudentSearchInModal(e.target.value)}
-                        placeholder="Search student by name or ID..."
-                        className="lsc-officer-modal__input glass-input h-[38px] w-full rounded-[9px] px-3 pl-9 text-sm"
-                        autoFocus
-                      />
-                    </div>
-                    {studentSearchInModal && (
-                      <div className="max-h-48 overflow-y-auto visible-scrollbar rounded-lg border border-white/10 bg-navy-card divide-y divide-white/5">
-                        {searchedStudentsForOfficer.length === 0 ? (
-                          <p className="text-xs text-text-secondary p-3 text-center">
-                            No students found.
-                          </p>
-                        ) : (
-                          searchedStudentsForOfficer.map((s) => (
-                            <button
-                              key={s.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedStudentForOfficer(s);
-                                const existing = officerStudentIdMap.get(
-                                  s.studentId.trim().toLowerCase(),
-                                );
-                                if (existing) {
-                                  setSelectedPositions([...(existing.positions as string[])]);
-                                } else {
-                                  setSelectedPositions([]);
-                                }
-                              }}
-                              className="w-full text-left p-2.5 hover:bg-white/5 flex items-center justify-between transition-colors"
-                            >
-                              <div className="min-w-0 flex-1 mr-2">
-                                <div className="text-sm font-semibold text-dark truncate">{s.name}</div>
-                                <div className="text-xs text-text-secondary truncate">{s.studentId} • {s.program}</div>
-                              </div>
-                              {officerStudentIdMap.has(s.studentId.trim().toLowerCase()) && (
-                                <span className="text-[10px] font-semibold bg-lsc-gold/20 text-lsc-gold px-2 py-0.5 rounded shrink-0">
-                                  Current Officer
-                                </span>
-                              )}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Assign Official Roles (Multi-select) */}
-              <div className="lsc-officer-modal__section w-full min-w-0">
-                <div className="lsc-officer-modal__section-header flex items-center justify-between gap-2">
-                  <label className="lsc-officer-modal__section-title block text-xs font-semibold uppercase tracking-[0.03em] text-text-secondary">
-                    3. Select Official Positions / Roles
-                  </label>
-                  <span className="shrink-0 text-[11px] font-medium text-lsc-gold">
-                    {selectedPositions.length} selected
-                  </span>
-                </div>
-
-                {/* Formatted Preview */}
-                {selectedPositions.length > 0 && (
-                  <div className="mb-3 p-2.5 rounded-lg bg-navy-card/80 border border-lsc-gold/30">
-                    <span className="text-[10px] uppercase font-bold text-text-secondary block mb-1">
-                      Resulting Official Title:
-                    </span>
-                    <span className="text-sm font-bold text-dark break-words">
-                      {formatLscPositions(selectedPositions)}
-                    </span>
-                  </div>
-                )}
-
-                {/* Categories */}
-                <div className="lsc-officer-modal__role-groups flex w-full min-w-0 flex-col">
-                  {POSITION_CATEGORIES.map((cat) => (
-                    <div
-                      key={cat.category}
-                      className="lsc-officer-modal__role-card w-full min-w-0 rounded-[10px] border border-white/5 bg-white/5"
-                    >
-                      <div className="lsc-officer-modal__role-group-header w-full">
-                        <span className="block text-xs font-semibold leading-[1.3] text-dark">
-                          {cat.category}
-                        </span>
-                        <span className="block text-[10px] leading-[1.35] text-text-secondary opacity-75">
-                          {cat.description}
-                        </span>
-                      </div>
-                      <div className="lsc-officer-modal__role-buttons flex w-full flex-wrap items-center">
-                        {cat.positions.map((pos) => {
-                          const isSelected = selectedPositions.includes(pos);
-                          return (
-                            <button
-                              key={pos}
-                              type="button"
-                              onClick={() => handleTogglePosition(pos)}
-                              className={`lsc-officer-modal__role-button inline-flex h-[30px] min-h-[30px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2.5 text-[11px] font-medium transition-all ${
-                                isSelected
-                                  ? "bg-lsc-gold text-navy-dark shadow-sm font-semibold ring-1 ring-lsc-gold"
-                                  : "bg-white/10 text-dark hover:bg-white/20 border border-white/10"
-                              }`}
-                            >
-                              {isSelected ? (
-                                <CheckCircle2 className="h-[13px] w-[13px] shrink-0" />
-                              ) : (
-                                <Plus className="h-[13px] w-[13px] shrink-0 text-text-secondary" />
-                              )}
-                              <span>{pos}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              </div>
-            </ScrollArea>
-
-            {/* Action buttons (pinned DialogFooter) */}
-            <DialogFooter className="lsc-officer-modal__footer flex-row items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsAssignOfficerOpen(false)}
-                className="lsc-officer-modal__cancel glass-button inline-flex h-[34px] items-center justify-center rounded-[9px] px-3.5 text-sm text-text-secondary hover:text-dark"
-                disabled={saving}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmOfficerAssignment}
-                disabled={
-                  saving ||
-                  !selectedStudentForOfficer ||
-                  selectedPositions.length === 0
-                }
-                className="lsc-officer-modal__assign btn-primary inline-flex h-[34px] min-w-[170px] items-center justify-center gap-1.5 rounded-[9px] px-4 text-sm shadow-md"
-              >
-                <ShieldCheck className="w-4 h-4 shrink-0" />
-                <span>
-                  {saving
-                    ? "Saving..."
-                    : selectedStudentForOfficer &&
-                        officerStudentIdMap.has(
-                          selectedStudentForOfficer.studentId.trim().toLowerCase(),
-                        )
-                      ? "Save Officer Assignment"
-                      : "Assign LSC Officer"}
-                </span>
-              </button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ================= ASSIGN VOLUNTEER MODAL ================= */}
-        <Dialog open={isAssignVolunteerOpen} onOpenChange={setIsAssignVolunteerOpen}>
-          <DialogContent
-            noScrollArea
-            className="glass-card-strong w-[calc(100%-2rem)] sm:max-w-lg max-h-[90vh] flex flex-col border-white/20 p-5 sm:p-6"
-          >
-            <DialogHeader className="pr-6 pb-3 border-b border-white/10 shrink-0">
-              <DialogTitle className="text-xl font-bold flex items-center gap-2 text-dark">
-                <Users className="w-5 h-5 text-emerald-400 shrink-0" />
-                <span className="truncate">Assign Event Volunteer</span>
-              </DialogTitle>
-            </DialogHeader>
-
-            <ScrollArea type="always" className="flex-1 min-h-0 py-2 pr-2">
-              <div className="space-y-4 py-1 pr-1 w-full min-w-0 max-w-full">
-              <div className="w-full min-w-0">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-text-secondary mb-1">
-                  1. Select Event
-                </label>
-                {events.length === 0 ? (
-                  <p className="text-xs text-amber-400">No events available yet.</p>
-                ) : (
-                  <select
-                    value={volunteerEventId}
-                    onChange={(e) => setVolunteerEventId(e.target.value)}
-                    className="glass-select w-full text-sm px-3 py-2 rounded-lg"
-                  >
-                    {events.map((ev) => (
-                      <option key={ev.id} value={ev.id}>
-                        {ev.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className="w-full min-w-0">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-text-secondary mb-1">
-                  2. Select Student
-                </label>
-                {selectedStudentForVolunteer ? (
-                  <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between gap-3 w-full min-w-0">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold text-sm text-dark truncate">{selectedStudentForVolunteer.name}</p>
-                      <p className="text-xs text-text-secondary truncate">
-                        ID: <span className="font-mono text-dark">{selectedStudentForVolunteer.studentId}</span>
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedStudentForVolunteer(null)}
-                      className="text-xs text-text-secondary hover:text-red-400 p-1 shrink-0 font-medium transition-colors"
-                    >
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="relative">
-                      <Search className="w-4 h-4 text-text-secondary absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        value={volunteerStudentSearchInModal}
-                        onChange={(e) => setVolunteerStudentSearchInModal(e.target.value)}
-                        placeholder="Search student by name or ID..."
-                        className="glass-input pl-9 w-full text-sm py-2 rounded-lg"
-                      />
-                    </div>
-                    {volunteerStudentSearchInModal && (
-                      <div className="max-h-40 overflow-y-auto visible-scrollbar rounded-lg border border-white/10 bg-navy-card divide-y divide-white/5">
-                        {searchedStudentsForVolunteer.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => setSelectedStudentForVolunteer(s)}
-                            className="w-full text-left p-2.5 hover:bg-white/5 flex items-center justify-between transition-colors"
-                          >
-                            <div className="text-sm font-semibold text-dark">{s.name}</div>
-                            <div className="text-xs text-text-secondary">{s.studentId}</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="w-full min-w-0">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-text-secondary mb-1">
-                  3. Assigned Task / Role
-                </label>
-                <select
-                  value={volunteerTask}
-                  onChange={(e) => setVolunteerTask(e.target.value)}
-                  className="glass-select w-full text-sm px-3 py-2 rounded-lg mb-2"
-                >
-                  {PRESET_VOLUNTEER_TASKS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                  <option value="Custom">Custom Task...</option>
-                </select>
-                {volunteerTask === "Custom" && (
-                  <input
-                    type="text"
-                    value={customVolunteerTask}
-                    onChange={(e) => setCustomVolunteerTask(e.target.value)}
-                    placeholder="Enter specific task description..."
-                    className="glass-input w-full text-sm py-2 rounded-lg"
-                  />
-                )}
-              </div>
-            </div>
-          </ScrollArea>
-
-          <DialogFooter className="pt-3 border-t border-white/10 flex items-center justify-end gap-2.5 w-full min-w-0 shrink-0 mt-auto">
+      {/* Assign / manage officer */}
+      <Modal
+        open={isAssignOfficerOpen}
+        onClose={() => setIsAssignOfficerOpen(false)}
+        size="lg"
+        title={editingExistingOfficer ? "Manage LSC Officer Roles" : "Appoint LSC Officer"}
+        description="Pick a student, then toggle every official position they hold."
+        icon={<ShieldCheck className="h-5 w-5 text-brand-500" />}
+        footer={
+          <>
+            <button type="button" onClick={() => setIsAssignOfficerOpen(false)} className="btn btn-secondary" disabled={saving}>
+              Cancel
+            </button>
             <button
               type="button"
-              onClick={() => setIsAssignVolunteerOpen(false)}
-              className="glass-button px-4 py-2 text-sm text-text-secondary hover:text-dark shrink-0"
-              disabled={saving}
+              onClick={handleConfirmOfficerAssignment}
+              disabled={saving || !selectedStudentForOfficer || selectedPositions.length === 0}
+              className="btn btn-primary"
             >
+              <ShieldCheck className="h-4 w-4" />
+              {saving ? "Saving…" : editingExistingOfficer ? "Save Officer Assignment" : "Assign LSC Officer"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div>
+            <p className="label">1. Select Student</p>
+            {selectedStudentForOfficer ? (
+              <SelectedStudent
+                name={selectedStudentForOfficer.name}
+                meta={
+                  <>
+                    ID: <span className="font-mono text-ink">{selectedStudentForOfficer.studentId}</span> ·{" "}
+                    {classLabel(selectedStudentForOfficer.program, selectedStudentForOfficer.yearLevel, selectedStudentForOfficer.section)}
+                  </>
+                }
+                onChange={() => {
+                  setSelectedStudentForOfficer(null);
+                  setSelectedPositions([]);
+                }}
+              />
+            ) : (
+              <StudentPicker
+                query={studentSearchInModal}
+                onQuery={setStudentSearchInModal}
+                results={searchedStudentsForOfficer}
+                meta={(s) => `${s.studentId} · ${s.program}`}
+                badge={(s) => officerStudentIdMap.has(s.studentId.trim().toLowerCase()) && <span className="chip chip-brand">Current Officer</span>}
+                onPick={(s) => {
+                  setSelectedStudentForOfficer(s);
+                  const existing = officerStudentIdMap.get(s.studentId.trim().toLowerCase());
+                  setSelectedPositions(existing ? [...(existing.positions as string[])] : []);
+                }}
+              />
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="label">2. Select Official Positions / Roles</p>
+              <span className="chip chip-brand mb-1.5">{selectedPositions.length} selected</span>
+            </div>
+
+            {selectedPositions.length > 0 && (
+              <div className="mb-3 rounded-2xl border border-brand-500/20 bg-brand-500/5 px-3.5 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Resulting Official Title</p>
+                <p className="mt-0.5 break-words text-sm font-bold text-ink">{formatLscPositions(selectedPositions)}</p>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              {POSITION_CATEGORIES.map((cat) => (
+                <div key={cat.category} className="rounded-2xl border border-line/70 bg-surface-2/60 p-3.5">
+                  <p className="text-sm font-semibold text-ink">{cat.category}</p>
+                  <p className="text-xs text-muted">{cat.description}</p>
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {cat.positions.map((pos) => {
+                      const isSelected = selectedPositions.includes(pos);
+                      return (
+                        <button
+                          key={pos}
+                          type="button"
+                          aria-pressed={isSelected}
+                          onClick={() => handleTogglePosition(pos)}
+                          className={cn("btn btn-sm", isSelected ? "btn-primary" : "btn-secondary")}
+                        >
+                          {isSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                          {pos}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Assign event volunteer */}
+      <Modal
+        open={isAssignVolunteerOpen}
+        onClose={() => setIsAssignVolunteerOpen(false)}
+        title="Assign Event Volunteer"
+        description="Give a student a task for one event."
+        icon={<Users className="h-5 w-5 text-brand-500" />}
+        footer={
+          <>
+            <button type="button" onClick={() => setIsAssignVolunteerOpen(false)} className="btn btn-secondary" disabled={saving}>
               Cancel
             </button>
             <button
@@ -1306,49 +892,233 @@ export default function OfficerVolunteersManagementSection({
                 !selectedStudentForVolunteer ||
                 (volunteerTask === "Custom" && !customVolunteerTask.trim())
               }
-              className="btn-primary px-5 py-2 text-sm flex items-center gap-2 shrink-0 shadow-md"
+              className="btn btn-primary"
             >
-              <Plus className="w-4 h-4 shrink-0" />
-              <span>{saving ? "Saving..." : "Assign Volunteer"}</span>
+              <Plus className="h-4 w-4" />
+              {saving ? "Saving…" : "Assign Volunteer"}
             </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="1. Select Event">
+            {events.length === 0 ? (
+              <span className="block text-sm text-warning">No events available yet.</span>
+            ) : (
+              <select value={volunteerEventId} onChange={(e) => setVolunteerEventId(e.target.value)} className="input">
+                {events.map((ev) => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
 
-        {/* Confirm Remove Single Role */}
-        <ConfirmDialog
-          open={!!confirmRemoveRole}
-          title="Remove Official Role?"
-          description={`Are you sure you want to remove the "${confirmRemoveRole?.role}" role from ${confirmRemoveRole?.officer.name}? Other assigned roles will remain untouched.`}
-          confirmLabel="Remove Role"
-          loading={saving}
-          onConfirm={handleConfirmRemoveSingleRole}
-          onClose={() => setConfirmRemoveRole(null)}
-        />
+          <div>
+            <p className="label">2. Select Student</p>
+            {selectedStudentForVolunteer ? (
+              <SelectedStudent
+                name={selectedStudentForVolunteer.name}
+                meta={
+                  <>
+                    ID: <span className="font-mono text-ink">{selectedStudentForVolunteer.studentId}</span>
+                  </>
+                }
+                onChange={() => setSelectedStudentForVolunteer(null)}
+              />
+            ) : (
+              <StudentPicker
+                query={volunteerStudentSearchInModal}
+                onQuery={setVolunteerStudentSearchInModal}
+                results={searchedStudentsForVolunteer}
+                meta={(s) => s.studentId}
+                onPick={setSelectedStudentForVolunteer}
+              />
+            )}
+          </div>
 
-        {/* Confirm Delete Entire Officer Status */}
-        <ConfirmDialog
-          open={!!confirmDeleteOfficer}
-          title="Remove Officer Status?"
-          description={`Are you sure you want to remove all officer roles and positions from ${confirmDeleteOfficer?.name}?`}
-          confirmLabel="Remove Officer"
-          loading={saving}
-          onConfirm={handleConfirmDeleteOfficer}
-          onClose={() => setConfirmDeleteOfficer(null)}
-        />
+          <Field label="3. Assigned Task / Role">
+            <select value={volunteerTask} onChange={(e) => setVolunteerTask(e.target.value)} className="input">
+              {PRESET_VOLUNTEER_TASKS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+              <option value="Custom">Custom Task…</option>
+            </select>
+          </Field>
+          {volunteerTask === "Custom" && (
+            <input
+              type="text"
+              value={customVolunteerTask}
+              onChange={(e) => setCustomVolunteerTask(e.target.value)}
+              placeholder="Enter specific task description…"
+              className="input"
+              aria-label="Custom task"
+            />
+          )}
+        </div>
+      </Modal>
 
-        {/* Confirm Delete Volunteer */}
-        <ConfirmDialog
-          open={!!confirmDeleteVolunteer}
-          title="Remove Volunteer Assignment?"
-          description={`Are you sure you want to remove ${confirmDeleteVolunteer?.studentName} from "${confirmDeleteVolunteer?.eventName}"?`}
-          confirmLabel="Remove Volunteer"
-          loading={saving}
-          onConfirm={handleConfirmDeleteVolunteer}
-          onClose={() => setConfirmDeleteVolunteer(null)}
-        />
-      </div>
-    </SectionLayout>
+      <ConfirmDialog
+        open={!!confirmRemoveRole}
+        title="Remove Official Role?"
+        description={`Are you sure you want to remove the "${confirmRemoveRole?.role}" role from ${confirmRemoveRole?.officer.name}? Other assigned roles will remain untouched.`}
+        confirmLabel="Remove Role"
+        loading={saving}
+        onConfirm={handleConfirmRemoveSingleRole}
+        onClose={() => setConfirmRemoveRole(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDeleteOfficer}
+        title="Remove Officer Status?"
+        description={`Are you sure you want to remove all officer roles and positions from ${confirmDeleteOfficer?.name}?`}
+        confirmLabel="Remove Officer"
+        loading={saving}
+        onConfirm={handleConfirmDeleteOfficer}
+        onClose={() => setConfirmDeleteOfficer(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDeleteVolunteer}
+        title="Remove Volunteer Assignment?"
+        description={`Are you sure you want to remove ${confirmDeleteVolunteer?.studentName} from "${confirmDeleteVolunteer?.eventName}"?`}
+        confirmLabel="Remove Volunteer"
+        loading={saving}
+        onConfirm={handleConfirmDeleteVolunteer}
+        onClose={() => setConfirmDeleteVolunteer(null)}
+      />
+    </Page>
   );
 }
 
+/** "BSIT-3 A" style class label. */
+function classLabel(program: string, yearLevel?: number, section?: string): string {
+  return [`${program}${yearLevel ? `-${yearLevel}` : ""}`, section].filter(Boolean).join(" ");
+}
+
+interface OfficerCardProps {
+  officer: LscOfficer;
+  photoUrl?: string;
+  onManage: () => void;
+  onRemoveRole: (role: string) => void;
+  onRemove: () => void;
+}
+
+function OfficerCard({ officer, photoUrl, onManage, onRemoveRole, onRemove }: OfficerCardProps) {
+  return (
+    <article className="card card-hover flex flex-col p-5">
+      <div className="flex items-start gap-3">
+        <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border border-line/70 bg-brand-500/10 text-base font-bold text-brand-600">
+          {photoUrl ? (
+            <img src={photoUrl} alt={`${officer.name}'s profile`} className="h-full w-full object-cover" draggable={false} />
+          ) : (
+            officer.name.charAt(0)
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-lg font-bold leading-tight text-ink">{officer.name}</h3>
+          <p className="mt-0.5 text-xs text-muted">
+            ID: <span className="font-mono text-ink">{officer.studentId}</span>
+          </p>
+        </div>
+        <span className="chip chip-brand shrink-0">{classLabel(officer.program, officer.yearLevel, officer.section)}</span>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-brand-500/20 bg-brand-500/5 px-3.5 py-3">
+        <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600">
+          <ShieldCheck className="h-3 w-3" /> Official Position Display
+        </p>
+        <p className="mt-1 text-sm font-bold leading-snug text-ink">{formatLscPositions(officer.positions)}</p>
+      </div>
+
+      <p className="mb-1.5 mt-4 text-xs font-medium text-muted">Individual Assigned Roles</p>
+      <div className="mb-5 flex flex-wrap gap-1.5">
+        {(officer.positions as string[]).map((roleName) => (
+          <span key={roleName} className="chip chip-neutral pr-1 text-ink">
+            {roleName}
+            <button
+              type="button"
+              onClick={() => onRemoveRole(roleName)}
+              title={`Remove ${roleName} role only`}
+              aria-label={`Remove ${roleName} role only`}
+              className="grid h-5 w-5 place-items-center rounded-full text-muted hover:bg-danger/10 hover:text-danger"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-auto flex items-center gap-2 border-t border-line/60 pt-4">
+        <button onClick={onManage} className="btn btn-secondary btn-sm flex-1">
+          <Edit2 className="h-3.5 w-3.5" /> Manage Roles
+        </button>
+        <button
+          onClick={onRemove}
+          className="btn btn-ghost btn-sm btn-icon hover:bg-danger/10 hover:text-danger"
+          title="Remove Officer Status"
+          aria-label={`Remove officer status from ${officer.name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function SelectedStudent({ name, meta, onChange }: { name: string; meta: ReactNode; onChange: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface-2 px-3.5 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-bold text-ink">{name}</p>
+        <p className="truncate text-xs text-muted">{meta}</p>
+      </div>
+      <button type="button" onClick={onChange} className="btn btn-ghost btn-sm">
+        Change
+      </button>
+    </div>
+  );
+}
+
+interface StudentPickerProps {
+  query: string;
+  onQuery: (query: string) => void;
+  /** Matches for the current query (empty while the query is empty). */
+  results: Student[];
+  meta: (student: Student) => string;
+  badge?: (student: Student) => ReactNode;
+  onPick: (student: Student) => void;
+}
+
+function StudentPicker({ query, onQuery, results, meta, badge, onPick }: StudentPickerProps) {
+  return (
+    <div className="space-y-2">
+      <SearchInput value={query} onChange={onQuery} placeholder="Search student by name or ID…" />
+      {query && (
+        <div className="max-h-48 divide-y divide-line overflow-y-auto rounded-2xl border border-line">
+          {results.length === 0 ? (
+            <p className="p-4 text-center text-sm text-muted">No students found.</p>
+          ) : (
+            results.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onPick(s)}
+                className="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{s.name}</span>
+                  <span className="block truncate text-xs text-muted">{meta(s)}</span>
+                </span>
+                {badge?.(s)}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

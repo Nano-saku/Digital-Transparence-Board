@@ -5,6 +5,7 @@ import { studentsService } from "@/services/db";
 import { cn } from "@/lib/utils";
 import LSCOfficerCarousel from "@/components/LSCOfficerCarousel";
 import FacebookFeed from "@/components/FacebookFeed";
+import UpcomingEvents from "@/components/UpcomingEvents";
 import SplitText from "@/components/motion/SplitText";
 import Reveal from "@/components/motion/Reveal";
 import { gsap, useGSAP, prefersReducedMotion } from "@/lib/gsap";
@@ -214,6 +215,8 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
           </Floating>
         </div>
       </section>
+
+      <UpcomingEvents />
 
       {/* Features */}
       <section className="bg-page px-4 py-20 sm:px-6 lg:py-28">
