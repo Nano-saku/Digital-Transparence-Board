@@ -1,18 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import {
-  ArrowRight,
-  CalendarDays,
-  Coins,
-  CreditCard,
-  FileUp,
-  ListChecks,
-  Pencil,
-  Receipt,
-  RefreshCw,
-  Scale,
-  Trash2,
-  Wallet,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { ArrowRight, CalendarDays, Coins, CreditCard, FileUp, ListChecks, Pencil, Receipt, RefreshCw, Scale, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import Page from "@/components/ui/Page";
 import Modal from "@/components/ui/Modal";
@@ -25,31 +12,17 @@ import Pagination from "@/components/ui/Pagination";
 import { LoadingCard } from "@/components/ui/Skeleton";
 import { Menu, MenuContent, MenuItem, MenuSeparator, RowActionsTrigger } from "@/components/ui/Menu";
 import ReceiptViewer from "@/components/ReceiptViewer";
-import {
-  contributionsService,
-  studentsService,
-  eventsService,
-  paymentsService,
-  lscOfficersService,
-  checkSupabaseConnection,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import type { ContributionRecord, PaymentItem, PaymentRecord, Student, Event, UserRole } from "@/types";
+import { contributionsService, studentsService, eventsService, paymentsService, lscOfficersService, checkSupabaseConnection } from "@/services/db";
+import { useLiveData } from "@/hooks/useLiveData";
+import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
+import type { ContributionRecord, PaymentItem, Student, Event, UserRole } from "@/types";
 import { cn } from "@/lib/utils";
+import { canAccess } from "@/lib/roles";
 import { formatPeso, formatPhilippineDateTime, today } from "@/lib/format";
 import { contributionStatus } from "@/lib/contributions";
 import { activeLscOfficerStudentIds } from "@/lib/lscEligibility";
 import { autoCreateReceipt, officialReceiptNumber } from "@/lib/receipts";
-import {
-  pickField,
-  parseAmount,
-  parsePositiveAmount,
-  normalizeStudentId,
-  expandEventGroups,
-  exactNameKey,
-  looseNameKey,
-} from "@/lib/spreadsheet";
-import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
+import { pickField, parseAmount, parsePositiveAmount, normalizeStudentId, expandEventGroups, exactNameKey, looseNameKey } from "@/lib/spreadsheet";
 
 interface ContributionManagementSectionProps {
   onBack: () => void;
@@ -62,12 +35,7 @@ interface ContributionRow extends ContributionRecord {
   studentDisplayId: string;
 }
 
-interface EditForm {
-  studentId: string;
-  eventId: string;
-  requiredAmount: number;
-  amountPaid: number;
-}
+type EditForm = Pick<ContributionRecord, "studentId" | "eventId" | "requiredAmount" | "amountPaid">;
 
 /** One parsed & matched (student, event) import entry waiting to be saved. */
 interface ParsedEntry {
@@ -78,7 +46,6 @@ interface ParsedEntry {
 }
 
 const PAGE_SIZE = 20;
-const RECEIPT_ROLES: UserRole[] = ["admin", "treasurer", "auditor"];
 const REALTIME_TABLES = ["contributions", "students", "events", "payments", "lsc_officers"] as const;
 const EMPTY_TOTALS = { totalRequired: 0, totalPaid: 0, totalBalance: 0 };
 // Values understood by contributionsService.getPage().
@@ -93,8 +60,7 @@ const IMPORT_HINT =
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
 /** Events that collect a contribution (zero-allocation and no-contribution events are hidden). */
 const collectsContribution = (event: Event) => event.allocationAmount > 0 && !event.isNoContribution;
-const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : ((error as { message?: string } | null)?.message ?? String(error));
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : ((error as { message?: string } | null)?.message ?? String(error)));
 
 /** Rejects non-positive payments and payments above the remaining balance. */
 function paymentAmountError(amount: number, record: Pick<ContributionRecord, "requiredAmount" | "amountPaid">) {
@@ -103,116 +69,144 @@ function paymentAmountError(amount: number, record: Pick<ContributionRecord, "re
   return amount > balance ? `Payment exceeds the remaining balance of ${formatPeso(balance)}.` : null;
 }
 
-function StatusChip({ record }: { record: Pick<ContributionRecord, "amountPaid" | "remainingBalance"> }) {
-  const status = contributionStatus(record);
-  return <span className={cn(status.className, "whitespace-nowrap")}>{status.label}</span>;
+/**
+ * Matches every spreadsheet row to a student (ID, then exact name, then a loose
+ * name match that ignores middle initials / word order — only when unambiguous)
+ * and every Event / Required Amount / Amount Paid group on it to an event.
+ */
+function parseImport(fileRows: Record<string, string>[], students: Student[], events: Event[], officerIds: ReadonlySet<string>) {
+  // A key shared by several records maps to null (ambiguous) and never matches.
+  const index = <T,>(items: T[], key: (item: T) => string) => {
+    const map = new Map<string, T | null>();
+    for (const item of items) {
+      const k = key(item);
+      if (k) map.set(k, map.has(k) ? null : item);
+    }
+    return map;
+  };
+  const studentId = (id: string) => normalizeStudentId(id).toLowerCase();
+  const eventName = (name: string) => name.trim().toLowerCase();
+  const byId = index(students, (s) => studentId(s.studentId));
+  const byExactName = index(students, (s) => exactNameKey(s.name));
+  const byLooseName = index(students, (s) => looseNameKey(s.name));
+  const byEvent = index(events, (e) => eventName(e.name));
+
+  const parsed: ParsedEntry[] = [];
+  const problems: string[] = [];
+  let matchedStudents = 0;
+  let groupsRead = 0;
+
+  for (const row of fileRows) {
+    const fileId = pickField(row, "studentid", "studentno", "studentnumber", "studid", "idnumber", "lrn", "id");
+    const fileName = pickField(row, "student", "name", "fullname", "studentname");
+    const student =
+      (fileId && byId.get(studentId(fileId))) || (fileName && (byExactName.get(exactNameKey(fileName)) || byLooseName.get(looseNameKey(fileName)))) || null;
+    if (!student) {
+      problems.push(`${[fileId, fileName].filter(Boolean).join(" ") || "(blank student)"}: student not found`);
+      continue;
+    }
+    if (officerIds.has(student.id)) {
+      problems.push(`${student.name}: active LSC officer (exempt from contributions)`);
+      continue;
+    }
+    matchedStudents++;
+
+    const groups = expandEventGroups(row);
+    groupsRead += groups.length;
+    for (const group of groups) {
+      // Blank, zero or non-numeric Amount Paid = not paid; it never overwrites a recorded payment.
+      const amountPaid = parsePositiveAmount(group.amountPaid);
+      if (amountPaid === null) continue;
+      const event = byEvent.get(eventName(group.eventName));
+      if (!event) {
+        problems.push(`${student.name}: event "${group.eventName}" not found`);
+        continue;
+      }
+      const requiredAmount = group.requiredAmount.trim() ? parseAmount(group.requiredAmount) : event.allocationAmount;
+      if (requiredAmount === null || requiredAmount <= 0) problems.push(`${student.name} – ${event.name}: invalid Required Amount "${group.requiredAmount}"`);
+      else if (amountPaid > requiredAmount) problems.push(`${student.name} – ${event.name}: paid ₱${amountPaid} exceeds required ₱${requiredAmount}`);
+      else parsed.push({ student, event, requiredAmount, amountPaid });
+    }
+  }
+
+  const summary =
+    `${matchedStudents} of ${fileRows.length} student row(s) matched · ${groupsRead} event group(s) read · ` +
+    `${parsed.length} paid entr${parsed.length === 1 ? "y" : "ies"} found`;
+  return { parsed, problems, summary };
 }
 
-export default function ContributionManagementSection({ onBack, role, staffName }: ContributionManagementSectionProps) {
-  const [rows, setRows] = useState<ContributionRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totals, setTotals] = useState(EMPTY_TOTALS);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  // Active LSC officers are exempt from event contributions.
-  const [officerIds, setOfficerIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+/** First five lines plus an "…and N more" line. */
+const firstLines = (lines: string[], more: string) => [...lines.slice(0, 5), lines.length > 5 ? `…and ${lines.length - 5} more${more}` : ""];
 
+const StatusChip = ({ record }: { record: Pick<ContributionRecord, "amountPaid" | "remainingBalance"> }) => {
+  const status = contributionStatus(record);
+  return <span className={cn(status.className, "whitespace-nowrap")}>{status.label}</span>;
+};
+
+export default function ContributionManagementSection({ onBack, role, staffName }: ContributionManagementSectionProps) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [eventFilter, setEventFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-
-  const [editing, setEditing] = useState<ContributionRow | null>(null);
-  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  // The opened record and its draft.
+  const [editing, setEditing] = useState<{ record: ContributionRow; form: EditForm } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [toDelete, setToDelete] = useState<ContributionRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
 
   const recordedBy = staffName || "Council Officer";
-  const canIssueReceipts = RECEIPT_ROLES.includes(role);
+  // Receipts are issued by the finance roles, i.e. everyone who may open this view.
+  const canIssueReceipts = canAccess(role, "contribution-management") === true;
   // Skips realtime reloads while a bulk import runs; the import reloads once at the end.
   const importingRef = useRef(false);
-  // Ignores responses from superseded loads (fast paging/typing).
-  const requestRef = useRef(0);
 
-  const loadData = useCallback(async () => {
-    const requestId = ++requestRef.current;
-    try {
-      const [pageResult, totalsResult, studentsResult, eventsResult, paymentsResult, officersResult] =
-        await Promise.allSettled([
-          contributionsService.getPage(page - 1, PAGE_SIZE, query, eventFilter, statusFilter),
-          contributionsService.getTotals(),
-          studentsService.getAll(),
-          eventsService.getAll(),
-          paymentsService.getAll(),
-          lscOfficersService.getAll(),
-        ]);
-      if (requestId !== requestRef.current) return;
-
-      // Only the records page is critical; the rest degrade to empty data.
-      if (pageResult.status === "rejected") {
-        console.error("Critical error loading contribution page:", pageResult.reason);
-        setLoadError(
-          pageResult.reason instanceof Error
-            ? pageResult.reason.message
-            : "Failed to retrieve contribution records from database.",
-        );
-        toast.error("Failed to load contribution records");
-        return;
-      }
-      if (totalsResult.status === "rejected") console.warn("Could not load contribution totals:", totalsResult.reason);
-      const value = <T,>(result: PromiseSettledResult<T[]>) => (result.status === "fulfilled" ? result.value : []);
-      const allStudents = value(studentsResult);
-      const pageData = pageResult.value;
-
-      // Deletes/realtime updates can shrink the result set past the current page.
-      const lastPage = Math.max(1, Math.ceil(pageData.total / PAGE_SIZE));
-      if (page > lastPage) return setPage(lastPage);
-
-      const officers = activeLscOfficerStudentIds(allStudents, value(officersResult));
-      const studentById = new Map(allStudents.map((s) => [s.id, s]));
-      setRows(
-        pageData.data
-          // An exempt officer with nothing paid is not an unpaid contributor.
-          .filter((record) => !(officers.has(record.studentId) && record.amountPaid <= 0))
-          .map((record) => ({
-            ...record,
-            studentName: studentById.get(record.studentId)?.name ?? "Unknown Student",
-            studentDisplayId: studentById.get(record.studentId)?.studentId ?? "—",
-          })),
-      );
-      setTotal(pageData.total);
-      setTotals(totalsResult.status === "fulfilled" ? totalsResult.value : EMPTY_TOTALS);
-      setStudents([...allStudents].sort(byName));
-      setEvents([...value(eventsResult)].sort(byName));
-      setPayments(value(paymentsResult));
-      setOfficerIds(officers);
-      setLoadError(null);
-    } catch (error) {
-      console.error("Error loading contribution records:", error);
-      setLoadError(error instanceof Error ? error.message : "An unexpected error occurred while loading records.");
-      toast.error("Failed to load contribution records");
-    } finally {
-      if (requestId === requestRef.current) setLoading(false);
-    }
-  }, [page, query, eventFilter, statusFilter]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Always re-read from Supabase after a related change; the hook also
-  // re-fetches after a reconnect so no update is missed.
-  useRealtimeSync({
+  // Only the records page is critical; the rest degrade to their last good (or empty) data.
+  const { data, loading, error: loadError, reload } = useLiveData({
+    sources: { page: () => contributionsService.getPage(page - 1, PAGE_SIZE, query, eventFilter, statusFilter) },
+    optional: {
+      totals: () => contributionsService.getTotals(),
+      students: () => studentsService.getAll(),
+      events: () => eventsService.getAll(),
+      payments: () => paymentsService.getAll(),
+      officers: () => lscOfficersService.getAll(),
+    },
+    deps: [page, query, eventFilter, statusFilter],
     tables: REALTIME_TABLES,
-    onChange: () => !importingRef.current && loadData(),
-    channelPrefix: "contribution-management",
+    channel: "contribution-management",
+    paused: () => importingRef.current,
+    onError: () => toast.error("Failed to load contribution records"),
   });
+
+  const total = data?.page.total ?? 0;
+  const totals = data?.totals ?? EMPTY_TOTALS;
+  const payments = data?.payments ?? [];
+  const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // Deletes/realtime updates can shrink the result set past the current page.
+  if (data && page > lastPage) setPage(lastPage);
+
+  // Active LSC officers are exempt from event contributions.
+  const { students, events, officerIds, rows } = useMemo(() => {
+    const allStudents = data?.students ?? [];
+    const officers = activeLscOfficerStudentIds(allStudents, data?.officers ?? []);
+    const studentById = new Map(allStudents.map((s) => [s.id, s]));
+    return {
+      students: [...allStudents].sort(byName),
+      events: [...(data?.events ?? [])].sort(byName),
+      officerIds: officers,
+      rows: (data?.page.data ?? [])
+        // An exempt officer with nothing paid is not an unpaid contributor.
+        .filter((record) => !(officers.has(record.studentId) && record.amountPaid <= 0))
+        .map((record): ContributionRow => ({
+          ...record,
+          studentName: studentById.get(record.studentId)?.name ?? "Unknown Student",
+          studentDisplayId: studentById.get(record.studentId)?.studentId ?? "—",
+        })),
+    };
+  }, [data]);
+  const eligibleStudents = useMemo(() => students.filter((s) => !officerIds.has(s.id)), [students, officerIds]);
+  const contributionEvents = useMemo(() => events.filter(collectsContribution), [events]);
 
   // Debounce server-side search.
   useEffect(() => {
@@ -223,131 +217,118 @@ export default function ContributionManagementSection({ onBack, role, staffName 
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  const eligibleStudents = useMemo(() => students.filter((s) => !officerIds.has(s.id)), [students, officerIds]);
-  const contributionEvents = useMemo(() => events.filter(collectsContribution), [events]);
-
-  // ---- Record payment (creates the contribution on first payment) ----------
-  // Each installment adds to the running total. A student+event pair keeps one
-  // payment row holding the cumulative amount, the installment history and a
-  // single OR number that is reused for every later installment.
-  const recordPayment = async (student: Student, event: Event, amount: number): Promise<boolean> => {
-    if (officerIds.has(student.id)) {
-      toast.error(`${student.name} is an active LSC officer and is exempt from event contributions.`);
-      return false;
-    }
+  /** Runs a write with the shared saving flag; `false` when it threw (already toasted). */
+  const save = async (action: () => Promise<void>, failure: (error: unknown) => string) => {
+    setSaving(true);
     try {
-      setSaving(true);
-      const existing = await contributionsService.getByStudentAndEvent(student.id, event.id);
-      // Validate before creating anything so a rejected payment leaves no stray record.
-      const precheck = paymentAmountError(amount, existing ?? { requiredAmount: event.allocationAmount, amountPaid: 0 });
-      if (precheck) throw new Error(precheck);
-
-      let contribution = existing;
-      if (!contribution) {
-        try {
-          contribution = await contributionsService.create({
-            studentId: student.id,
-            eventId: event.id,
-            eventName: event.name,
-            requiredAmount: event.allocationAmount,
-            amountPaid: 0,
-            remainingBalance: event.allocationAmount,
-          });
-        } catch (createError) {
-          // Someone else created it concurrently (unique student+event index) — use theirs.
-          contribution = await contributionsService.getByStudentAndEvent(student.id, event.id);
-          if (!contribution) throw createError;
-          const raced = paymentAmountError(amount, contribution);
-          if (raced) throw new Error(raced);
-        }
-      }
-
-      const { requiredAmount } = contribution;
-      const amountPaid = contribution.amountPaid + amount;
-      const remainingBalance = Math.max(0, requiredAmount - amountPaid);
-      const status: PaymentItem["status"] = remainingBalance <= 0 ? "Fully Paid" : "Partial";
-      const existingPayment = await paymentsService.getByStudentAndEvent(student.id, event.id);
-      const paymentItems: PaymentItem[] = [...(existingPayment?.paymentItems ?? []), { amount, date: today(), status }];
-
-      let receipt: string | undefined;
-      let orNumber = existingPayment?.orNumber;
-      if (canIssueReceipts) {
-        try {
-          // Reuse the existing OR number — only the first installment mints one.
-          orNumber ??= await officialReceiptNumber();
-          receipt = await autoCreateReceipt({
-            tag: "PAYMENT",
-            receiptNumber: orNumber,
-            issuedTo: student.name,
-            eventName: event.name,
-            description: `Payment for ${event.name}`,
-            amount: amountPaid,
-            type: "income",
-            date: today(),
-            recordedBy,
-            requiredAmount,
-            remainingBalance,
-            statusLabel: status,
-            paymentItems,
-          });
-        } catch (receiptError) {
-          console.warn("Auto receipt generation failed:", receiptError);
-        }
-      }
-
-      await paymentsService.upsertForStudentAndEvent({
-        studentId: student.id,
-        studentName: student.name,
-        eventId: event.id,
-        eventName: event.name,
-        contributionId: contribution.id,
-        amount: amountPaid,
-        date: today(),
-        recordedBy,
-        receiptUrl: receipt ?? existingPayment?.receiptUrl,
-        orNumber,
-        paymentItems,
-      });
-      await contributionsService.update(contribution.id, {
-        eventName: event.name,
-        requiredAmount,
-        amountPaid,
-        remainingBalance,
-      });
-      if (receipt) toast.success("An official receipt was generated and attached automatically.");
-      toast.success("Payment recorded successfully!");
-      await loadData();
+      await action();
       return true;
     } catch (error) {
-      console.error("Error recording payment:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to record payment");
+      console.error(failure(error), error);
+      toast.error(failure(error));
       return false;
     } finally {
       setSaving(false);
     }
   };
 
+  // ---- Record payment (creates the contribution on first payment) ----------
+  // Each installment adds to the running total. A student+event pair keeps one
+  // payment row holding the cumulative amount, the installment history and a
+  // single OR number that is reused for every later installment.
+  const recordPayment = (student: Student, event: Event, amount: number) => {
+    if (officerIds.has(student.id)) {
+      toast.error(`${student.name} is an active LSC officer and is exempt from event contributions.`);
+      return Promise.resolve(false);
+    }
+    return save(
+      async () => {
+        const existing = await contributionsService.getByStudentAndEvent(student.id, event.id);
+        // Validate before creating anything so a rejected payment leaves no stray record.
+        const precheck = paymentAmountError(amount, existing ?? { requiredAmount: event.allocationAmount, amountPaid: 0 });
+        if (precheck) throw new Error(precheck);
+
+        let contribution = existing;
+        if (!contribution) {
+          try {
+            contribution = await contributionsService.create({
+              studentId: student.id,
+              eventId: event.id,
+              eventName: event.name,
+              requiredAmount: event.allocationAmount,
+              amountPaid: 0,
+              remainingBalance: event.allocationAmount,
+            });
+          } catch (createError) {
+            // Someone else created it concurrently (unique student+event index) — use theirs.
+            contribution = await contributionsService.getByStudentAndEvent(student.id, event.id);
+            if (!contribution) throw createError;
+            const raced = paymentAmountError(amount, contribution);
+            if (raced) throw new Error(raced);
+          }
+        }
+
+        const { requiredAmount } = contribution;
+        const amountPaid = contribution.amountPaid + amount;
+        const remainingBalance = Math.max(0, requiredAmount - amountPaid);
+        const status: PaymentItem["status"] = remainingBalance <= 0 ? "Fully Paid" : "Partial";
+        const date = today();
+        const existingPayment = await paymentsService.getByStudentAndEvent(student.id, event.id);
+        const paymentItems: PaymentItem[] = [...(existingPayment?.paymentItems ?? []), { amount, date, status }];
+
+        let receipt: string | undefined;
+        let orNumber = existingPayment?.orNumber;
+        if (canIssueReceipts) {
+          try {
+            // Reuse the existing OR number — only the first installment mints one.
+            orNumber ??= await officialReceiptNumber();
+            receipt = await autoCreateReceipt({
+              tag: "PAYMENT",
+              receiptNumber: orNumber,
+              issuedTo: student.name,
+              eventName: event.name,
+              description: `Payment for ${event.name}`,
+              amount: amountPaid,
+              type: "income",
+              date,
+              recordedBy,
+              requiredAmount,
+              remainingBalance,
+              statusLabel: status,
+              paymentItems,
+            });
+          } catch (receiptError) {
+            console.warn("Auto receipt generation failed:", receiptError);
+          }
+        }
+
+        await paymentsService.upsertForStudentAndEvent({
+          studentId: student.id,
+          studentName: student.name,
+          eventId: event.id,
+          eventName: event.name,
+          contributionId: contribution.id,
+          amount: amountPaid,
+          date,
+          recordedBy,
+          receiptUrl: receipt ?? existingPayment?.receiptUrl,
+          orNumber,
+          paymentItems,
+        });
+        await contributionsService.update(contribution.id, { eventName: event.name, requiredAmount, amountPaid, remainingBalance });
+        if (receipt) toast.success("An official receipt was generated and attached automatically.");
+        toast.success("Payment recorded successfully!");
+        await reload();
+      },
+      (error) => (error instanceof Error ? error.message : "Failed to record payment"),
+    );
+  };
+
   // ---- Edit -----------------------------------------------------------------
-  const openEdit = (record: ContributionRow) => {
-    setEditing(record);
-    setEditForm({
-      studentId: record.studentId,
-      eventId: record.eventId,
-      requiredAmount: record.requiredAmount,
-      amountPaid: record.amountPaid,
-    });
-  };
-
-  const closeEdit = () => {
-    if (saving) return;
-    setEditing(null);
-    setEditForm(null);
-  };
-
   const saveEdit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!editing || !editForm) return;
-    const { studentId, eventId, requiredAmount, amountPaid } = editForm;
+    if (!editing) return;
+    const { studentId, eventId, requiredAmount, amountPaid } = editing.form;
     if (!studentId || !eventId) return toast.error("Please select both a student and an event");
     if (requiredAmount <= 0) return toast.error("Required amount must be greater than zero");
     if (amountPaid < 0) return toast.error("Amount paid cannot be negative");
@@ -355,54 +336,46 @@ export default function ContributionManagementSection({ onBack, role, staffName 
     const event = events.find((ev) => ev.id === eventId);
     if (!student || !event) return toast.error("Selected student or event no longer exists");
 
-    try {
-      setSaving(true);
-      // One record per student + event; the table only holds one page, so ask the database.
-      const existing = await contributionsService.getByStudentAndEvent(studentId, eventId);
-      if (existing && existing.id !== editing.id) {
-        return toast.error(`${student.name} already has a contribution record for ${event.name}.`);
-      }
-      await contributionsService.update(editing.id, {
-        studentId,
-        eventId,
-        eventName: event.name,
-        requiredAmount,
-        amountPaid,
-        remainingBalance: Math.max(0, requiredAmount - amountPaid),
-      });
-      toast.success("Contribution updated successfully");
-      setEditing(null);
-      setEditForm(null);
-      await loadData();
-    } catch (error) {
-      console.error("Error saving contribution record:", error);
-      toast.error("Failed to save contribution record");
-    } finally {
-      setSaving(false);
-    }
+    await save(
+      async () => {
+        // One record per student + event; the table only holds one page, so ask the database.
+        const existing = await contributionsService.getByStudentAndEvent(studentId, eventId);
+        if (existing && existing.id !== editing.record.id) {
+          toast.error(`${student.name} already has a contribution record for ${event.name}.`);
+          return;
+        }
+        await contributionsService.update(editing.record.id, {
+          studentId,
+          eventId,
+          eventName: event.name,
+          requiredAmount,
+          amountPaid,
+          remainingBalance: Math.max(0, requiredAmount - amountPaid),
+        });
+        toast.success("Contribution updated successfully");
+        setEditing(null);
+        await reload();
+      },
+      () => "Failed to save contribution record",
+    );
   };
 
-  // ---- Delete ---------------------------------------------------------------
   const confirmDelete = async () => {
     if (!toDelete) return;
-    try {
-      setSaving(true);
-      await contributionsService.delete(toDelete.id);
-      toast.success(`${toDelete.studentName}'s contribution record has been deleted.`);
-      setToDelete(null);
-      await loadData();
-    } catch (error) {
-      console.error("Error deleting contribution:", error);
-      toast.error(`Failed to delete ${toDelete.studentName}'s contribution record.`);
-    } finally {
-      setSaving(false);
-    }
+    await save(
+      async () => {
+        await contributionsService.delete(toDelete.id);
+        toast.success(`${toDelete.studentName}'s contribution record has been deleted.`);
+        setToDelete(null);
+        await reload();
+      },
+      () => `Failed to delete ${toDelete.studentName}'s contribution record.`,
+    );
   };
 
   // ---- CSV / Excel import ---------------------------------------------------
   const importRows = async (fileRows: Record<string, string>[]) => {
     if (fileRows.length === 0) return void toast.error("File is empty or invalid");
-
     // Imported payments are written straight to Supabase and never queued offline.
     if (!(await checkSupabaseConnection())) {
       return void toast.error(
@@ -410,106 +383,31 @@ export default function ContributionManagementSection({ onBack, role, staffName 
       );
     }
 
-    // A key shared by several records maps to null (ambiguous) and never matches.
-    const addUnique = <T,>(map: Map<string, T | null>, key: string, value: T) => {
-      if (key) map.set(key, map.has(key) ? null : value);
-    };
-    const studentById = new Map<string, Student | null>();
-    const studentByExactName = new Map<string, Student | null>();
-    const studentByLooseName = new Map<string, Student | null>();
-    for (const s of students) {
-      addUnique(studentById, normalizeStudentId(s.studentId).toLowerCase(), s);
-      addUnique(studentByExactName, exactNameKey(s.name), s);
-      addUnique(studentByLooseName, looseNameKey(s.name), s);
-    }
-    const eventByName = new Map<string, Event | null>();
-    for (const ev of events) addUnique(eventByName, ev.name.trim().toLowerCase(), ev);
-
-    // Student ID first, then the exact name, then a loose name match that
-    // ignores middle initials / word order (only when unambiguous).
-    const matchStudent = (fileId: string, fileName: string) =>
-      (fileId && studentById.get(normalizeStudentId(fileId).toLowerCase())) ||
-      (fileName && (studentByExactName.get(exactNameKey(fileName)) || studentByLooseName.get(looseNameKey(fileName)))) ||
-      null;
-
-    const parsed: ParsedEntry[] = [];
-    const problems: string[] = [];
-    let matchedStudents = 0;
-    let groupsRead = 0;
-
-    for (const row of fileRows) {
-      const fileId = pickField(row, "studentid", "studentno", "studentnumber", "studid", "idnumber", "lrn", "id");
-      const fileName = pickField(row, "student", "name", "fullname", "studentname");
-      const student = matchStudent(fileId, fileName);
-      if (!student) {
-        problems.push(`${[fileId, fileName].filter(Boolean).join(" ") || "(blank student)"}: student not found`);
-        continue;
-      }
-      if (officerIds.has(student.id)) {
-        problems.push(`${student.name}: active LSC officer (exempt from contributions)`);
-        continue;
-      }
-      matchedStudents++;
-
-      // Every Event / Required Amount / Amount Paid group on the row.
-      const groups = expandEventGroups(row);
-      groupsRead += groups.length;
-      for (const group of groups) {
-        // Blank, zero or non-numeric Amount Paid = not paid; it never overwrites a recorded payment.
-        const amountPaid = parsePositiveAmount(group.amountPaid);
-        if (amountPaid === null) continue;
-
-        const event = eventByName.get(group.eventName.trim().toLowerCase());
-        if (!event) {
-          problems.push(`${student.name}: event "${group.eventName}" not found`);
-          continue;
-        }
-        const requiredAmount = group.requiredAmount.trim() ? parseAmount(group.requiredAmount) : event.allocationAmount;
-        if (requiredAmount === null || requiredAmount <= 0) {
-          problems.push(`${student.name} – ${event.name}: invalid Required Amount "${group.requiredAmount}"`);
-          continue;
-        }
-        if (amountPaid > requiredAmount) {
-          problems.push(`${student.name} – ${event.name}: paid ₱${amountPaid} exceeds required ₱${requiredAmount}`);
-          continue;
-        }
-        parsed.push({ student, event, requiredAmount, amountPaid });
-      }
-    }
-
-    const readSummary =
-      `${matchedStudents} of ${fileRows.length} student row(s) matched · ` +
-      `${groupsRead} event group(s) read · ` +
-      `${parsed.length} paid entr${parsed.length === 1 ? "y" : "ies"} found`;
-    const describe = (lines: string[], more: string) =>
-      [...lines.slice(0, 5), lines.length > 5 ? `…and ${lines.length - 5} more${more}` : ""];
+    const { parsed, problems, summary } = parseImport(fileRows, students, events, officerIds);
     if (problems.length > 0) console.warn("Contribution import — rows not imported:", problems);
-
     if (parsed.length === 0) {
-      return void toast.error("No paid entries to import", {
-        description: [readSummary, ...describe(problems, "")].filter(Boolean).join("\n"),
-        duration: 10000,
-      });
+      return void toast.error("No paid entries to import", { description: [summary, ...firstLines(problems, "")].filter(Boolean).join("\n"), duration: 10000 });
     }
 
     importingRef.current = true;
-    const toastId = toast.loading(`Saving 1 of ${parsed.length} payment(s)...`);
+    const progress = (n: number) => `Saving ${n} of ${parsed.length} payment(s)...`;
+    const toastId = toast.loading(progress(1));
     let saved = 0;
     let skipped = 0;
     let receiptsIssued = 0;
     const failures: string[] = [];
+    const label = (item: ParsedEntry) => `${item.student.name} – ${item.event.name}`;
 
     try {
       // Strictly sequential: each entry is fully written (payment, totals,
       // receipt, audit) before the next starts, so OR numbers follow the file
       // order and a failure only affects its own entry.
       for (const [index, item] of parsed.entries()) {
-        const label = `${item.student.name} – ${item.event.name}`;
         if (!navigator.onLine) {
-          failures.push(...parsed.slice(index).map((r) => `${r.student.name} – ${r.event.name}: connection lost`));
+          failures.push(...parsed.slice(index).map((r) => `${label(r)}: connection lost`));
           break;
         }
-        toast.loading(`Saving ${index + 1} of ${parsed.length} payment(s)...`, { id: toastId });
+        toast.loading(progress(index + 1), { id: toastId });
         try {
           const result = await paymentsService.importPaidEntryDirect({ ...item, recordedBy, issueReceipt: canIssueReceipts });
           if (result.status === "saved") {
@@ -517,26 +415,22 @@ export default function ContributionManagementSection({ onBack, role, staffName 
             if (result.receiptIssued) receiptsIssued++;
           } else {
             skipped++;
-            console.info(`Import skipped ${label}: ${result.reason}`);
+            console.info(`Import skipped ${label(item)}: ${result.reason}`);
           }
         } catch (error) {
-          failures.push(`${label}: ${errorMessage(error)}`);
-          console.error(`Error importing ${label}:`, error);
+          failures.push(`${label(item)}: ${errorMessage(error)}`);
+          console.error(`Error importing ${label(item)}:`, error);
         }
       }
     } finally {
       importingRef.current = false;
       toast.dismiss(toastId);
-      await loadData();
+      await reload();
     }
 
     if (failures.length > 0) console.error("Contribution import — failed entries:", failures);
     const title = `Import finished: ${saved} saved, ${skipped} already recorded (skipped), ${failures.length} failed`;
-    const description = [
-      readSummary,
-      receiptsIssued > 0 ? `${receiptsIssued} receipt(s) generated` : "",
-      ...describe([...failures, ...problems], " (see browser console)"),
-    ]
+    const description = [summary, receiptsIssued > 0 ? `${receiptsIssued} receipt(s) generated` : "", ...firstLines([...failures, ...problems], " (see browser console)")]
       .filter(Boolean)
       .join("\n");
     if (failures.length > 0 || problems.length > 0) toast.warning(title, { description, duration: 15000 });
@@ -544,9 +438,6 @@ export default function ContributionManagementSection({ onBack, role, staffName 
   };
 
   const { importing, handleFileSelected, importInputRef } = useSpreadsheetImport({ onRows: importRows });
-
-  const recordFor = (payment: PaymentRecord) =>
-    rows.find((r) => r.id === payment.contributionId || (r.studentId === payment.studentId && r.eventId === payment.eventId));
 
   return (
     <Page
@@ -606,7 +497,7 @@ export default function ContributionManagementSection({ onBack, role, staffName 
         ) : (
           <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
             {payments.slice(0, 8).map((payment) => {
-              const record = recordFor(payment);
+              const record = rows.find((r) => r.id === payment.contributionId || (r.studentId === payment.studentId && r.eventId === payment.eventId));
               return (
                 <div key={payment.id} className="flex min-w-[230px] shrink-0 flex-col gap-2 rounded-2xl border border-line bg-surface-2 p-3.5">
                   <div className="flex items-start justify-between gap-3">
@@ -636,38 +527,30 @@ export default function ContributionManagementSection({ onBack, role, staffName 
       {/* Filters */}
       <div className="flex flex-col gap-3 sm:flex-row">
         <SearchInput value={search} onChange={setSearch} placeholder="Search by student name or ID…" className="flex-1" />
-        <select
-          value={eventFilter}
-          onChange={(e) => {
-            setEventFilter(e.target.value);
-            setPage(1);
-          }}
-          className="input sm:w-56"
-          aria-label="Filter by event"
-        >
-          <option value="">All events</option>
-          {contributionEvents.map((event) => (
-            <option key={event.id} value={event.id}>
-              {event.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-          className="input sm:w-48"
-          aria-label="Filter by status"
-        >
-          <option value="">All statuses</option>
-          {STATUS_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        {(
+          [
+            ["Filter by event", eventFilter, setEventFilter, "All events", contributionEvents.map((e) => [e.id, e.name] as const), "sm:w-56"],
+            ["Filter by status", statusFilter, setStatusFilter, "All statuses", STATUS_OPTIONS, "sm:w-48"],
+          ] as const
+        ).map(([label, value, set, all, options, width]) => (
+          <select
+            key={label}
+            value={value}
+            onChange={(e) => {
+              set(e.target.value);
+              setPage(1);
+            }}
+            className={cn("input", width)}
+            aria-label={label}
+          >
+            <option value="">{all}</option>
+            {options.map(([v, text]) => (
+              <option key={v} value={v}>
+                {text}
+              </option>
+            ))}
+          </select>
+        ))}
       </div>
 
       {/* Records */}
@@ -680,7 +563,7 @@ export default function ContributionManagementSection({ onBack, role, staffName 
             title="Unable to load contribution records"
             description={loadError}
             action={
-              <button onClick={() => void loadData()} className="btn btn-primary">
+              <button onClick={() => void reload()} className="btn btn-primary">
                 <RefreshCw className="h-4 w-4" />
                 Retry
               </button>
@@ -728,7 +611,14 @@ export default function ContributionManagementSection({ onBack, role, staffName 
                         <Menu>
                           <RowActionsTrigger label={`Actions for ${record.studentName}`} />
                           <MenuContent>
-                            <MenuItem onSelect={() => openEdit(record)}>
+                            <MenuItem
+                              onSelect={() =>
+                                setEditing({
+                                  record,
+                                  form: { studentId: record.studentId, eventId: record.eventId, requiredAmount: record.requiredAmount, amountPaid: record.amountPaid },
+                                })
+                              }
+                            >
                               <Pencil />
                               Edit
                             </MenuItem>
@@ -746,25 +636,19 @@ export default function ContributionManagementSection({ onBack, role, staffName 
               </table>
             </div>
           )}
-          <Pagination
-            page={page}
-            totalPages={Math.max(1, Math.ceil(total / PAGE_SIZE))}
-            totalItems={total}
-            pageSize={PAGE_SIZE}
-            onPage={setPage}
-          />
+          <Pagination page={page} totalPages={lastPage} totalItems={total} pageSize={PAGE_SIZE} onPage={setPage} />
         </div>
       )}
 
-      {editing && editForm && (
+      {editing && (
         <EditContributionModal
-          form={editForm}
-          onChange={setEditForm}
+          form={editing.form}
+          onChange={(form) => setEditing({ ...editing, form })}
           onSubmit={saveEdit}
-          onClose={closeEdit}
+          onClose={() => !saving && setEditing(null)}
           // Keep the record's own student/event selectable even if it is no longer eligible.
-          students={students.filter((s) => !officerIds.has(s.id) || s.id === editing.studentId)}
-          events={events.filter((ev) => collectsContribution(ev) || ev.id === editing.eventId)}
+          students={students.filter((s) => !officerIds.has(s.id) || s.id === editing.record.studentId)}
+          events={events.filter((ev) => collectsContribution(ev) || ev.id === editing.record.eventId)}
           saving={saving}
         />
       )}
@@ -796,6 +680,30 @@ export default function ContributionManagementSection({ onBack, role, staffName 
 
 // ---------------------------------------------------------------------------
 
+function ModalFooter({ formId, saving, disabled, label, busyLabel, onClose }: { formId: string; saving: boolean; disabled: boolean; label: string; busyLabel: string; onClose: () => void }) {
+  return (
+    <>
+      <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+        Cancel
+      </button>
+      <button type="submit" form={formId} className="btn btn-primary" disabled={saving || disabled}>
+        {saving ? busyLabel : label}
+      </button>
+    </>
+  );
+}
+
+const EventSelect = ({ value, onChange, events, disabled }: { value: string; onChange: (id: string) => void; events: Event[]; disabled: boolean }) => (
+  <select value={value} onChange={(e) => onChange(e.target.value)} className="input" disabled={disabled}>
+    <option value="">Select event…</option>
+    {events.map((ev) => (
+      <option key={ev.id} value={ev.id}>
+        {ev.name}
+      </option>
+    ))}
+  </select>
+);
+
 interface EditContributionModalProps {
   form: EditForm;
   onChange: (form: EditForm) => void;
@@ -818,19 +726,14 @@ function EditContributionModal({ form, onChange, onSubmit, onClose, students, ev
       icon={<Pencil className="h-5 w-5" />}
       size="lg"
       footer={
-        <>
-          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button
-            type="submit"
-            form="edit-contribution"
-            className="btn btn-primary"
-            disabled={saving || !form.studentId || !form.eventId || form.requiredAmount <= 0}
-          >
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </>
+        <ModalFooter
+          formId="edit-contribution"
+          saving={saving}
+          disabled={!form.studentId || !form.eventId || form.requiredAmount <= 0}
+          label="Save changes"
+          busyLabel="Saving…"
+          onClose={onClose}
+        />
       }
     >
       <form id="edit-contribution" onSubmit={onSubmit} className="space-y-4">
@@ -845,14 +748,7 @@ function EditContributionModal({ form, onChange, onSubmit, onClose, students, ev
           </select>
         </Field>
         <Field label="Event">
-          <select value={form.eventId} onChange={(e) => set({ eventId: e.target.value })} className="input" disabled={saving}>
-            <option value="">Select event…</option>
-            {events.map((ev) => (
-              <option key={ev.id} value={ev.id}>
-                {ev.name}
-              </option>
-            ))}
-          </select>
+          <EventSelect value={form.eventId} onChange={(eventId) => set({ eventId })} events={events} disabled={saving} />
         </Field>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Required amount (₱)">
@@ -893,11 +789,11 @@ function RecordPaymentModal({ students, events, saving, onClose, onSubmit }: Rec
   const event = events.find((ev) => ev.id === eventId);
   const needle = studentQuery.trim().toLowerCase();
   const matches =
-    pickerOpen && needle && !student
-      ? students.filter((s) => s.name.toLowerCase().includes(needle) || s.studentId.toLowerCase().includes(needle)).slice(0, 8)
-      : [];
+    pickerOpen && needle && !student ? students.filter((s) => s.name.toLowerCase().includes(needle) || s.studentId.toLowerCase().includes(needle)).slice(0, 8) : [];
 
-  const lookup = (nextStudent: Student | null, nextEventId: string) => {
+  const select = (nextStudent: Student | null, nextEventId: string) => {
+    setStudent(nextStudent);
+    setEventId(nextEventId);
     const id = ++lookupRef.current;
     setExisting(null);
     if (!nextStudent || !nextEventId) return;
@@ -923,16 +819,7 @@ function RecordPaymentModal({ students, events, saving, onClose, onSubmit }: Rec
       description="A contribution record is created automatically on a student's first payment. Partial payments are added to the running total."
       icon={<CreditCard className="h-5 w-5" />}
       size="lg"
-      footer={
-        <>
-          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button type="submit" form="record-payment" className="btn btn-primary" disabled={saving || !student || !eventId || amount <= 0}>
-            {saving ? "Recording…" : "Record payment"}
-          </button>
-        </>
-      }
+      footer={<ModalFooter formId="record-payment" saving={saving} disabled={!student || !eventId || amount <= 0} label="Record payment" busyLabel="Recording…" onClose={onClose} />}
     >
       <form id="record-payment" onSubmit={submit} className="space-y-4">
         <div className="relative">
@@ -941,9 +828,8 @@ function RecordPaymentModal({ students, events, saving, onClose, onSubmit }: Rec
               value={studentQuery}
               onChange={(e) => {
                 setStudentQuery(e.target.value);
-                setStudent(null);
                 setPickerOpen(true);
-                lookup(null, eventId);
+                select(null, eventId);
               }}
               onFocus={() => setPickerOpen(true)}
               onBlur={() => setPickerOpen(false)}
@@ -962,10 +848,9 @@ function RecordPaymentModal({ students, events, saving, onClose, onSubmit }: Rec
                     // mousedown fires before the input's blur closes the list
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setStudent(s);
                       setStudentQuery(`${s.name} (${s.studentId})`);
                       setPickerOpen(false);
-                      lookup(s, eventId);
+                      select(s, eventId);
                     }}
                     className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm hover:bg-surface-2"
                   >
@@ -978,22 +863,7 @@ function RecordPaymentModal({ students, events, saving, onClose, onSubmit }: Rec
           )}
         </div>
         <Field label="Event">
-          <select
-            value={eventId}
-            onChange={(e) => {
-              setEventId(e.target.value);
-              lookup(student, e.target.value);
-            }}
-            className="input"
-            disabled={saving}
-          >
-            <option value="">Select event…</option>
-            {events.map((ev) => (
-              <option key={ev.id} value={ev.id}>
-                {ev.name}
-              </option>
-            ))}
-          </select>
+          <EventSelect value={eventId} onChange={(id) => select(student, id)} events={events} disabled={saving} />
         </Field>
         <Field label="Amount (₱)" hint={balance !== undefined && balance > 0 ? `Up to ${formatPeso(balance)} remaining` : undefined}>
           <AmountInput value={amount} onChange={setAmount} disabled={saving} />
@@ -1032,11 +902,9 @@ function AmountInput({ value, onChange, disabled }: { value: number; onChange: (
   );
 }
 
-function SummaryLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-muted">{label}</span>
-      <span className="font-semibold text-ink">{children}</span>
-    </div>
-  );
-}
+const SummaryLine = ({ label, children }: { label: string; children: ReactNode }) => (
+  <div className="flex items-center justify-between gap-3">
+    <span className="text-muted">{label}</span>
+    <span className="font-semibold text-ink">{children}</span>
+  </div>
+);
