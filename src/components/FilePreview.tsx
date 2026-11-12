@@ -112,7 +112,7 @@ function InteractivePreview({ children, mediaControls = false }: { children: Rea
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={() => (setZoom(1), setOffset({ x: 0, y: 0 }))} className="btn btn-secondary btn-sm" title="Fit the preview to the screen">
+          <button type="button" onClick={() => changeZoom(1 - zoom)} className="btn btn-secondary btn-sm" title="Fit the preview to the screen">
             <Maximize2 className="h-3.5 w-3.5" /> Fit
           </button>
           <button type="button" onClick={() => setCompact((c) => !c)} className="btn btn-secondary btn-sm" aria-pressed={compact}>
@@ -151,29 +151,30 @@ function InteractivePreview({ children, mediaControls = false }: { children: Rea
 /** Inline preview for any requirement file (image, PDF, media, text, spreadsheet, office). */
 function FilePreview({ file }: { file: StudentRequirementFile }) {
   const kind = previewKind(file);
+  const url = file.fileUrl;
   const needsFetch = kind === "text" || kind === "sheet";
   // Tagged with the URL it was loaded from, so a stale result reads as "loading".
   const [loaded, setLoaded] = useState<{ url: string; text?: string; rows?: unknown[][]; error?: string } | null>(null);
-  const content = loaded?.url === file.fileUrl ? loaded : null;
+  const content = loaded?.url === url ? loaded : null;
 
   useEffect(() => {
     if (!needsFetch) return;
     let cancelled = false;
     (async () => {
       try {
-        const response = await fetch(file.fileUrl);
+        const response = await fetch(url);
         if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
         const next = kind === "text" ? { text: await response.text() } : { rows: (await readSheet(await response.blob())) as unknown[][] };
-        if (!cancelled) setLoaded({ url: file.fileUrl, ...next });
+        if (!cancelled) setLoaded({ url, ...next });
       } catch (error) {
         console.error("Error loading file preview:", error);
-        if (!cancelled) setLoaded({ url: file.fileUrl, error: `This ${kind === "text" ? "text file" : "spreadsheet"} could not be loaded for preview.` });
+        if (!cancelled) setLoaded({ url, error: `This ${kind === "text" ? "text file" : "spreadsheet"} could not be loaded for preview.` });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [file.fileUrl, kind, needsFetch]);
+  }, [url, kind, needsFetch]);
 
   if (needsFetch && !content) {
     return (
@@ -186,78 +187,49 @@ function FilePreview({ file }: { file: StudentRequirementFile }) {
   }
   if (content?.error) return <PreviewMessage>{content.error}</PreviewMessage>;
 
+  // Media controls must receive clicks instead of starting a pan.
   const stop = (e: PointerEvent) => e.stopPropagation();
-  switch (kind) {
-    case "image":
-      return (
-        <InteractivePreview>
-          <img src={file.fileUrl} alt={file.title} className="max-h-full max-w-full rounded-lg object-contain" />
-        </InteractivePreview>
-      );
-    case "pdf":
-    case "office":
-      return (
-        <InteractivePreview>
-          <iframe
-            src={kind === "pdf" ? file.fileUrl : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(file.fileUrl)}`}
-            title={file.title}
-            className="h-full w-full rounded-lg"
-          />
-        </InteractivePreview>
-      );
-    case "audio":
-      return (
-        <InteractivePreview mediaControls>
-          <div className="flex w-full max-w-xl items-center justify-center p-6" onPointerDown={stop}>
-            <audio src={file.fileUrl} controls className="w-full" />
-          </div>
-        </InteractivePreview>
-      );
-    case "video":
-      return (
-        <InteractivePreview mediaControls>
-          <video src={file.fileUrl} controls className="max-h-full max-w-full rounded-lg bg-black" onPointerDown={stop} />
-        </InteractivePreview>
-      );
-    case "text":
-      return (
-        <InteractivePreview>
-          <pre className="max-h-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-5 text-left font-mono text-sm text-ink shadow-soft">
-            {content?.text}
-          </pre>
-        </InteractivePreview>
-      );
-    case "sheet":
-      return (
-        <InteractivePreview>
-          <div className="max-h-full max-w-full overflow-auto rounded-lg bg-surface shadow-soft">
-            {content?.rows?.length ? (
-              <table className="min-w-full border-collapse text-left text-sm">
-                <tbody>
-                  {content.rows.map((row, r) => (
-                    <tr key={r} className={r === 0 ? "bg-brand-500/10 font-semibold" : ""}>
-                      {row.map((cell, c) => (
-                        <td key={c} className="border border-line px-3 py-2 align-top text-ink">
-                          {cell == null ? "" : String(cell)}
-                        </td>
-                      ))}
-                    </tr>
+  const frame = (src: string) => <iframe src={src} title={file.title} className="h-full w-full rounded-lg" />;
+  const body = {
+    image: <img src={url} alt={file.title} className="max-h-full max-w-full rounded-lg object-contain" />,
+    pdf: frame(url),
+    office: frame(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`),
+    audio: (
+      <div className="flex w-full max-w-xl items-center justify-center p-6" onPointerDown={stop}>
+        <audio src={url} controls className="w-full" />
+      </div>
+    ),
+    video: <video src={url} controls className="max-h-full max-w-full rounded-lg bg-black" onPointerDown={stop} />,
+    text: (
+      <pre className="max-h-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-5 text-left font-mono text-sm text-ink shadow-soft">
+        {content?.text}
+      </pre>
+    ),
+    sheet: (
+      <div className="max-h-full max-w-full overflow-auto rounded-lg bg-surface shadow-soft">
+        {content?.rows?.length ? (
+          <table className="min-w-full border-collapse text-left text-sm">
+            <tbody>
+              {content.rows.map((row, r) => (
+                <tr key={r} className={r === 0 ? "bg-brand-500/10 font-semibold" : ""}>
+                  {row.map((cell, c) => (
+                    <td key={c} className="border border-line px-3 py-2 align-top text-ink">
+                      {cell == null ? "" : String(cell)}
+                    </td>
                   ))}
-                </tbody>
-              </table>
-            ) : (
-              <PreviewMessage>This spreadsheet is empty.</PreviewMessage>
-            )}
-          </div>
-        </InteractivePreview>
-      );
-    default:
-      return (
-        <InteractivePreview>
-          <PreviewMessage>Preview not supported for this file type. Use Download to save the file and open it with a compatible application.</PreviewMessage>
-        </InteractivePreview>
-      );
-  }
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <PreviewMessage>This spreadsheet is empty.</PreviewMessage>
+        )}
+      </div>
+    ),
+    unsupported: <PreviewMessage>Preview not supported for this file type. Use Download to save the file and open it with a compatible application.</PreviewMessage>,
+  }[kind];
+
+  return <InteractivePreview mediaControls={kind === "audio" || kind === "video"}>{body}</InteractivePreview>;
 }
 
 /** File size label for a byte count. */

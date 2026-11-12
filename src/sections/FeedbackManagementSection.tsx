@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, EyeOff, Inbox, Lightbulb, MessageCircle, Trash2, User, Wrench } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, EyeOff, Inbox, Lightbulb, MessageCircle, Trash2, User, Wrench, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { FeedbackItem, UserRole } from "@/types";
 import { feedbackService } from "@/services/db";
@@ -13,24 +13,19 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, RowActionsTrigger } from "@
 type Type = FeedbackItem["type"];
 type Status = FeedbackItem["status"];
 
-const TYPE_META: Record<Type, { label: string; plural: string; icon: typeof Inbox; chip: string }> = {
+const TYPE_META: Record<Type, { label: string; plural: string; icon: LucideIcon; chip: string }> = {
   inquiry: { label: "Inquiry", plural: "Inquiries", icon: MessageCircle, chip: "chip-brand" },
   complaint: { label: "Complaint", plural: "Complaints", icon: AlertTriangle, chip: "chip-danger" },
   suggestion: { label: "Suggestion", plural: "Suggestions", icon: Lightbulb, chip: "chip-warning" },
 };
 
-const STATUS_META: Record<Status, { label: string; icon: typeof Inbox; chip: string }> = {
+const STATUS_META: Record<Status, { label: string; icon: LucideIcon; chip: string }> = {
   pending: { label: "Pending", icon: Clock, chip: "chip-warning" },
   "in-progress": { label: "In Progress", icon: Wrench, chip: "chip-brand" },
   resolved: { label: "Resolved", icon: CheckCircle2, chip: "chip-success" },
 };
 
-interface FeedbackManagementSectionProps {
-  onBack: () => void;
-  role: UserRole | null;
-}
-
-export default function FeedbackManagementSection({ onBack, role }: FeedbackManagementSectionProps) {
+export default function FeedbackManagementSection({ onBack, role }: { onBack: () => void; role: UserRole | null }) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [type, setType] = useState<Type | "">("");
@@ -82,42 +77,24 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
   };
 
   // Type counts respect the status filter and vice versa, so each pill shows what you'd get.
-  const byStatus = status ? items.filter((i) => i.status === status) : items;
-  const byType = type ? items.filter((i) => i.type === type) : items;
-  const filtered = type ? byStatus.filter((i) => i.type === type) : byStatus;
+  const byStatus = items.filter((i) => !status || i.status === status);
+  const byType = items.filter((i) => !type || i.type === type);
+  const filtered = byStatus.filter((i) => !type || i.type === type);
 
   return (
-    <Page
-      eyebrow="Student voice"
-      title="Feedback Inbox"
-      subtitle="All complaints, inquiries, and suggestions from students"
-      onBack={onBack}
-    >
+    <Page eyebrow="Student voice" title="Feedback Inbox" subtitle="All complaints, inquiries, and suggestions from students" onBack={onBack}>
       <div className="card flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
         <FilterPills
           value={type}
           onChange={setType}
-          options={[
-            { value: "", label: "All", icon: Inbox, count: byStatus.length },
-            ...(Object.keys(TYPE_META) as Type[]).map((t) => ({
-              value: t,
-              label: TYPE_META[t].plural,
-              icon: TYPE_META[t].icon,
-              count: byStatus.filter((i) => i.type === t).length,
-            })),
-          ]}
+          all={{ label: "All", icon: Inbox, count: byStatus.length }}
+          options={(Object.keys(TYPE_META) as Type[]).map((t) => ({ value: t, label: TYPE_META[t].plural, icon: TYPE_META[t].icon, count: byStatus.filter((i) => i.type === t).length }))}
         />
         <FilterPills
           value={status}
           onChange={setStatus}
-          options={[
-            { value: "", label: "Any status", count: byType.length },
-            ...(Object.keys(STATUS_META) as Status[]).map((s) => ({
-              value: s,
-              label: STATUS_META[s].label,
-              count: byType.filter((i) => i.status === s).length,
-            })),
-          ]}
+          all={{ label: "Any status", count: byType.length }}
+          options={(Object.keys(STATUS_META) as Status[]).map((s) => ({ value: s, label: STATUS_META[s].label, count: byType.filter((i) => i.status === s).length }))}
         />
       </div>
 
@@ -155,25 +132,20 @@ export default function FeedbackManagementSection({ onBack, role }: FeedbackMana
   );
 }
 
-interface PillOption<V> {
-  value: V;
+interface PillOption {
   label: string;
-  icon?: typeof Inbox;
+  icon?: LucideIcon;
   count: number;
 }
 
-function FilterPills<V extends string>({ value, onChange, options }: { value: V; onChange: (v: V) => void; options: PillOption<V>[] }) {
+/** "All" pill + one pill per value; `""` means no filter. */
+function FilterPills<V extends string>({ value, onChange, all, options }: { value: V | ""; onChange: (v: V | "") => void; all: PillOption; options: (PillOption & { value: V })[] }) {
   return (
     <div className="flex flex-wrap gap-1">
-      {options.map(({ value: v, label, icon: Icon, count }) => {
+      {[{ value: "" as const, ...all }, ...options].map(({ value: v, label, icon: Icon, count }) => {
         const active = v === value;
         return (
-          <button
-            key={v || "all"}
-            onClick={() => onChange(v)}
-            aria-pressed={active}
-            className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}
-          >
+          <button key={v || "all"} onClick={() => onChange(v)} aria-pressed={active} className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}>
             {Icon && <Icon className="h-3.5 w-3.5" />}
             {label}
             <span className={`rounded-full px-1.5 text-[11px] ${active ? "bg-white/20" : "bg-surface-2"}`}>{count}</span>

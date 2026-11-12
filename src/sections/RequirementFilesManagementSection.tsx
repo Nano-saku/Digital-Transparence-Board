@@ -4,8 +4,10 @@ import { toast } from "sonner";
 import { studentRequirementFilesService, studentsService } from "@/services/db";
 import type { Student, StudentRequirementFile, UserRole } from "@/types";
 import { formatDate } from "@/lib/format";
+import { canAccess } from "@/lib/roles";
 import { useSearch } from "@/hooks/useSearch";
 import { FilePreviewModal, FileSize } from "@/components/FilePreview";
+import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
 import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -25,17 +27,19 @@ interface RequirementFilesManagementSectionProps {
 const ACCEPT = "application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,audio/*,video/*";
 const studentText = (s: Student) => `${s.name} ${s.studentId}`;
 
+const EMPTY_FORM = { title: "", description: "", publish: true };
+
 /** null = closed, "new" = upload, otherwise the file being edited/replaced. */
 type EditTarget = StudentRequirementFile | "new" | null;
 
 export default function RequirementFilesManagementSection({ onBack, role, userId = "" }: RequirementFilesManagementSectionProps) {
-  const allowed = role === "admin" || role === "secretary";
+  const allowed = !!canAccess(role, "requirement-files-management");
   const [files, setFiles] = useState<StudentRequirementFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [editing, setEditing] = useState<EditTarget>(null);
-  const [form, setForm] = useState({ title: "", description: "", publish: true });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StudentRequirementFile | null>(null);
   const [previewFile, setPreviewFile] = useState<StudentRequirementFile | null>(null);
@@ -88,7 +92,7 @@ export default function RequirementFilesManagementSection({ onBack, role, userId
   };
 
   const openEditor = (file: StudentRequirementFile | "new") => {
-    setForm(file === "new" ? { title: "", description: "", publish: true } : { title: file.title, description: file.description ?? "", publish: file.isPublished });
+    setForm(file === "new" ? EMPTY_FORM : { title: file.title, description: file.description ?? "", publish: file.isPublished });
     setPickedFile(null);
     setEditing(file);
   };
@@ -118,7 +122,7 @@ export default function RequirementFilesManagementSection({ onBack, role, userId
     try {
       const updated = await studentRequirementFilesService.update(file.id, { isPublished: !file.isPublished });
       upsert(updated);
-      toast.success(updated.isPublished ? `"${updated.title}" is now published and visible to students.` : `"${updated.title}" is now hidden from students.`);
+      toast.success(`"${updated.title}" is now ${updated.isPublished ? "published and visible to" : "hidden from"} students.`);
     } catch (error) {
       console.error("Error toggling publish state:", error);
       toast.error("Failed to update publish state. Please try again.");
@@ -173,7 +177,86 @@ export default function RequirementFilesManagementSection({ onBack, role, userId
     if (ok) setAccessTarget(null);
   };
 
+  const columns: DataColumn<StudentRequirementFile>[] = [
+    {
+      header: "File",
+      className: "min-w-[16rem]",
+      cell: (file) => (
+        <div className="flex items-start gap-3">
+          <div className="icon-tile h-10 w-10">
+            <FileText className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold">{file.title}</p>
+            {file.description && <p className="line-clamp-2 max-w-md text-xs text-muted">{file.description}</p>}
+            <p className="mt-0.5 text-xs text-muted">
+              {file.fileName} · <FileSize bytes={file.fileSize} />
+            </p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      header: "Status",
+      cell: (file) => (
+        <button
+          role="switch"
+          aria-checked={file.isPublished}
+          onClick={() => togglePublish(file)}
+          className={`chip ${file.isPublished ? "chip-success" : "chip-neutral"} hover:brightness-95`}
+          title={file.isPublished ? "Unpublish (hide from students)" : "Publish (show to students)"}
+        >
+          {file.isPublished ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+          {file.isPublished ? "Published" : "Hidden"}
+        </button>
+      ),
+    },
+    {
+      header: "Access",
+      cell: (file) => (
+        <span className={`chip ${file.restricted ? "chip-warning" : "chip-neutral"}`}>
+          {file.restricted ? <Lock className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
+          {file.restricted ? "Selected students" : "Everyone"}
+        </span>
+      ),
+    },
+    { header: "Updated", cell: (file) => formatDate(file.updatedAt), className: "whitespace-nowrap text-muted" },
+    {
+      header: "Actions",
+      right: true,
+      cell: (file) => (
+        <Menu>
+          <RowActionsTrigger label={`Actions for ${file.title}`} />
+          <MenuContent>
+            {file.fileUrl ? (
+              <>
+                <MenuItem onSelect={() => setPreviewFile(file)}><Eye /> Preview</MenuItem>
+                <MenuItem asChild>
+                  <a href={file.fileUrl} download={file.fileName} target="_blank" rel="noopener noreferrer"><Download /> Download</a>
+                </MenuItem>
+              </>
+            ) : (
+              <MenuItem disabled><Clock /> Still syncing…</MenuItem>
+            )}
+            <MenuItem onSelect={() => openAccess(file)}><Users /> Manage access</MenuItem>
+            <MenuItem onSelect={() => openEditor(file)}><Edit2 /> Edit or replace file</MenuItem>
+            <MenuItem onSelect={() => togglePublish(file)}>
+              {file.isPublished ? <EyeOff /> : <Eye />} {file.isPublished ? "Unpublish" : "Publish"}
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem danger onSelect={() => setDeleteTarget(file)}><Trash2 /> Delete</MenuItem>
+          </MenuContent>
+        </Menu>
+      ),
+    },
+  ];
+
   const published = files.filter((f) => f.isPublished).length;
+  const uploadButton = (
+    <button onClick={() => openEditor("new")} className="btn btn-primary">
+      <Plus className="h-4 w-4" /> Upload file
+    </button>
+  );
   const isNew = editing === "new";
   const closeUnlessSaving = (close: () => void) => () => !saving && close();
 
@@ -183,11 +266,7 @@ export default function RequirementFilesManagementSection({ onBack, role, userId
       title="Council Files"
       subtitle="Upload and manage the documents students need, and control who can download them."
       onBack={onBack}
-      actions={
-        <button onClick={() => openEditor("new")} className="btn btn-primary">
-          <Plus className="h-4 w-4" /> Upload file
-        </button>
-      }
+      actions={uploadButton}
       hero={
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <StatCard featured icon={FolderOpen} label="Total files" value={files.length} />
@@ -204,108 +283,12 @@ export default function RequirementFilesManagementSection({ onBack, role, userId
             icon={FolderOpen}
             title="No files uploaded yet"
             description="Upload the first document students need."
-            action={
-              <button onClick={() => openEditor("new")} className="btn btn-primary">
-                <Plus className="h-4 w-4" /> Upload file
-              </button>
-            }
+            action={uploadButton}
           />
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <div data-lenis-prevent className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>File</th>
-                  <th>Status</th>
-                  <th>Access</th>
-                  <th>Updated</th>
-                  <th className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {files.map((file) => (
-                  <tr key={file.id}>
-                    <td className="min-w-[16rem]">
-                      <div className="flex items-start gap-3">
-                        <div className="icon-tile h-10 w-10">
-                          <FileText className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-semibold">{file.title}</p>
-                          {file.description && <p className="line-clamp-2 max-w-md text-xs text-muted">{file.description}</p>}
-                          <p className="mt-0.5 text-xs text-muted">
-                            {file.fileName} · <FileSize bytes={file.fileSize} />
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <button
-                        role="switch"
-                        aria-checked={file.isPublished}
-                        onClick={() => togglePublish(file)}
-                        className={`chip ${file.isPublished ? "chip-success" : "chip-neutral"} hover:brightness-95`}
-                        title={file.isPublished ? "Unpublish (hide from students)" : "Publish (show to students)"}
-                      >
-                        {file.isPublished ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                        {file.isPublished ? "Published" : "Hidden"}
-                      </button>
-                    </td>
-                    <td>
-                      {file.restricted ? (
-                        <span className="chip chip-warning">
-                          <Lock className="h-3.5 w-3.5" /> Selected students
-                        </span>
-                      ) : (
-                        <span className="chip chip-neutral">
-                          <Globe className="h-3.5 w-3.5" /> Everyone
-                        </span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap text-muted">{formatDate(file.updatedAt)}</td>
-                    <td className="text-right">
-                      <Menu>
-                        <RowActionsTrigger label={`Actions for ${file.title}`} />
-                        <MenuContent>
-                          {file.fileUrl ? (
-                            <>
-                              <MenuItem onSelect={() => setPreviewFile(file)}>
-                                <Eye /> Preview
-                              </MenuItem>
-                              <MenuItem asChild>
-                                <a href={file.fileUrl} download={file.fileName} target="_blank" rel="noopener noreferrer">
-                                  <Download /> Download
-                                </a>
-                              </MenuItem>
-                            </>
-                          ) : (
-                            <MenuItem disabled>
-                              <Clock /> Still syncing…
-                            </MenuItem>
-                          )}
-                          <MenuItem onSelect={() => openAccess(file)}>
-                            <Users /> Manage access
-                          </MenuItem>
-                          <MenuItem onSelect={() => openEditor(file)}>
-                            <Edit2 /> Edit or replace file
-                          </MenuItem>
-                          <MenuItem onSelect={() => togglePublish(file)}>
-                            {file.isPublished ? <EyeOff /> : <Eye />} {file.isPublished ? "Unpublish" : "Publish"}
-                          </MenuItem>
-                          <MenuSeparator />
-                          <MenuItem danger onSelect={() => setDeleteTarget(file)}>
-                            <Trash2 /> Delete
-                          </MenuItem>
-                        </MenuContent>
-                      </Menu>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable columns={columns} rows={files} rowKey={(f) => f.id} />
         </div>
       )}
 

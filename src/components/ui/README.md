@@ -32,7 +32,7 @@ text on surfaces — use the tokens below.
 
 ## Hooks
 - `useSearch(items, textFn, filterAccessors)` → `{ query, setQuery, filters, setFilter, reset, filtered }`
-- `usePagination(items, pageSize)` → `{ pageItems, pagination }` (spread `pagination` into `<Pagination />`)
+- `usePagination(items, pageSize, resetKey?)` → `{ pageItems, pagination }` (spread `pagination` into `<Pagination />`). The page survives realtime refreshes; pass the active search/filters as `resetKey` to return to page 1 when they change.
 
 ## Motion & blending
 Built on GSAP (`@/lib/gsap` registers ScrollTrigger, SplitText, useGSAP), Lenis

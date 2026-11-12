@@ -464,6 +464,8 @@ export default function AttendanceManagementSection({ onBack, role }: Attendance
               <AttendanceTable
                 key={eventId}
                 students={visibleStudents}
+                // A new scan pins that student to the top, so it also returns to page 1.
+                resetKey={JSON.stringify([query, statusFilter, scanFilter, lastScan?.studentId])}
                 recordByStudent={recordByStudent}
                 lastScanId={lastScan?.studentId}
                 toolbar={

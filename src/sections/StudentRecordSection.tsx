@@ -1,53 +1,21 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import {
-  Calendar,
-  CalendarDays,
-  CheckCircle,
-  ChevronDown,
-  Clock,
-  Download,
-  Eye,
-  FileText,
-  FolderOpen,
-  HeartHandshake,
-  PieChart,
-  QrCode,
-  Sparkles,
-  Wallet,
-  XCircle,
-} from "lucide-react";
+import { Calendar, CalendarDays, CheckCircle, ChevronDown, Clock, Download, Eye, FileText, FolderOpen, HeartHandshake, PieChart, Sparkles, Wallet, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import type {
-  AttendanceRecord,
-  ContributionRecord,
-  Event,
-  EventVolunteer,
-  PaymentRecord,
-  Student,
-  StudentRequirementFile,
-  UserRole,
-} from "@/types";
-import {
-  attendanceService,
-  contributionsService,
-  eventVolunteersService,
-  eventsService,
-  paymentsService,
-  studentRequirementFilesService,
-} from "@/services/db";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import type { AttendanceRecord, ContributionRecord, Event, EventVolunteer, PaymentRecord, Student, StudentRequirementFile, UserRole } from "@/types";
+import { attendanceService, contributionsService, eventVolunteersService, eventsService, paymentsService, studentRequirementFilesService } from "@/services/db";
+import { useLiveData } from "@/hooks/useLiveData";
 import { usePagination } from "@/hooks/usePagination";
 import { createContributionReceiptPreview, downloadContributionReceipt, officialReceiptNumber, type ReceiptFormat } from "@/lib/receipts";
-import { formatDate, formatPeso, formatTime12, getOrdinalSuffix, today } from "@/lib/format";
+import { formatDate, formatPeso, formatTime12, today } from "@/lib/format";
 import { calculateContributionTotals, contributionStatus } from "@/lib/contributions";
 import { calendarDateInTimeZone } from "@/lib/attendance";
 import ReceiptViewer from "@/components/ReceiptViewer";
-import StudentQrModal from "@/components/StudentQrModal";
-import ProfilePhotoUploader from "@/components/ProfilePhotoUploader";
+import RecordHero, { VolunteerStatus } from "@/components/RecordHero";
 import { EventCard } from "@/components/UpcomingEvents";
 import { DownloadLink, FilePreviewModal, FileSize } from "@/components/FilePreview";
+import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
@@ -71,10 +39,52 @@ const ATTENDANCE_STATUS = {
   absent: { label: "Absent", chip: "chip-danger", icon: XCircle },
 } satisfies Record<AttendanceRecord["status"], { label: string; chip: string; icon: LucideIcon }>;
 
-const VOLUNTEER_CHIP: Record<EventVolunteer["status"], string> = {
-  assigned: "chip-neutral",
-  active: "chip-brand",
-  completed: "chip-success",
+const NONE: never[] = [];
+
+const ATTENDANCE_COLUMNS: DataColumn<AttendanceRecord>[] = [
+  { header: "Event", cell: (r) => r.eventName, className: "font-medium" },
+  { header: "Date", cell: (r) => formatDate(r.date), className: "whitespace-nowrap text-muted" },
+  {
+    header: "Status",
+    cell: (r) => {
+      const { label, chip, icon: Icon } = ATTENDANCE_STATUS[r.status];
+      return (
+        <span className={`chip ${chip}`}>
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </span>
+      );
+    },
+  },
+  ...(["timeIn", "timeOut"] as const).map(
+    (key): DataColumn<AttendanceRecord> => ({
+      header: key === "timeIn" ? "Time in" : "Time out",
+      cell: (r) => (r.status !== "absent" && r[key] ? formatTime12(r[key]) : "—"),
+      className: "whitespace-nowrap text-muted",
+    }),
+  ),
+];
+
+const VOLUNTEER_COLUMNS: DataColumn<EventVolunteer>[] = [
+  { header: "Event", cell: (v) => v.eventName, className: "font-semibold" },
+  {
+    header: "Assigned task / role",
+    cell: (v) => (
+      <span className="chip chip-brand">
+        <Sparkles className="h-3 w-3" /> {v.roleOrTask}
+      </span>
+    ),
+  },
+  { header: "Status", cell: (v) => <VolunteerStatus status={v.status} /> },
+  { header: "Date assigned", cell: (v) => formatDate(v.createdAt), className: "whitespace-nowrap text-muted" },
+];
+/** How each source is named in the "could not be loaded" notice. */
+const SOURCE_LABEL: Record<string, string> = {
+  attendance: "attendance",
+  contributions: "contributions",
+  events: "event catalog",
+  payments: "payments",
+  files: "requirement files",
+  volunteers: "volunteer activities",
 };
 
 /** Catalog events dated today or later (Asia/Manila), nearest first; malformed legacy dates are skipped. */
@@ -130,73 +140,37 @@ function Panel({ id, icon: Icon, title, subtitle, aside, children }: { id?: stri
 }
 
 export default function StudentRecordSection({ student, onBack, currentUserId, currentUserRole }: StudentRecordSectionProps) {
-  const [loading, setLoading] = useState(true);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [contributions, setContributions] = useState<ContributionRecord[]>([]);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [incoming, setIncoming] = useState<Event[]>([]);
-  const [volunteers, setVolunteers] = useState<EventVolunteer[]>([]);
-  const [files, setFiles] = useState<StudentRequirementFile[]>([]);
-
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
-  const [showQr, setShowQr] = useState(false);
   const [previewFile, setPreviewFile] = useState<StudentRequirementFile | null>(null);
   /** `${action}:${recordId}` of the receipt action in progress. */
   const [busy, setBusy] = useState<string | null>(null);
 
-  const canEditProfilePhoto =
-    currentUserRole === "admin" || currentUserRole === "secretary" || (!!currentUserId && currentUserId === student.accountUserId);
-
-  // Each load gets a number so a slow, older response never overwrites a newer one.
-  const latestLoad = useRef(0);
-  const load = useCallback(async () => {
-    const run = ++latestLoad.current;
-    // Optional sections must never hide the ones that loaded: a project
-    // without the requirements RPC or newer event columns still shows every
-    // independent query that succeeds.
-    const [attendanceResult, contributionsResult, eventsResult, paymentsResult, filesResult, volunteersResult] = await Promise.allSettled([
-      attendanceService.getByStudentId(student.id),
-      contributionsService.getByStudentId(student.id),
-      eventsService.getAll(),
-      paymentsService.getByStudentId(student.id),
-      studentRequirementFilesService.getVisibleForStudent(student.id),
-      eventVolunteersService.getByStudentId(student.id),
-    ]);
-    if (run !== latestLoad.current) return;
-
-    const failed: string[] = [];
-    const settled = <T,>(result: PromiseSettledResult<T[]>, label: string): T[] => {
-      if (result.status === "fulfilled") return result.value;
-      console.error(`Failed to load student ${label}:`, result.reason);
-      failed.push(label);
-      return [];
-    };
-    const attendanceData = settled(attendanceResult, "attendance");
-    const contributionData = settled(contributionsResult, "contributions");
-    const events = settled(eventsResult, "event catalog");
-    setAttendance(attendanceData);
-    setContributions(withUnpaidEvents(student.id, contributionData, events));
-    setPayments(settled(paymentsResult, "payments"));
-    // Derived from this catalog read: a separate upcoming-events request would
-    // fire before the shared cache is populated.
-    setIncoming(upcomingEvents(events));
-    setFiles(settled(filesResult, "requirement files"));
-    setVolunteers(settled(volunteersResult, "volunteer activities"));
-    setLoading(false);
-    if (failed.length > 0) toast.error(`Some student record details could not be loaded: ${failed.join(", ")}.`);
-  }, [student.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Reconnection-safe realtime refresh, so no attendance, contribution or
-  // payment change for this student is silently missed.
-  useRealtimeSync({
+  // Every section is optional: a project without the requirements RPC or newer
+  // event columns still shows every independent query that succeeds, and
+  // realtime refreshes mean no change for this student is silently missed.
+  const { data, loading, failed } = useLiveData({
+    sources: {},
+    optional: {
+      attendance: () => attendanceService.getByStudentId(student.id),
+      contributions: () => contributionsService.getByStudentId(student.id),
+      events: () => eventsService.getAll(),
+      payments: () => paymentsService.getByStudentId(student.id),
+      files: () => studentRequirementFilesService.getVisibleForStudent(student.id),
+      volunteers: () => eventVolunteersService.getByStudentId(student.id),
+    },
     tables: ["attendance", "contributions", "payments", "events", "event_volunteers", "student_requirement_files"],
-    onChange: () => void load(),
-    channelPrefix: `student-record-${student.id}`,
+    channel: `student-record-${student.id}`,
+    deps: [student.id],
   });
+  useEffect(() => {
+    if (failed.length > 0) toast.error(`Some student record details could not be loaded: ${failed.map((key) => SOURCE_LABEL[key]).join(", ")}.`);
+  }, [failed]);
+
+  const { attendance = NONE, contributions: records = NONE, events = NONE, payments = NONE, files = NONE, volunteers = NONE } = data ?? {};
+  const contributions = useMemo(() => withUnpaidEvents(student.id, records, events), [student.id, records, events]);
+  // Derived from this catalog read: a separate upcoming-events request would
+  // fire before the shared cache is populated.
+  const incoming = useMemo(() => upcomingEvents(events), [events]);
 
   const attendancePage = usePagination(attendance, PAGE_SIZE);
   const contributionPage = usePagination(contributions, PAGE_SIZE);
@@ -252,7 +226,51 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
       toast.success(await downloadContributionReceipt(await receiptDetails(record, paymentFor(record)), format));
     });
 
-  const details = [student.studentId, student.program, `${student.yearLevel}${getOrdinalSuffix(student.yearLevel)} Year · Section ${student.section}`];
+  const spinnerOr = (key: string, icon: ReactNode) => (busy === key ? <Skeleton className="h-3.5 w-3.5 rounded-full" /> : icon);
+  const contributionColumns: DataColumn<ContributionRecord>[] = [
+    { header: "Event", cell: (r) => r.eventName, className: "font-medium" },
+    {
+      header: "Paid",
+      className: "whitespace-nowrap",
+      cell: (r) => (
+        <>
+          <span className="font-semibold">{formatPeso(r.amountPaid)}</span>
+          <span className="block text-xs text-muted">of {formatPeso(r.requiredAmount)}</span>
+        </>
+      ),
+    },
+    { header: "Balance", cell: (r) => formatPeso(r.remainingBalance), className: "whitespace-nowrap text-muted" },
+    { header: "Status", cell: (r) => <span className={contributionStatus(r).className}>{contributionStatus(r).label}</span> },
+    {
+      header: "Receipt",
+      right: true,
+      // Receipts exist only once something has actually been paid.
+      cell: (r) =>
+        r.amountPaid > 0 && (
+          <div className="flex justify-end gap-1.5">
+            <button onClick={() => previewReceipt(r)} disabled={busy === `preview:${r.id}`} className="btn btn-ghost btn-sm" title={`Preview contribution receipt – ${r.eventName}`}>
+              {spinnerOr(`preview:${r.id}`, <Eye className="h-3.5 w-3.5" />)}
+              Preview
+            </button>
+            <Menu>
+              <MenuTrigger asChild disabled={busy === `download:${r.id}`}>
+                <button className="btn btn-secondary btn-sm" title={`Download contribution receipt – ${r.eventName}`}>
+                  {spinnerOr(`download:${r.id}`, <Download className="h-3.5 w-3.5" />)}
+                  Download <ChevronDown className="h-3 w-3" />
+                </button>
+              </MenuTrigger>
+              <MenuContent>
+                {RECEIPT_FORMATS.map((format) => (
+                  <MenuItem key={format} onSelect={() => downloadReceipt(r, format)}>
+                    {format.toUpperCase()}
+                  </MenuItem>
+                ))}
+              </MenuContent>
+            </Menu>
+          </div>
+        ),
+    },
+  ];
 
   return (
     <Page
@@ -261,38 +279,19 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
       subtitle="Attendance, contributions, receipts and shared files — all in one place."
       onBack={onBack}
       hero={
-        <div className="glass flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:p-6">
-          <ProfilePhotoUploader
-            studentId={student.id}
-            photoUrl={student.profilePhotoUrl}
-            name={student.name}
-            editable={canEditProfilePhoto}
-            sizeClassName="h-20 w-20"
-            className="bg-white/15 text-white ring-white/25"
-          />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xl font-bold sm:text-2xl">{student.name}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {details.map((d) => (
-                <span key={d} className="chip bg-white/10 font-medium text-white/85">
-                  {d}
-                </span>
-              ))}
-              {volunteers.length > 0 && (
-                <span className="chip bg-powder/20 text-powder">
-                  <HeartHandshake className="h-3.5 w-3.5" /> {volunteers.length} volunteer role{volunteers.length === 1 ? "" : "s"}
-                </span>
-              )}
-            </div>
-          </div>
-          <button
-            onClick={() => setShowQr(true)}
-            className="btn btn-light self-start sm:self-center"
-            title="Download your attendance QR code (Student ID, Name, Program, Year, Section)"
-          >
-            <QrCode className="h-4 w-4" /> My QR code
-          </button>
-        </div>
+        <RecordHero
+          student={student}
+          currentUserId={currentUserId}
+          currentUserRole={currentUserRole}
+          qrTitle="Download your attendance QR code (Student ID, Name, Program, Year, Section)"
+          chips={
+            volunteers.length > 0 && (
+              <span className="chip bg-powder/20 text-powder">
+                <HeartHandshake className="h-3.5 w-3.5" /> {volunteers.length} volunteer role{volunteers.length === 1 ? "" : "s"}
+              </span>
+            )
+          }
+        />
       }
     >
       {loading ? (
@@ -347,72 +346,7 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
               <EmptyState icon={Wallet} title="No contribution records found" />
             ) : (
               <>
-                <div data-lenis-prevent className="table-scroll">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>Paid</th>
-                        <th>Balance</th>
-                        <th>Status</th>
-                        <th className="text-right">Receipt</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {contributionPage.pageItems.map((record) => {
-                        const status = contributionStatus(record);
-                        return (
-                          <tr key={record.id}>
-                            <td className="font-medium">{record.eventName}</td>
-                            <td className="whitespace-nowrap">
-                              <span className="font-semibold">{formatPeso(record.amountPaid)}</span>
-                              <span className="block text-xs text-muted">of {formatPeso(record.requiredAmount)}</span>
-                            </td>
-                            <td className="whitespace-nowrap text-muted">{formatPeso(record.remainingBalance)}</td>
-                            <td>
-                              <span className={status.className}>{status.label}</span>
-                            </td>
-                            <td>
-                              {/* Receipts exist only once something has actually been paid. */}
-                              {record.amountPaid > 0 && (
-                                <div className="flex justify-end gap-1.5">
-                                  <button
-                                    onClick={() => previewReceipt(record)}
-                                    disabled={busy === `preview:${record.id}`}
-                                    className="btn btn-ghost btn-sm"
-                                    title={`Preview contribution receipt – ${record.eventName}`}
-                                  >
-                                    {busy === `preview:${record.id}` ? <Skeleton className="h-3.5 w-3.5 rounded-full" /> : <Eye className="h-3.5 w-3.5" />}
-                                    Preview
-                                  </button>
-                                  <Menu>
-                                    <MenuTrigger asChild disabled={busy === `download:${record.id}`}>
-                                      <button className="btn btn-secondary btn-sm" title={`Download contribution receipt – ${record.eventName}`}>
-                                        {busy === `download:${record.id}` ? (
-                                          <Skeleton className="h-3.5 w-3.5 rounded-full" />
-                                        ) : (
-                                          <Download className="h-3.5 w-3.5" />
-                                        )}
-                                        Download <ChevronDown className="h-3 w-3" />
-                                      </button>
-                                    </MenuTrigger>
-                                    <MenuContent>
-                                      {RECEIPT_FORMATS.map((format) => (
-                                        <MenuItem key={format} onSelect={() => downloadReceipt(record, format)}>
-                                          {format.toUpperCase()}
-                                        </MenuItem>
-                                      ))}
-                                    </MenuContent>
-                                  </Menu>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable columns={contributionColumns} rows={contributionPage.pageItems} rowKey={(r) => r.id} />
                 <Pagination {...contributionPage.pagination} />
               </>
             )}
@@ -423,38 +357,7 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
               <EmptyState icon={Calendar} title="No attendance records found" />
             ) : (
               <>
-                <div data-lenis-prevent className="table-scroll">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>Date</th>
-                        <th>Status</th>
-                        <th>Time in</th>
-                        <th>Time out</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {attendancePage.pageItems.map((record) => {
-                        const { label, chip, icon: Icon } = ATTENDANCE_STATUS[record.status];
-                        const attended = record.status !== "absent";
-                        return (
-                          <tr key={record.id}>
-                            <td className="font-medium">{record.eventName}</td>
-                            <td className="whitespace-nowrap text-muted">{formatDate(record.date)}</td>
-                            <td>
-                              <span className={`chip ${chip}`}>
-                                <Icon className="h-3.5 w-3.5" /> {label}
-                              </span>
-                            </td>
-                            <td className="whitespace-nowrap text-muted">{attended && record.timeIn ? formatTime12(record.timeIn) : "—"}</td>
-                            <td className="whitespace-nowrap text-muted">{attended && record.timeOut ? formatTime12(record.timeOut) : "—"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable columns={ATTENDANCE_COLUMNS} rows={attendancePage.pageItems} rowKey={(r) => r.id} />
                 <Pagination {...attendancePage.pagination} />
               </>
             )}
@@ -466,34 +369,7 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
               title="Event volunteer history"
               subtitle={`Official student volunteer assignments and service records (${volunteers.length})`}
             >
-              <div data-lenis-prevent className="table-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Assigned task / role</th>
-                      <th>Status</th>
-                      <th>Date assigned</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {volunteers.map((v) => (
-                      <tr key={v.id}>
-                        <td className="font-semibold">{v.eventName}</td>
-                        <td>
-                          <span className="chip chip-brand">
-                            <Sparkles className="h-3 w-3" /> {v.roleOrTask}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`chip capitalize ${VOLUNTEER_CHIP[v.status] ?? "chip-neutral"}`}>{v.status || "assigned"}</span>
-                        </td>
-                        <td className="whitespace-nowrap text-muted">{formatDate(v.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable columns={VOLUNTEER_COLUMNS} rows={volunteers} rowKey={(v) => v.id} />
             </Panel>
           )}
 
@@ -543,7 +419,6 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
       )}
 
       <ReceiptViewer receiptUrl={receiptUrl} onClose={() => setReceiptUrl(null)} title="Contribution Receipt" />
-      <StudentQrModal student={showQr ? student : null} onClose={() => setShowQr(false)} />
       <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
     </Page>
   );

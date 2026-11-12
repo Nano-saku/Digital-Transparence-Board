@@ -1,25 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import {
-  Calendar,
-  CalendarClock,
-  ClipboardCheck,
-  Clock,
-  CloudSun,
-  Moon,
-  Pencil,
-  Plus,
-  Sun,
-  Target,
-  Trash2,
-  UserCheck,
-  Wallet,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Calendar, CalendarClock, ClipboardCheck, Clock, CloudSun, Moon, Pencil, Plus, Sun, Target, Trash2, UserCheck, Wallet, type LucideIcon } from "lucide-react";
 import { boardMembersService, contributionsService, eventsService, financialReportingService } from "@/services/db";
 import { notificationsService } from "@/services/notificationsService";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
-import type { BoardMember, Event, EventSchedule, EventSession, UserRole } from "@/types";
+import { useLiveData } from "@/hooks/useLiveData";
+import type { Event, EventSchedule, EventSession, UserRole } from "@/types";
 import { daysUntil, formatDate, formatPeso, formatTimeRange, getEarliestScheduledTime, parseCalendarDate, today } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import Page from "@/components/ui/Page";
@@ -73,29 +58,19 @@ const isTbd = (e: Event) => !e.date || e.date === "TBD";
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : (error as { message?: string })?.message || fallback;
 
+const inDays = (d: number) => (d === 0 ? { label: "Today", tone: "chip-danger" } : { label: `In ${d}d`, tone: d <= 7 ? "chip-warning" : "chip-success" });
+
 /** Countdown to the event's earliest session start, so the day isn't deducted early. */
 function eventStatus(event: Event) {
   if (event.isNonConducting) return { label: "Non-conducting", tone: "chip-neutral" };
   if (isTbd(event)) return { label: "Date TBD", tone: "chip-warning" };
   if (event.date! < today()) return { label: "Done", tone: "chip-neutral" };
-  const d = daysUntil(event.date!, getEarliestScheduledTime(event.schedules));
-  if (d <= 0) return { label: "Today", tone: "chip-danger" };
-  return { label: `In ${d}d`, tone: d <= 7 ? "chip-warning" : "chip-success" };
+  return inDays(Math.max(0, daysUntil(event.date!, getEarliestScheduledTime(event.schedules))));
 }
 
-function deadlineChip(date: string) {
-  const d = daysUntil(date);
-  if (d < 0) return { label: "Overdue", tone: "chip-danger" };
-  if (d === 0) return { label: "Today", tone: "chip-danger" };
-  return { label: `In ${d}d`, tone: d <= 7 ? "chip-warning" : "chip-success" };
-}
+const deadlineChip = (date: string) => (daysUntil(date) < 0 ? { label: "Overdue", tone: "chip-danger" } : inDays(daysUntil(date)));
 
 export default function EventManagementSection({ onBack, role }: EventManagementSectionProps) {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [collected, setCollected] = useState<Record<string, number>>({});
-  const [expected, setExpected] = useState<Record<string, number>>({});
-  const [boardMembers, setBoardMembers] = useState<BoardMember[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // `editing`: null = closed, "new" = create, Event = edit.
@@ -108,78 +83,33 @@ export default function EventManagementSection({ onBack, role }: EventManagement
 
   const canManage = role === "admin" || role === "board-member";
 
-  // Realtime bursts coalesce: a change during a fetch queues one follow-up fetch.
-  const isLoading = useRef(false);
-  const pendingRefresh = useRef(false);
-
-  const loadData = useCallback(async (showLoader = true) => {
-    if (isLoading.current) {
-      pendingRefresh.current = true;
-      return;
-    }
-    isLoading.current = true;
-    if (showLoader) setLoading(true);
-    try {
-      const [eventsData, totals, report] = await Promise.all([
-        eventsService.getAll(),
-        contributionsService.getTotalsByEvent().catch((err) => {
-          console.warn("Could not load contribution totals:", err);
-          return {};
-        }),
-        financialReportingService.getReport().catch((err) => {
-          console.warn("Could not load financial report:", err);
-          return { eventAllocations: [] };
-        }),
-      ]);
-      setEvents(eventsData);
-      setCollected(totals);
+  // Live updates (reconnect-safe) for officer exemptions, allocations and collections;
+  // a burst of changes keeps only the newest response.
+  const { data, loading, mutate } = useLiveData({
+    sources: { events: () => eventsService.getAll() },
+    optional: {
+      collected: () => contributionsService.getTotalsByEvent(),
       // Expected collection comes from the financial report so currently
       // appointed LSC officers are excluded.
-      setExpected(
-        Object.fromEntries(
-          (report.eventAllocations ?? []).filter((a) => a.expectedAmount != null).map((a) => [a.eventId, Number(a.expectedAmount)]),
-        ),
-      );
-      setBoardMembers(
-        await boardMembersService.listBoardMembers().catch((err) => {
-          console.warn("Could not load board members:", err);
-          return [];
-        }),
-      );
-    } catch (error) {
-      console.error("Error loading data:", error);
-      if (showLoader) toast.error("Failed to load data");
-    } finally {
-      isLoading.current = false;
-      if (showLoader) setLoading(false);
-      if (pendingRefresh.current) {
-        pendingRefresh.current = false;
-        void loadData(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Reconnect-safe live updates for officer exemptions, allocations and collections.
-  useRealtimeSync({
+      report: () => financialReportingService.getReport(),
+      boardMembers: () => boardMembersService.listBoardMembers(),
+    },
     tables: ["events", "students", "lsc_officers", "contributions", "board_members"],
-    onChange: () => loadData(false),
-    channelPrefix: "event-management",
+    channel: "event-management",
+    onError: () => !data && toast.error("Failed to load data"),
   });
-
-  // Dated events soonest first, then TBD / non-conducting events alphabetically.
-  const sortedEvents = useMemo(
-    () =>
-      [...events].sort((a, b) =>
-        isTbd(a) !== isTbd(b) ? (isTbd(a) ? 1 : -1) : isTbd(a) ? a.name.localeCompare(b.name) : a.date!.localeCompare(b.date!),
-      ),
-    [events],
+  const events = data?.events ?? [];
+  const collected: Record<string, number> = data?.collected ?? {};
+  const expected: Record<string, number> = Object.fromEntries(
+    (data?.report?.eventAllocations ?? []).filter((a) => a.expectedAmount != null).map((a) => [a.eventId, Number(a.expectedAmount)]),
   );
 
-  const replaceEvent = (id: string, patch: Partial<Event>) => setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  // Dated events soonest first, then TBD / non-conducting events alphabetically.
+  const sortedEvents = [...events].sort((a, b) =>
+    isTbd(a) !== isTbd(b) ? (isTbd(a) ? 1 : -1) : isTbd(a) ? a.name.localeCompare(b.name) : a.date!.localeCompare(b.date!),
+  );
+
+  const replaceEvent = (id: string, patch: Partial<Event>) => mutate("events", (prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   const patchForm = (patch: Partial<EventForm>) => setForm((prev) => ({ ...prev, ...patch }));
   const updateSchedule = (period: EventSession, patch: Partial<EventSchedule>) =>
     patchForm({ schedules: form.schedules.map((s) => (s.period === period ? { ...s, ...patch } : s)) });
@@ -188,7 +118,7 @@ export default function EventManagementSection({ onBack, role }: EventManagement
   const assignedMembers =
     editing && editing !== "new" && editing.assignedMembers?.length
       ? editing.assignedMembers
-      : boardMembers.map((m) => ({ memberId: m.id, memberName: m.name }));
+      : (data?.boardMembers ?? []).map((m) => ({ memberId: m.id, memberName: m.name }));
 
   const openForm = (event?: Event) => {
     setEditing(event ?? "new");
@@ -238,7 +168,7 @@ export default function EventManagementSection({ onBack, role }: EventManagement
     try {
       if (editing === "new") {
         const created = await eventsService.create({ ...payload, autoMarkAbsent });
-        setEvents((prev) => [...prev, created]);
+        mutate("events", (prev) => [...prev, created]);
       } else if (editing.autoMarkAbsent !== autoMarkAbsent) {
         // The auto-absent switch must reach the server immediately, never the offline queue.
         replaceEvent(editing.id, await eventsService.updateOnlineOnly(editing.id, { ...payload, autoMarkAbsent }));
@@ -260,7 +190,7 @@ export default function EventManagementSection({ onBack, role }: EventManagement
     setSaving(true);
     try {
       await eventsService.delete(toDelete.id);
-      setEvents((prev) => prev.filter((e) => e.id !== toDelete.id));
+      mutate("events", (prev) => prev.filter((e) => e.id !== toDelete.id));
       setToDelete(null);
       toast.success("Event deleted successfully");
     } catch (error) {
@@ -311,19 +241,19 @@ export default function EventManagementSection({ onBack, role }: EventManagement
   const totalExpected = contributionEvents.reduce((sum, e) => sum + (expected[e.id] ?? 0), 0);
   const totalCollected = contributionEvents.reduce((sum, e) => sum + (collected[e.id] ?? 0), 0);
 
+  const createButton = canManage && (
+    <button onClick={() => openForm()} className="btn btn-primary">
+      <Plus className="h-4 w-4" /> Create event
+    </button>
+  );
+
   return (
     <Page
       eyebrow="Events"
       title="Event Management"
       subtitle="Plan events, attendance sessions and per-student allocations."
       onBack={onBack}
-      actions={
-        canManage && (
-          <button onClick={() => openForm()} className="btn btn-primary">
-            <Plus className="h-4 w-4" /> Create event
-          </button>
-        )
-      }
+      actions={createButton}
       hero={
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard featured label="Total events" value={events.length} icon={Calendar} />
@@ -345,7 +275,7 @@ export default function EventManagementSection({ onBack, role }: EventManagement
             icon={Calendar}
             title="No events yet"
             description="Create an event to start tracking attendance and contributions."
-            action={canManage && <button onClick={() => openForm()} className="btn btn-primary btn-sm"><Plus className="h-4 w-4" /> Create event</button>}
+            action={createButton}
           />
         </div>
       ) : (
@@ -597,7 +527,7 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint: strin
   );
 }
 
-function EventCard({ event, expected, collected, actions }: { event: Event; expected: number; collected: number; actions: React.ReactNode }) {
+function EventCard({ event, expected, collected, actions }: { event: Event; expected: number; collected: number; actions: ReactNode }) {
   const date = event.isNonConducting || isTbd(event) ? null : parseCalendarDate(event.date!);
   const status = eventStatus(event);
   const deadline = event.contributionDeadline ? deadlineChip(event.contributionDeadline) : null;

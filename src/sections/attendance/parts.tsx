@@ -171,13 +171,15 @@ interface AttendanceTableProps {
   lastScanId?: string;
   toolbar: ReactNode;
   emptyText: string;
+  /** Search/filter state; a change returns the table to page 1. */
+  resetKey: string;
   onEdit: (student: Student, record?: AttendanceRecord) => void;
   onRecordNow: (student: Student, mode: ScanMode) => void;
   onClear: (student: Student, record: AttendanceRecord) => void;
 }
 
-export function AttendanceTable({ students, recordByStudent, lastScanId, toolbar, emptyText, onEdit, onRecordNow, onClear }: AttendanceTableProps) {
-  const { pageItems, pagination } = usePagination(students, PAGE_SIZE);
+export function AttendanceTable({ students, recordByStudent, lastScanId, toolbar, emptyText, resetKey, onEdit, onRecordNow, onClear }: AttendanceTableProps) {
+  const { pageItems, pagination } = usePagination(students, PAGE_SIZE, resetKey);
 
   return (
     <section className="card overflow-hidden">

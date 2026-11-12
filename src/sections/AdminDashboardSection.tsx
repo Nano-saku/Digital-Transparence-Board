@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 import {
   ArrowRight,
@@ -19,18 +19,12 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import type { Event, FinancialReport, Transaction, UserRole, ViewState } from "@/types";
-import {
-  eventsService,
-  feedbackService,
-  financialReportingService,
-  studentsService,
-  transactionsService,
-} from "@/services/db";
+import type { UserRole, ViewState } from "@/types";
+import { eventsService, feedbackService, financialReportingService, studentsService, transactionsService } from "@/services/db";
 import { daysUntil, formatDate, formatPeso, getEarliestScheduledTime, today } from "@/lib/format";
 import { ROLE_LABEL, canAccess } from "@/lib/roles";
 import { cn } from "@/lib/utils";
-import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { useLiveData } from "@/hooks/useLiveData";
 import Page from "@/components/ui/Page";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
@@ -75,19 +69,7 @@ const ROLE_FOCUS: Record<UserRole, string> = {
   "board-member": "events",
 };
 
-// useRealtimeSync recovers from reconnects and debounces duplicate refetches.
-const LIVE_TABLES = ["students", "events", "lsc_officers", "contributions", "payments", "transactions", "feedback", "board_members"];
-
-interface DashboardData {
-  report: FinancialReport | null;
-  /** Collection performance, without no-contribution events. */
-  allocations: FinancialReport["eventAllocations"];
-  studentCount: number;
-  upcoming: Event[];
-  pendingFeedback: number;
-  /** Full history: feeds the funds sparklines; the first five are "recent". */
-  transactions: Transaction[];
-}
+const NONE: never[] = [];
 
 const greeting = () => {
   const hour = new Date().getHours();
@@ -101,51 +83,35 @@ function countdown(days: number): { label: string; chip: string } {
 }
 
 export default function AdminDashboardSection({ onNavigate, role, userEmail }: AdminDashboardSectionProps) {
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<DashboardData>({ report: null, allocations: [], studentCount: 0, upcoming: [], pendingFeedback: 0, transactions: [] });
-
-  // Realtime refreshes reuse this without flashing the loading state.
-  const load = useCallback(async () => {
-    try {
-      const [report, students, events, pending, transactions] = await Promise.all([
-        financialReportingService.getReport(),
-        studentsService.getAll(),
-        eventsService.getAll(),
-        feedbackService.getByStatus("pending"),
-        transactionsService.getAll(),
-      ]);
-      const now = today();
-      const noContribution = new Set(events.filter((e) => e.isNoContribution).map((e) => e.id));
-      setData({
-        report,
-        allocations: (report.eventAllocations ?? []).filter((a) => !noContribution.has(a.eventId)),
-        studentCount: students.length,
-        upcoming: events.filter((e) => e.date && e.date >= now).sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
-        pendingFeedback: pending.length,
-        transactions,
-      });
-    } catch (error) {
-      console.error("Error loading dashboard data:", error);
-      toast.error("Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-  useRealtimeSync({ tables: LIVE_TABLES, onChange: load, channelPrefix: "dashboard" });
-
-  const { report, allocations, studentCount, upcoming, pendingFeedback, transactions } = data;
+  // Refreshes on realtime changes (reconnect-aware, debounced) without flashing the loader.
+  const { data, loading } = useLiveData({
+    sources: {
+      report: () => financialReportingService.getReport(),
+      students: () => studentsService.getAll(),
+      events: () => eventsService.getAll(),
+      pending: () => feedbackService.getByStatus("pending"),
+      /** Full history: feeds the funds sparklines; the first five are "recent". */
+      transactions: () => transactionsService.getAll(),
+    },
+    tables: ["students", "events", "lsc_officers", "contributions", "payments", "transactions", "feedback", "board_members"],
+    channel: "dashboard",
+    onError: () => toast.error("Failed to load dashboard data"),
+  });
+  const { report, students = NONE, events = NONE, pending = NONE, transactions = NONE } = data ?? {};
   const summary = report?.summary;
+  const studentCount = students.length;
+  const now = today();
+  const upcoming = events.filter((e) => e.date && e.date >= now).sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+  // Collection performance, without no-contribution events.
+  const noContribution = new Set(events.filter((e) => e.isNoContribution).map((e) => e.id));
+  const allocations = (report?.eventAllocations ?? []).filter((a) => !noContribution.has(a.eventId));
   const modules = MODULES.filter((m) => canAccess(role, m.view) !== false);
   const badges: Partial<Record<ViewState, string>> = {
-    "feedback-management": pendingFeedback ? `${pendingFeedback} pending` : undefined,
+    "feedback-management": pending.length ? `${pending.length} pending` : undefined,
     "event-management": upcoming.length ? `${upcoming.length} upcoming` : undefined,
   };
   const showLedger = canAccess(role, "transaction-management");
-  const funds = { transactions, allTransactions: transactions, loading };
+  const funds = { transactions, loading };
 
   return (
     <Page

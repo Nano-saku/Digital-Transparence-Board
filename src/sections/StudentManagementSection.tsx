@@ -9,6 +9,7 @@ import { PROGRAMS } from "@/lib/constants";
 import { useSearch } from "@/hooks/useSearch";
 import { usePagination } from "@/hooks/usePagination";
 import { useSpreadsheetImport } from "@/hooks/useSpreadsheetImport";
+import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
 import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -66,7 +67,7 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
   }, []);
 
   const { query, setQuery, filters, setFilter, filtered } = useSearch(students, searchText, FILTERS);
-  const { pageItems, pagination } = usePagination(filtered, 15);
+  const { pageItems, pagination } = usePagination(filtered, 15, JSON.stringify([query, filters]));
 
   const options = useMemo(
     () => ({
@@ -76,9 +77,6 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
     }),
     [students],
   );
-
-  const isDuplicateId = (studentId: string, exceptId?: string) =>
-    students.some((s) => s.id !== exceptId && s.studentId.toLowerCase() === studentId.toLowerCase());
 
   const openForm = (student: Student | "new") => {
     setForm(student === "new" ? EMPTY_FORM : { ...student });
@@ -92,23 +90,21 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
     setStudents((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   };
 
+  const data: StudentForm = {
+    studentId: form.studentId.trim(),
+    name: form.name.trim(),
+    program: form.program.trim(),
+    yearLevel: form.yearLevel,
+    section: form.section.trim(),
+  };
+  const formIncomplete = !data.studentId || !data.name || !data.program || !data.section;
+
   const save = async () => {
     if (!editing) return;
-    const data: StudentForm = {
-      studentId: form.studentId.trim(),
-      name: form.name.trim(),
-      program: form.program.trim(),
-      yearLevel: form.yearLevel,
-      section: form.section.trim(),
-    };
-    if (!data.studentId || !data.name || !data.program || !data.section) {
-      toast.error("Please complete all student fields");
-      return;
-    }
+    if (formIncomplete) return void toast.error("Please complete all student fields");
     const current = editing === "new" ? null : editing;
-    if (isDuplicateId(data.studentId, current?.id)) {
-      toast.error("A student with this Student ID already exists");
-      return;
+    if (students.some((s) => s.id !== current?.id && s.studentId.toLowerCase() === data.studentId.toLowerCase())) {
+      return void toast.error("A student with this Student ID already exists");
     }
     setSaving(true);
     try {
@@ -148,9 +144,7 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
   const importRows = async (rows: Record<string, string>[]) => {
     if (rows.length === 0) return void toast.error("File is empty or invalid");
     const parsed = rows.map(rowToStudent).filter((s): s is StudentForm => s !== null);
-    if (parsed.length === 0) {
-      return void toast.error("No valid rows found. Expected columns: Student ID, Name, Program, Year Level, Section");
-    }
+    if (parsed.length === 0) return void toast.error("No valid rows found. Expected columns: Student ID, Name, Program, Year Level, Section");
 
     // Skip rows already in the table or repeated within the file.
     const seen = new Set(students.map((s) => s.studentId.toLowerCase()));
@@ -171,17 +165,49 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
       const more = failed.length > 5 ? `, +${failed.length - 5} more` : "";
       toast.error(`${created.length} imported, ${failed.length} row(s) failed`, { description: shown.join("; ") + more });
     } else {
-      toast.success(
-        skipped > 0
-          ? `${created.length} student(s) imported, ${skipped} duplicate(s) skipped`
-          : `${created.length} student(s) imported successfully`,
-      );
+      toast.success(`${created.length} student(s) imported${skipped > 0 ? `, ${skipped} duplicate(s) skipped` : " successfully"}`);
     }
   };
 
+  const columns: DataColumn<Student>[] = [
+    {
+      header: "Student",
+      cell: (s) => (
+        <div className="flex items-center gap-3">
+          {s.profilePhotoUrl ? (
+            <img src={s.profilePhotoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+          ) : (
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/10 text-xs font-bold text-brand-600">{initials(s.name)}</span>
+          )}
+          <div className="min-w-0">
+            <p className="truncate font-semibold">{s.name}</p>
+            <p className="text-xs text-muted">{s.studentId}</p>
+          </div>
+        </div>
+      ),
+    },
+    { header: "Program", cell: (s) => <span className="chip chip-brand">{s.program}</span> },
+    { header: "Year", cell: (s) => yearLabel(s.yearLevel), className: "whitespace-nowrap text-muted" },
+    { header: "Section", cell: (s) => s.section, className: "text-muted" },
+    {
+      header: "",
+      right: true,
+      cell: (s) => (
+        <Menu>
+          <RowActionsTrigger label={`Actions for ${s.name}`} />
+          <MenuContent>
+            <MenuItem onSelect={() => setQrStudent(s)}><QrCode /> Show QR</MenuItem>
+            <MenuItem onSelect={() => openForm(s)}><Edit2 /> Edit</MenuItem>
+            <MenuSeparator />
+            <MenuItem danger onSelect={() => setToDelete(s)}><Trash2 /> Delete</MenuItem>
+          </MenuContent>
+        </Menu>
+      ),
+    },
+  ];
+
   const { importing, handleFileSelected, importInputRef } = useSpreadsheetImport({ onRows: importRows });
   const set = <K extends keyof StudentForm>(key: K, value: StudentForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const formIncomplete = !form.studentId.trim() || !form.name.trim() || !form.program.trim() || !form.section.trim();
 
   return (
     <Page
@@ -253,54 +279,7 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
             />
           ) : (
             <>
-              <div data-lenis-prevent className="table-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Student</th>
-                      <th>Program</th>
-                      <th>Year</th>
-                      <th>Section</th>
-                      <th className="w-12" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageItems.map((s) => (
-                      <tr key={s.id}>
-                        <td>
-                          <div className="flex items-center gap-3">
-                            {s.profilePhotoUrl ? (
-                              <img src={s.profilePhotoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
-                            ) : (
-                              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/10 text-xs font-bold text-brand-600">
-                                {initials(s.name)}
-                              </span>
-                            )}
-                            <div className="min-w-0">
-                              <p className="truncate font-semibold">{s.name}</p>
-                              <p className="text-xs text-muted">{s.studentId}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td><span className="chip chip-brand">{s.program}</span></td>
-                        <td className="whitespace-nowrap text-muted">{yearLabel(s.yearLevel)}</td>
-                        <td className="text-muted">{s.section}</td>
-                        <td className="text-right">
-                          <Menu>
-                            <RowActionsTrigger label={`Actions for ${s.name}`} />
-                            <MenuContent>
-                              <MenuItem onSelect={() => setQrStudent(s)}><QrCode /> Show QR</MenuItem>
-                              <MenuItem onSelect={() => openForm(s)}><Edit2 /> Edit</MenuItem>
-                              <MenuSeparator />
-                              <MenuItem danger onSelect={() => setToDelete(s)}><Trash2 /> Delete</MenuItem>
-                            </MenuContent>
-                          </Menu>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable columns={columns} rows={pageItems} rowKey={(s) => s.id} />
               <Pagination {...pagination} />
             </>
           )}
@@ -322,13 +301,7 @@ export default function StudentManagementSection({ onBack }: { onBack: () => voi
           </>
         }
       >
-        <form
-          className="space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            save();
-          }}
-        >
+        <form className="space-y-4" onSubmit={(e) => (e.preventDefault(), save())}>
           {editing && editing !== "new" && (
             <div className="flex items-center gap-4 rounded-2xl border border-line bg-surface-2 p-3">
               <ProfilePhotoUploader

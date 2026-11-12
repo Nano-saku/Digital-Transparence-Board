@@ -1,65 +1,68 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ClipboardList, Coins, RefreshCw, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { auditLogsService, paymentsService } from "@/services/db";
 import type { AuditLog, PaymentRecord } from "@/types";
 import { formatPeso, formatPhilippineDateTime } from "@/lib/format";
+import { ROLE_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
+import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
 import Pagination from "@/components/ui/Pagination";
 import { LoadingCard } from "@/components/ui/Skeleton";
 
-interface SystemLogsSectionProps {
-  onBack: () => void;
-}
-
 const PAGE_SIZE = 20;
-const OFFICER_ROLES = ["admin", "secretary", "treasurer", "auditor", "board-member"] as const;
+const OFFICER_ROLES = Object.keys(ROLE_LABEL);
 const SYSTEM_ENTITY_TYPES = ["authentication", "student", "event", "attendance", "transaction", "requirement_file", "feedback", "board_member"];
 
-function officerRoleFromName(name: string): string {
-  const normalized = name.toLowerCase();
-  const role = [
-    ["admin", "Admin"],
-    ["secretary", "Secretary"],
-    ["treasurer", "Treasurer"],
-    ["auditor", "Auditor"],
-    ["board member", "Board Member"],
-  ].find(([key]) => normalized.includes(key));
-  return role?.[1] ?? "Officer";
+/** The officer role named in a "recorded by" label, e.g. "Treasurer Ana" -> "Treasurer". */
+const officerRoleFromName = (name: string) =>
+  Object.values(ROLE_LABEL).find((label) => name.toLowerCase().includes(label.toLowerCase())) ?? "Officer";
+const formatLabel = (value?: string) => (value ? value.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "—");
+
+const SYSTEM_COLUMNS: DataColumn<AuditLog>[] = [
+  { header: "Actor", cell: (log) => log.actorName || "—", className: "font-semibold" },
+  { header: "Role", cell: (log) => formatLabel(log.actorRole), className: "text-muted" },
+  { header: "Action", cell: (log) => <span className="chip chip-brand">{formatLabel(log.action)}</span> },
+  { header: "Description", cell: (log) => log.description || "—", className: "max-w-[28rem] whitespace-normal text-muted" },
+  { header: "Entity", cell: (log) => formatLabel(log.entityType), className: "text-muted" },
+  { header: "Date/Time", cell: (log) => formatPhilippineDateTime(log.createdAt), className: "whitespace-nowrap text-muted" },
+];
+
+const CONTRIBUTION_COLUMNS: DataColumn<PaymentRecord>[] = [
+  { header: "Student", cell: (p) => p.studentName || "—", className: "font-semibold" },
+  { header: "Event", cell: (p) => p.eventName || "—", className: "text-muted" },
+  { header: "Amount", cell: (p) => formatPeso(p.amount), className: "whitespace-nowrap font-semibold tabular-nums" },
+  { header: "Payment/Action", cell: () => <span className="chip chip-success">Payment recorded</span> },
+  { header: "Officer", cell: (p) => p.recordedBy || "—", className: "text-muted" },
+  { header: "Role", cell: (p) => (p.recordedBy ? officerRoleFromName(p.recordedBy) : "—"), className: "text-muted" },
+  { header: "Date/Time", cell: (p) => formatPhilippineDateTime(p.recordedAt), className: "whitespace-nowrap text-muted" },
+  { header: "OR/Reference", cell: (p) => p.orNumber || p.id, className: "font-mono text-xs text-muted" },
+];
+
+interface Logs {
+  system: { data: AuditLog[]; total: number };
+  contributions: { data: PaymentRecord[]; total: number };
 }
 
-function formatLabel(value: string): string {
-  return value.replace(/[-_]+/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-export default function SystemLogsSection({ onBack }: SystemLogsSectionProps) {
-  const [systemLogs, setSystemLogs] = useState<AuditLog[]>([]);
-  const [contributionLogs, setContributionLogs] = useState<PaymentRecord[]>([]);
+export default function SystemLogsSection({ onBack }: { onBack: () => void }) {
+  const [logs, setLogs] = useState<Logs>({ system: { data: [], total: 0 }, contributions: { data: [], total: 0 } });
   const [systemPage, setSystemPage] = useState(1);
   const [contributionPage, setContributionPage] = useState(1);
-  const [systemTotal, setSystemTotal] = useState(0);
-  const [contributionTotal, setContributionTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadLogs = useCallback(
-    async (showRefreshState = false) => {
+    async (refresh = false) => {
+      (refresh ? setRefreshing : setLoading)(true);
       try {
-        if (showRefreshState) setRefreshing(true);
-        else setLoading(true);
-
-        const [systemResult, contributionResult] = await Promise.all([
+        const [system, contributions] = await Promise.all([
           auditLogsService.getPage(systemPage - 1, PAGE_SIZE, { entityTypes: SYSTEM_ENTITY_TYPES, actorRoles: OFFICER_ROLES }),
           paymentsService.getPage(contributionPage - 1, PAGE_SIZE),
         ]);
-
-        setSystemLogs(systemResult.data);
-        setSystemTotal(systemResult.total);
-        setContributionLogs(contributionResult.data);
-        setContributionTotal(contributionResult.total);
+        setLogs({ system, contributions });
       } catch (error) {
         console.error("Error loading audit logs:", error);
         toast.error("Failed to load audit logs");
@@ -73,17 +76,11 @@ export default function SystemLogsSection({ onBack }: SystemLogsSectionProps) {
 
   useEffect(() => {
     void loadLogs();
+    const unsubscribe = [auditLogsService, paymentsService].map((service) => service.subscribe(() => void loadLogs(true)));
+    return () => unsubscribe.forEach((stop) => stop());
   }, [loadLogs]);
 
-  useEffect(() => {
-    const unsubscribeAudit = auditLogsService.subscribe(() => void loadLogs(true));
-    const unsubscribePayments = paymentsService.subscribe(() => void loadLogs(true));
-    return () => {
-      unsubscribeAudit();
-      unsubscribePayments();
-    };
-  }, [loadLogs]);
-
+  const { system, contributions } = logs;
   return (
     <Page
       eyebrow="Audit trail"
@@ -98,8 +95,8 @@ export default function SystemLogsSection({ onBack }: SystemLogsSectionProps) {
       }
       hero={
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <StatCard featured icon={ClipboardList} label="System events" value={loading ? "—" : systemTotal} hint="Officer and administrative actions" />
-          <StatCard icon={Coins} tone="success" label="Contribution records" value={loading ? "—" : contributionTotal} hint="Payments recorded by officers" />
+          <StatCard featured icon={ClipboardList} label="System events" value={loading ? "—" : system.total} hint="Officer and administrative actions" />
+          <StatCard icon={Coins} tone="success" label="Contribution records" value={loading ? "—" : contributions.total} hint="Payments recorded by officers" />
         </div>
       }
     >
@@ -111,103 +108,51 @@ export default function SystemLogsSection({ onBack }: SystemLogsSectionProps) {
             icon={ClipboardList}
             title="System Logs"
             subtitle="Officer and administrative actions, newest to oldest."
-            pagination={{ page: systemPage, totalItems: systemTotal, onPage: setSystemPage }}
-          >
-            {systemLogs.length === 0 ? (
-              <EmptyState icon={ClipboardList} title="No system activity found." />
-            ) : (
-              <table className="data-table min-w-[980px]">
-                <thead>
-                  <tr>
-                    <th>Actor</th>
-                    <th>Role</th>
-                    <th>Action</th>
-                    <th>Description</th>
-                    <th>Entity</th>
-                    <th>Date/Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {systemLogs.map((log) => (
-                    <tr key={log.id}>
-                      <td className="font-semibold">{log.actorName || "—"}</td>
-                      <td className="text-muted">{log.actorRole ? formatLabel(log.actorRole) : "—"}</td>
-                      <td>
-                        <span className="chip chip-brand">{log.action ? formatLabel(log.action) : "—"}</span>
-                      </td>
-                      <td className="max-w-[28rem] whitespace-normal text-muted">{log.description || "—"}</td>
-                      <td className="text-muted">{log.entityType ? formatLabel(log.entityType) : "—"}</td>
-                      <td className="whitespace-nowrap text-muted">{formatPhilippineDateTime(log.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </LogCard>
-
+            empty="No system activity found."
+            tableClassName="min-w-[980px]"
+            columns={SYSTEM_COLUMNS}
+            {...system}
+            page={systemPage}
+            onPage={setSystemPage}
+          />
           <LogCard
             icon={Coins}
-            tone="success"
+            success
             title="Contribution Logs"
             subtitle="Contribution and payment activity with its own count and pagination."
-            pagination={{ page: contributionPage, totalItems: contributionTotal, onPage: setContributionPage }}
-          >
-            {contributionLogs.length === 0 ? (
-              <EmptyState icon={Coins} title="No contribution activity found." />
-            ) : (
-              <table className="data-table min-w-[1040px]">
-                <thead>
-                  <tr>
-                    <th>Student</th>
-                    <th>Event</th>
-                    <th>Amount</th>
-                    <th>Payment/Action</th>
-                    <th>Officer</th>
-                    <th>Role</th>
-                    <th>Date/Time</th>
-                    <th>OR/Reference</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contributionLogs.map((payment) => (
-                    <tr key={payment.id}>
-                      <td className="font-semibold">{payment.studentName || "—"}</td>
-                      <td className="text-muted">{payment.eventName || "—"}</td>
-                      <td className="whitespace-nowrap font-semibold tabular-nums">{formatPeso(payment.amount)}</td>
-                      <td>
-                        <span className="chip chip-success">Payment recorded</span>
-                      </td>
-                      <td className="text-muted">{payment.recordedBy || "—"}</td>
-                      <td className="text-muted">{payment.recordedBy ? officerRoleFromName(payment.recordedBy) : "—"}</td>
-                      <td className="whitespace-nowrap text-muted">{formatPhilippineDateTime(payment.recordedAt)}</td>
-                      <td className="font-mono text-xs text-muted">{payment.orNumber || payment.id}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </LogCard>
+            empty="No contribution activity found."
+            tableClassName="min-w-[1040px]"
+            columns={CONTRIBUTION_COLUMNS}
+            {...contributions}
+            page={contributionPage}
+            onPage={setContributionPage}
+          />
         </>
       )}
     </Page>
   );
 }
 
-interface LogCardProps {
+interface LogCardProps<T> {
   icon: LucideIcon;
-  tone?: "brand" | "success";
+  success?: boolean;
   title: string;
   subtitle: string;
-  /** Server-side pagination: the page shown and the total row count. */
-  pagination: { page: number; totalItems: number; onPage: (page: number) => void };
-  children: ReactNode;
+  empty: string;
+  tableClassName: string;
+  columns: DataColumn<T>[];
+  data: T[];
+  /** Server-side pagination: the total row count and the page shown. */
+  total: number;
+  page: number;
+  onPage: (page: number) => void;
 }
 
-function LogCard({ icon: Icon, tone = "brand", title, subtitle, pagination, children }: LogCardProps) {
+function LogCard<T extends { id: string }>({ icon: Icon, success, title, subtitle, empty, tableClassName, columns, data, total, page, onPage }: LogCardProps<T>) {
   return (
     <section className="card overflow-hidden">
       <header className="flex items-center gap-3 border-b border-line/60 p-5 lg:p-6">
-        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-full", tone === "success" ? "bg-success/10 text-success" : "bg-brand-500/10 text-brand-500")}>
+        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-full", success ? "bg-success/10 text-success" : "bg-brand-500/10 text-brand-500")}>
           <Icon className="h-5 w-5" />
         </span>
         <div>
@@ -215,10 +160,8 @@ function LogCard({ icon: Icon, tone = "brand", title, subtitle, pagination, chil
           <p className="text-sm text-muted">{subtitle}</p>
         </div>
       </header>
-      <div data-lenis-prevent className="table-scroll">
-        {children}
-      </div>
-      <Pagination {...pagination} pageSize={PAGE_SIZE} totalPages={Math.max(1, Math.ceil(pagination.totalItems / PAGE_SIZE))} />
+      {data.length === 0 ? <EmptyState icon={Icon} title={empty} /> : <DataTable columns={columns} rows={data} rowKey={(row) => row.id} className={tableClassName} />}
+      <Pagination page={page} onPage={onPage} totalItems={total} pageSize={PAGE_SIZE} totalPages={Math.max(1, Math.ceil(total / PAGE_SIZE))} />
     </section>
   );
 }

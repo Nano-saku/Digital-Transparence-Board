@@ -4,11 +4,14 @@ import { ArrowRight, Download, Eye, FileText, MessageCircle, Pencil, PieChart, P
 import type { LucideIcon } from "lucide-react";
 import type { ViewState, Transaction, FinancialReport, EventAllocation, UserRole, Event } from "@/types";
 import { transactionsService, financialReportingService, eventsService } from "@/services/db";
-import { blobToDataUri, downloadBlob, uploadReceiptFile } from "@/lib/receipts";
+import { uploadReceiptFile } from "@/lib/receipts";
 import { formatDate, today, formatPeso } from "@/lib/format";
+import { canAccess } from "@/lib/roles";
+import { downloadReport, printTable, type Column, type PrintableReport } from "@/lib/printReport";
 import { useSearch } from "@/hooks/useSearch";
 import { usePagination } from "@/hooks/usePagination";
 import ReceiptViewer from "@/components/ReceiptViewer";
+import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
 import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -49,11 +52,11 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
   const [form, setForm] = useState<TxForm>(emptyForm);
   const [toDelete, setToDelete] = useState<Transaction | null>(null);
 
-  // Only the admin, treasurer and auditor manage the ledger and download the report.
-  const canManage = adminMode && (role === "admin" || role === "treasurer" || role === "auditor");
+  // Only the finance roles (admin, treasurer, auditor) manage the ledger and download the report.
+  const canManage = adminMode && !!canAccess(role ?? null, "transaction-management");
 
   const { query, setQuery, filtered } = useSearch(transactions, txText);
-  const { pageItems, pagination } = usePagination(filtered, 10);
+  const { pageItems, pagination } = usePagination(filtered, 10, query);
 
   const loadData = useCallback(async (showLoader = true) => {
     if (showLoader) setLoading(true);
@@ -80,13 +83,12 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
     return financialReportingService.subscribe(() => loadData(false));
   }, [loadData]);
 
-  const downloadReport = async () => {
+  const exportReport = async () => {
     if (!canManage) return void toast.error("You do not have permission to download this report");
     if (!report) return;
     setDownloading(true);
     try {
-      const html = buildReportHtml(report, transactions, await loadReportLogos());
-      downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), `transparency-board-report-${today()}.html`);
+      await downloadReport(`transparency-board-report-${today()}.html`, financialReport(report, transactions));
       toast.success("Report downloaded. Open it in a browser and use Print > Save as PDF to export.");
     } catch (error) {
       console.error("Error downloading report:", error);
@@ -151,8 +153,51 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
     }
   };
 
+  const columns: DataColumn<Transaction>[] = [
+    { header: "Date", cell: (t) => formatDate(t.date), className: "whitespace-nowrap text-muted" },
+    { header: "Description", cell: (t) => t.description, className: "font-medium" },
+    { header: "Event", cell: (t) => t.eventName || "—", className: "text-muted" },
+    { header: "Type", cell: (t) => <TypeChip income={t.type === "income"} /> },
+    {
+      header: "Amount",
+      right: true,
+      className: "whitespace-nowrap font-semibold",
+      cell: (t) => <span className={t.type === "income" ? "text-success" : "text-danger"}>{`${t.type === "income" ? "+" : "−"}${formatPeso(t.amount)}`}</span>,
+    },
+    { header: "Officer", cell: (t) => t.responsibleOfficer, className: "whitespace-nowrap text-muted" },
+    {
+      header: "Receipt",
+      cell: (t) =>
+        t.receiptUrl ? (
+          <button onClick={() => setReceipt(t.receiptUrl!)} className="btn btn-secondary btn-sm">
+            <Eye className="h-3.5 w-3.5" /> View
+          </button>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
+    ...(canManage
+      ? [
+          {
+            header: "",
+            cell: (t: Transaction) => (
+              <Menu>
+                <RowActionsTrigger label={`Actions for ${t.description}`} />
+                <MenuContent>
+                  <MenuItem onSelect={() => openForm(t)}><Pencil /> Edit</MenuItem>
+                  <MenuSeparator />
+                  <MenuItem danger onSelect={() => setToDelete(t)}><Trash2 /> Delete</MenuItem>
+                </MenuContent>
+              </Menu>
+            ),
+          },
+        ]
+      : []),
+  ];
+
   const summary = report?.summary;
   const allocations = report?.eventAllocations ?? [];
+  const editingIncome = editing !== "new" && editing?.type === "income";
 
   return (
     <Page
@@ -168,7 +213,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
         canManage && (
           <>
             <button
-              onClick={downloadReport}
+              onClick={exportReport}
               disabled={!report || downloading}
               className="btn border border-white/25 bg-white/10 text-white hover:bg-white/20"
             >
@@ -181,32 +226,25 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
         )
       }
       hero={
-        loading || !summary ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="glass h-32 animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="card-brand flex flex-col justify-between p-5 sm:col-span-2 lg:col-span-1 lg:row-span-1">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-white/75">Remaining budget</p>
-                <PieChart className="h-5 w-5 text-powder" />
-              </div>
-              <p className="mt-3 text-3xl font-extrabold tracking-tight">{formatPeso(summary.remainingBudget)}</p>
-              <div className="mt-4">
-                <div className="h-1.5 overflow-hidden rounded-full bg-white/20">
-                  <div className="h-full rounded-full bg-powder" style={{ width: `${pct(summary.totalFundsSpent, summary.totalFundsCollected)}%` }} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {loading || !summary ? (
+            Array.from({ length: 4 }, (_, i) => <div key={i} className="glass h-32 animate-pulse" />)
+          ) : (
+            <>
+              <div className="card-brand flex flex-col justify-between p-5 sm:col-span-2 lg:col-span-1 lg:row-span-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-white/75">Remaining budget</p>
+                  <PieChart className="h-5 w-5 text-powder" />
                 </div>
-                <p className="mt-1.5 text-xs text-white/70">{pct(summary.totalFundsSpent, summary.totalFundsCollected)}% of collected funds spent</p>
+                <p className="mt-3 text-3xl font-extrabold tracking-tight">{formatPeso(summary.remainingBudget)}</p>
+                <SpentBar className="mt-4 h-1.5 bg-white/20" fill="bg-powder" caption="text-white/70" percent={pct(summary.totalFundsSpent, summary.totalFundsCollected)} />
               </div>
-            </div>
-            <GlassStat icon={Wallet} label="Total contribution amount" value={formatPeso(summary.totalBudget)} />
-            <GlassStat icon={TrendingUp} label="Funds collected" value={formatPeso(summary.totalFundsCollected)} />
-            <GlassStat icon={TrendingDown} label="Funds spent" value={formatPeso(summary.totalFundsSpent)} />
-          </div>
-        )
+              <GlassStat icon={Wallet} label="Total contribution amount" value={formatPeso(summary.totalBudget)} />
+              <GlassStat icon={TrendingUp} label="Funds collected" value={formatPeso(summary.totalFundsCollected)} />
+              <GlassStat icon={TrendingDown} label="Funds spent" value={formatPeso(summary.totalFundsSpent)} />
+            </>
+          )}
+        </div>
       }
     >
       {loading ? (
@@ -228,66 +266,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
               <EmptyState icon={FileText} title={query ? "No matching transactions" : "No transactions yet"} />
             ) : (
               <>
-                <div data-lenis-prevent className="table-scroll">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Description</th>
-                        <th>Event</th>
-                        <th>Type</th>
-                        <th className="text-right">Amount</th>
-                        <th>Officer</th>
-                        <th>Receipt</th>
-                        {canManage && <th className="w-12" />}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pageItems.map((t) => {
-                        const income = t.type === "income";
-                        return (
-                          <tr key={t.id}>
-                            <td className="whitespace-nowrap text-muted">{formatDate(t.date)}</td>
-                            <td className="font-medium">{t.description}</td>
-                            <td className="text-muted">{t.eventName || "—"}</td>
-                            <td>
-                              <span className={`chip ${income ? "chip-success" : "chip-danger"}`}>
-                                {income ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                                {income ? "Income" : "Expense"}
-                              </span>
-                            </td>
-                            <td className={`whitespace-nowrap text-right font-semibold ${income ? "text-success" : "text-danger"}`}>
-                              {income ? "+" : "−"}
-                              {formatPeso(t.amount)}
-                            </td>
-                            <td className="whitespace-nowrap text-muted">{t.responsibleOfficer}</td>
-                            <td>
-                              {t.receiptUrl ? (
-                                <button onClick={() => setReceipt(t.receiptUrl!)} className="btn btn-secondary btn-sm">
-                                  <Eye className="h-3.5 w-3.5" /> View
-                                </button>
-                              ) : (
-                                <span className="text-muted">—</span>
-                              )}
-                            </td>
-                            {canManage && (
-                              <td>
-                                <Menu>
-                                  <RowActionsTrigger label={`Actions for ${t.description}`} />
-                                  <MenuContent>
-                                    <MenuItem onSelect={() => openForm(t)}><Pencil /> Edit</MenuItem>
-                                    <MenuSeparator />
-                                    <MenuItem danger onSelect={() => setToDelete(t)}><Trash2 /> Delete</MenuItem>
-                                  </MenuContent>
-                                </Menu>
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable columns={columns} rows={pageItems} rowKey={(t) => t.id} />
                 <Pagination {...pagination} />
               </>
             )}
@@ -301,34 +280,28 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {allocations.map((a) => {
-                  const used = pct(a.totalSpent, a.totalCollected);
-                  return (
-                    <article key={a.eventId} className="card card-hover p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="min-w-0 truncate font-bold text-ink" title={a.eventName}>{a.eventName}</h3>
-                        <span className="chip chip-brand shrink-0">{formatPeso(a.allocationAmount)} / student</span>
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-center">
-                        {[
-                          ["Expected", expectedCollection(a), "text-ink"],
-                          ["Collected", a.totalCollected, "text-success"],
-                          ["Spent", a.totalSpent, "text-danger"],
-                          ["Balance", a.remainingBalance, "text-ink"],
-                        ].map(([label, value, tone]) => (
-                          <div key={label} className="rounded-xl bg-surface-2 px-2 py-2.5">
-                            <p className="text-[11px] font-medium text-muted">{label}</p>
-                            <p className={`mt-0.5 truncate text-sm font-bold ${tone}`}>{formatPeso(value as number)}</p>
-                          </div>
+                {allocations.map((a) => (
+                  <article key={a.eventId} className="card card-hover p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="min-w-0 truncate font-bold text-ink" title={a.eventName}>{a.eventName}</h3>
+                      <span className="chip chip-brand shrink-0">{formatPeso(a.allocationAmount)} / student</span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-center">
+                      {[
+                        ["Expected", expectedCollection(a), "text-ink"],
+                        ["Collected", a.totalCollected, "text-success"],
+                        ["Spent", a.totalSpent, "text-danger"],
+                        ["Balance", a.remainingBalance, "text-ink"],
+                      ].map(([label, value, tone]) => (
+                        <div key={label} className="rounded-xl bg-surface-2 px-2 py-2.5">
+                          <p className="text-[11px] font-medium text-muted">{label}</p>
+                          <p className={`mt-0.5 truncate text-sm font-bold ${tone}`}>{formatPeso(value as number)}</p>
+                        </div>
                         ))}
                       </div>
-                      <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2">
-                        <div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-indigo-500" style={{ width: `${used}%` }} />
-                      </div>
-                      <p className="mt-1.5 text-xs text-muted">{used}% of collected funds spent</p>
+                      <SpentBar className="mt-4 h-2 bg-surface-2" fill="bg-gradient-to-r from-brand-500 to-indigo-500" caption="text-muted" percent={pct(a.totalSpent, a.totalCollected)} />
                     </article>
-                  );
-                })}
+                ))}
               </div>
             )}
           </section>
@@ -409,9 +382,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
           )}
           <p className="flex items-center gap-2 text-xs text-muted">
             Type
-            <span className={`chip ${editing !== "new" && editing?.type === "income" ? "chip-success" : "chip-danger"}`}>
-              {editing !== "new" && editing?.type === "income" ? "Income" : "Expense"}
-            </span>
+            <TypeChip income={editingIncome} />
           </p>
         </div>
       </Modal>
@@ -429,6 +400,15 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
   );
 }
 
+function TypeChip({ income }: { income: boolean }) {
+  return (
+    <span className={`chip ${income ? "chip-success" : "chip-danger"}`}>
+      {income ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {income ? "Income" : "Expense"}
+    </span>
+  );
+}
+
 function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return (
     <div className="glass flex flex-col justify-between p-5">
@@ -437,6 +417,18 @@ function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
         <div className="grid h-9 w-9 place-items-center rounded-full border border-white/20"><Icon className="h-4 w-4 text-powder" /></div>
       </div>
       <p className="mt-3 truncate text-2xl font-extrabold tracking-tight text-white">{value}</p>
+    </div>
+  );
+}
+
+/** "N% of collected funds spent" progress bar. */
+function SpentBar({ percent, className, fill, caption }: { percent: number; className: string; fill: string; caption: string }) {
+  return (
+    <div>
+      <div className={`overflow-hidden rounded-full ${className}`}>
+        <div className={`h-full rounded-full ${fill}`} style={{ width: `${percent}%` }} />
+      </div>
+      <p className={`mt-1.5 text-xs ${caption}`}>{percent}% of collected funds spent</p>
     </div>
   );
 }
@@ -450,79 +442,51 @@ function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) 
   );
 }
 
-const esc = (value: unknown) =>
-  String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const money = <T,>(label: string, get: (row: T) => number): Column<T> => ({ label, align: "right", value: (row) => formatPeso(get(row)) });
 
-interface ReportLogos {
-  lsc: string;
-  dssc: string;
-}
-
-/** Embeds both official logos as data URIs so the downloaded report is self-contained. */
-async function loadReportLogos(): Promise<ReportLogos> {
-  const responses = await Promise.all([fetch("/lsc-logo.jpg"), fetch("/DSSC-logo.png")]);
-  if (responses.some((r) => !r.ok)) throw new Error("Unable to load report logos");
-  const [lsc, dssc] = await Promise.all(responses.map(async (r) => blobToDataUri(await r.blob())));
-  return { lsc, dssc };
-}
-
-/** Self-contained printable HTML report (Print > Save as PDF for a PDF copy). */
-function buildReportHtml({ summary, eventAllocations }: FinancialReport, transactions: Transaction[], logos: ReportLogos) {
-  const rows = (cells: string[][], cols: number, empty: string) =>
-    cells.length
-      ? cells.map((r, i) => `<tr class="${i % 2 === 0 ? "even" : "odd"}">${r.join("")}</tr>`).join("")
-      : `<tr><td colspan="${cols}">${empty}</td></tr>`;
-  const money = (n: number) => `<td class="right">${formatPeso(n)}</td>`;
-  const card = (caption: string, n: number, cls = "") =>
-    `<div class="card"><div class="number ${cls}">${formatPeso(n)}</div><div class="caption">${caption}</div></div>`;
-
-  const allocationRows = rows(
-    eventAllocations.map((a) => [
-      `<td>${esc(a.eventName)}</td>`,
-      money(a.allocationAmount),
-      money(expectedCollection(a)),
-      money(a.totalCollected),
-      money(a.totalSpent),
-      money(a.remainingBalance),
-    ]),
-    6,
-    "No allocations recorded.",
-  );
-  const transactionRows = rows(
-    transactions.map((t) => [
-      `<td>${esc(formatDate(String(t.date)))}</td>`,
-      `<td>${esc(t.description)}</td>`,
-      `<td>${esc(t.eventName || "-")}</td>`,
-      `<td><span class="type-${t.type}">${t.type === "income" ? "Income" : "Expense"}</span></td>`,
-      `<td class="right ${t.type === "income" ? "pos" : "neg"}">${t.type === "income" ? "+" : "-"}${formatPeso(t.amount)}</td>`,
-      `<td>${esc(t.responsibleOfficer)}</td>`,
-    ]),
-    6,
-    "No transactions recorded.",
-  );
-
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/>
-<title>Student Council Financial Report</title>
-<style>
-  @page{size:landscape;margin:0}
-  *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;padding:20px 28px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .header{display:flex;align-items:center;justify-content:center;gap:20px;border-bottom:3px solid #1b2e8c;padding-bottom:12px}
-  .header img{width:70px;height:70px;object-fit:contain}.title{text-align:center}.org{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1.8px}.title h1{font-size:22px;color:#1b2e8c;margin:3px 0;font-weight:800}.sub{font-size:11px;color:#6b7280}
-  .metadata{display:grid;grid-template-columns:1fr 1fr;gap:7px 30px;margin:16px 0;font-size:13px}.label{font-weight:700;color:#374151;display:inline-block;min-width:125px}
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.card{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:9px;text-align:center}.number{font-weight:800;font-size:20px}.caption{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}.collected{color:#047857}.spent{color:#b91c1c}.remaining{color:#1b2e8c}
-  h2{font-size:15px;color:#1b2e8c;margin:18px 0 8px;border-bottom:2px solid #1b2e8c;padding-bottom:5px}
-  table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px}thead tr{background:#1b2e8c;color:#fff}th{padding:8px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px;border-bottom:1px solid #e5e7eb}.right{text-align:right;white-space:nowrap}.odd{background:#f9fafb}.even{background:#fff}
-  .pos{color:#047857;font-weight:700}.neg{color:#b91c1c;font-weight:700}.type-income,.type-expense{display:inline-block;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700}.type-income{background:#d1fae5;color:#047857}.type-expense{background:#fee2e2;color:#b91c1c}
-  footer{display:flex;justify-content:space-between;margin-top:18px;padding-top:9px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:10px}@media print{body{padding:12mm 10mm}.ledger-section{break-before:page;page-break-before:always}.ledger-section h2{break-after:avoid-page;page-break-after:avoid}}
-</style></head><body>
-  <header class="header"><img src="${logos.lsc}" alt="LSC logo"/><div class="title"><div class="org">Local Student Council · DSSC Santa Cruz</div><h1>Student Council Financial Report</h1><div class="sub">Official Financial Record for Verification and Filing</div></div><img src="${logos.dssc}" alt="DSSC logo"/></header>
-  <section class="metadata"><div><span class="label">Report Type:</span>Official Financial Report</div><div><span class="label">Reporting Scope:</span>All recorded events and transactions</div><div><span class="label">Events Covered:</span>${eventAllocations.length}</div><div><span class="label">Transactions Recorded:</span>${transactions.length}</div></section>
-  <section class="summary">${card("Total Contribution Amount", summary.totalBudget)}${card("Funds Collected", summary.totalFundsCollected, "collected")}${card("Funds Spent", summary.totalFundsSpent, "spent")}${card("Remaining Budget", summary.remainingBudget, "remaining")}</section>
-  <h2>Event Allocations</h2>
-  <table><thead><tr><th>Event</th><th class="right">Allocation</th><th class="right">Expected Collection</th><th class="right">Collected</th><th class="right">Spent</th><th class="right">Balance</th></tr></thead><tbody>${allocationRows}</tbody></table>
-  <section class="ledger-section"><h2>Transaction Ledger</h2>
-  <table><thead><tr><th>Date</th><th>Description</th><th>Event</th><th>Type</th><th class="right">Amount</th><th>Officer</th></tr></thead><tbody>${transactionRows}</tbody></table></section>
-  <footer><span>Generated ${new Date().toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" })}</span><span>Digital Transparency Board — LSC · DSSC Santa Cruz</span></footer>
-</body></html>`;
-}
+/** The official printable financial report: summary, allocations, then the ledger on its own page. */
+const financialReport = ({ summary, eventAllocations }: FinancialReport, transactions: Transaction[]): PrintableReport => ({
+  title: "Student Council Financial Report",
+  kind: "Financial",
+  meta: [
+    ["Report Type", "Official Financial Report"],
+    ["Reporting Scope", "All recorded events and transactions"],
+    ["Events Covered", eventAllocations.length],
+    ["Transactions Recorded", transactions.length],
+  ],
+  summary: [
+    { label: "Total Contribution Amount", value: formatPeso(summary.totalBudget) },
+    { label: "Funds Collected", value: formatPeso(summary.totalFundsCollected), tone: "success" },
+    { label: "Funds Spent", value: formatPeso(summary.totalFundsSpent), tone: "danger" },
+    { label: "Remaining Budget", value: formatPeso(summary.remainingBudget), tone: "brand" },
+  ],
+  tables: [
+    printTable<EventAllocation>({
+      heading: "Event Allocations",
+      rows: eventAllocations,
+      empty: "No allocations recorded.",
+      columns: [
+        { label: "Event", value: (a) => a.eventName },
+        money("Allocation", (a) => a.allocationAmount),
+        money("Expected Collection", expectedCollection),
+        money("Collected", (a) => a.totalCollected),
+        money("Spent", (a) => a.totalSpent),
+        money("Balance", (a) => a.remainingBalance),
+      ],
+    }),
+    printTable<Transaction>({
+      heading: "Transaction Ledger",
+      newPage: true,
+      rows: transactions,
+      empty: "No transactions recorded.",
+      columns: [
+        { label: "Date", value: (t) => formatDate(t.date) },
+        { label: "Description", value: (t) => t.description },
+        { label: "Event", value: (t) => t.eventName || "-" },
+        { label: "Type", value: (t) => (t.type === "income" ? "Income" : "Expense"), pill: (t) => (t.type === "income" ? "success" : "danger") },
+        { label: "Amount", align: "right", value: (t) => `${t.type === "income" ? "+" : "-"}${formatPeso(t.amount)}`, tone: (t) => (t.type === "income" ? "success" : "danger") },
+        { label: "Officer", value: (t) => t.responsibleOfficer },
+      ],
+    }),
+  ],
+});
