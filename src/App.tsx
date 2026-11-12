@@ -13,7 +13,7 @@ import { authService, type AuthSession } from "@/services/auth";
 import { offlineSyncService } from "@/lib/offlineSync";
 import { namesMatch } from "@/lib/utils";
 import { ROLE_LABEL, STAFF_VIEWS, canAccess } from "@/lib/roles";
-import { saveViewSession, loadViewSession, clearViewSession } from "@/lib/Sessionkeeper";
+import { saveViewSession, loadViewSession, clearViewSession } from "@/lib/sessionKeeper";
 import { LoadingCard } from "@/components/ui/Skeleton";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
 import PushPromptModal from "@/components/PushPromptModal";

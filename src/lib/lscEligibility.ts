@@ -1,44 +1,27 @@
 import type { LscOfficer, Student } from "@/types";
 
 /**
- * Builds the current officer set from appointment rows.
- *
- * `studentDbId` is authoritative. The student-number fallback exists only for
- * legacy appointment rows that were created before the foreign key was stored,
- * and is ignored when the number is not unique among the loaded students.
- * Appointment rows are current because the database model has no status or
- * end-date column; removing the row ends the appointment.
+ * Student db ids of current officers (appointment rows have no end date; deleting
+ * the row ends it). `studentDbId` is authoritative; legacy rows without it fall back
+ * to the student number, ignored when that number is not unique among `students`.
  */
-export function activeLscOfficerStudentIds(
-  students: Student[],
-  appointments: LscOfficer[],
-): Set<string> {
-  const ids = new Set<string>();
-  const byStudentNumber = new Map<string, Student[]>();
-
+export function activeLscOfficerStudentIds(students: Student[], appointments: LscOfficer[]): Set<string> {
+  const key = (studentNumber: string) => studentNumber.trim().toLowerCase();
+  // null marks a student number shared by several students.
+  const byNumber = new Map<string, Student | null>();
   for (const student of students) {
-    const key = student.studentId.trim().toLowerCase();
-    const matches = byStudentNumber.get(key) ?? [];
-    matches.push(student);
-    byStudentNumber.set(key, matches);
+    const k = key(student.studentId);
+    byNumber.set(k, byNumber.has(k) ? null : student);
   }
 
-  for (const appointment of appointments) {
-    if (appointment.studentDbId) {
-      ids.add(appointment.studentDbId);
-      continue;
-    }
-
-    const matches = byStudentNumber.get(appointment.studentId.trim().toLowerCase()) ?? [];
-    if (matches.length === 1) ids.add(matches[0].id);
+  const ids = new Set<string>();
+  for (const { studentDbId, studentId } of appointments) {
+    const id = studentDbId || byNumber.get(key(studentId))?.id;
+    if (id) ids.add(id);
   }
-
   return ids;
 }
 
-export function isActiveLscOfficer(
-  studentId: string,
-  officerStudentIds: ReadonlySet<string>,
-): boolean {
+export function isActiveLscOfficer(studentId: string, officerStudentIds: ReadonlySet<string>): boolean {
   return officerStudentIds.has(studentId);
 }
