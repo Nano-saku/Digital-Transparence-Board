@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { BellRing } from "lucide-react";
 import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import Modal from "@/components/ui/Modal";
 import {
   isPushSupported,
   getExistingSubscription,
@@ -23,124 +18,80 @@ interface PushPromptModalProps {
 }
 
 /**
- * Proactively asks visitors to enable push, instead of waiting for someone
- * to find the toggle in the bell dropdown. Shows at most once per browser
- * (tracked in localStorage) and never if permission was already
- * denied/granted. Once a student is verified, it also reconciles any
- * pre-existing browser subscription with that student's record.
+ * Asks once per browser to enable push (skipped if permission was already
+ * decided). Only officers and verified students are asked: student
+ * subscriptions must be tied to a student record. Once a student verifies,
+ * any prior subscription on this browser is reconciled with their record.
  */
 export default function PushPromptModal({ isLoggedIn, studentId }: PushPromptModalProps) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Decide once, on mount, whether to show the ask at all.
   useEffect(() => {
+    if (!isLoggedIn && !studentId) return;
+    if (!isPushSupported() || typeof Notification === "undefined" || Notification.permission !== "default") return;
+    if (localStorage.getItem(DISMISSED_KEY)) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
-
-    async function checkShouldPrompt() {
-      // Student push subscriptions must be tied to a verified student record.
-      // Officers have their own authenticated subscription flow.
-      if (!isLoggedIn && !studentId) return;
-      if (!isPushSupported()) return;
-      if (typeof Notification === "undefined") return;
-      if (Notification.permission === "denied" || Notification.permission === "granted") return;
-      if (localStorage.getItem(DISMISSED_KEY)) return;
-
-      try {
-        const existing = await getExistingSubscription();
-        if (existing) return;
-      } catch (error) {
-        console.warn("Unable to check push subscription before prompting:", error);
-        return;
-      }
-
-      if (!cancelled) {
-        const timer = setTimeout(() => setOpen(true), 1500);
-        return () => clearTimeout(timer);
-      }
-    }
-
-    checkShouldPrompt();
+    getExistingSubscription()
+      .then((existing) => {
+        if (!existing && !cancelled) timer = setTimeout(() => setOpen(true), 1500);
+      })
+      .catch((error) => console.warn("Unable to check push subscription before prompting:", error));
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-    // Only re-check on identity changes (e.g. logging in), not every render.
   }, [isLoggedIn, studentId]);
 
-  // Reconcile a prior subscription with a verified student record without
-  // prompting again when the browser permission was already granted.
   useEffect(() => {
-    if (studentId) {
-      upgradeSubscriptionToStudent(studentId);
-    }
+    if (studentId) upgradeSubscriptionToStudent(studentId);
   }, [studentId]);
 
-  function dismiss() {
+  // Either outcome is final: a denial is permanent in the browser anyway.
+  const dismiss = () => {
     localStorage.setItem(DISMISSED_KEY, "1");
     setOpen(false);
-  }
+  };
 
-  async function handleEnable() {
+  const enable = async () => {
     setBusy(true);
     try {
       const result = isLoggedIn
         ? await subscribeOfficerToPush()
         : studentId
           ? await subscribeStudentToPush(studentId)
-          : {
-              ok: false as const,
-              reason: "unsupported" as const,
-              message: "Open your student record before enabling push notifications.",
-            };
-
-      if (result.ok) {
-        toast.success("Push notifications enabled.");
-        localStorage.setItem(DISMISSED_KEY, "1");
-        setOpen(false);
-      } else {
-        toast.error(result.message || "Couldn't enable push notifications on this device.");
-        // Permission denial is permanent in the browser either way — no
-        // point asking again on this device.
-        localStorage.setItem(DISMISSED_KEY, "1");
-        setOpen(false);
-      }
+          : { ok: false as const, message: "Open your student record before enabling push notifications." };
+      if (result.ok) toast.success("Push notifications enabled.");
+      else toast.error(result.message || "Couldn't enable push notifications on this device.");
+      dismiss();
     } catch (error) {
+      // Unexpected failure (not a permission answer): keep the prompt so they can retry.
       console.error("Push prompt subscription failed:", error);
       toast.error("Couldn't enable push notifications. Please try again.");
     } finally {
       setBusy(false);
     }
-  }
+  };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && dismiss()}>
-      <DialogContent className="glass-card-strong w-[calc(100%-2rem)] max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-display font-bold text-xl text-dark flex items-center gap-2">
-            <BellRing className="w-5 h-5 text-royal-blue" />
-            Stay updated
-          </DialogTitle>
-        </DialogHeader>
-
-        <p className="text-sm text-text-secondary mt-2">
-          Get notified about payment confirmations, new files, and contribution deadlines —
-          even when you're not on the site.
-        </p>
-
-        <div className="flex gap-3 pt-4">
-          <button onClick={dismiss} className="flex-1 glass-button px-4 py-2.5" disabled={busy}>
+    <Modal
+      open={open}
+      onClose={dismiss}
+      size="sm"
+      icon={<BellRing className="h-5 w-5" />}
+      title="Stay updated"
+      description="Get notified about payment confirmations, new files and contribution deadlines — even when you're not on the site."
+      footer={
+        <>
+          <button onClick={dismiss} className="btn btn-secondary" disabled={busy}>
             Not now
           </button>
-
-          <button
-            onClick={handleEnable}
-            className="flex-1 btn-primary px-4 py-2.5"
-            disabled={busy}
-          >
-            {busy ? "Enabling..." : "Enable"}
+          <button onClick={enable} className="btn btn-primary" disabled={busy}>
+            {busy ? "Enabling…" : "Enable"}
           </button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </>
+      }
+    />
   );
 }
