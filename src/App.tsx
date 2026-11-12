@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, Suspense, lazy } from "react";
+import { useEffect, useRef, useState, Suspense, lazy, type ReactNode } from "react";
+import { toast, Toaster } from "sonner";
+import { ClipboardCheck } from "lucide-react";
 import type { ViewState, Student, UserRole, Event } from "@/types";
 import {
   eventEvaluationsService,
@@ -8,220 +10,137 @@ import {
   type StudentAppointmentVerification,
 } from "@/services/db";
 import { authService, type AuthSession } from "@/services/auth";
-import { toast, Toaster } from "sonner";
 import { offlineSyncService } from "@/lib/offlineSync";
 import { namesMatch } from "@/lib/utils";
-import {
-  saveViewSession,
-  loadViewSession,
-  clearViewSession,
-} from "./lib/Sessionkeeper";
+import { ROLE_LABEL, STAFF_VIEWS, canAccess } from "@/lib/roles";
+import { saveViewSession, loadViewSession, clearViewSession } from "@/lib/Sessionkeeper";
+import { LoadingCard } from "@/components/ui/Skeleton";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
-import Skeleton from "@/components/Skeleton";
-
-// Public-facing sections load eagerly — most visitors land here first.
-import Navigation from "@/sections/Navigation";
 import PushPromptModal from "@/components/PushPromptModal";
+import SmoothScroll from "@/components/motion/SmoothScroll";
+import { scrollToTop } from "@/lib/scroll";
+import { growFrom } from "@/lib/transition";
+import { useInteractionMotion } from "@/hooks/useInteractionMotion";
+import Navigation from "@/sections/Navigation";
 import LandingSection from "@/sections/LandingSection";
-import StudentRecordSection from "@/sections/StudentRecordSection";
-import OfficerRecordSection from "@/sections/OfficerRecordSection";
-import TransparencyBoardSection from "@/sections/TransparencyBoardSection";
-import FeedbackSection from "@/sections/FeedbackSection";
 import FooterSection from "@/sections/FooterSection";
 
-// Admin-only sections — lazy-loaded behind the login wall so the public
-// landing page isn't paying for code most visitors never touch.
-const AdminLoginSection = lazy(() => import("@/sections/AdminLoginSection"));
-const ForgotPasswordSection = lazy(
-  () => import("@/sections/ForgotPasswordSection"),
-);
-const ResetPasswordSection = lazy(
-  () => import("@/sections/ResetPasswordSection"),
-);
-const AdminDashboardSection = lazy(
-  () => import("@/sections/AdminDashboardSection"),
-);
-const StudentManagementSection = lazy(
-  () => import("@/sections/StudentManagementSection"),
-);
-const RequirementFilesManagementSection = lazy(
-  () => import("@/sections/RequirementFilesManagementSection"),
-);
-const OfficerVolunteersManagementSection = lazy(
-  () => import("@/sections/OfficerVolunteersManagementSection"),
-);
-const EventManagementSection = lazy(
-  () => import("@/sections/EventManagementSection"),
-);
-const ContributionManagementSection = lazy(
-  () => import("@/sections/ContributionManagementSection"),
-);
-const FeedbackManagementSection = lazy(
-  () => import("@/sections/FeedbackManagementSection"),
-);
-const ReportManagementSection = lazy(
-  () => import("@/sections/ReportManagementSection"),
-);
-const SystemLogsSection = lazy(() => import("@/sections/SystemLogsSection"));
-const AttendanceManagementSection = lazy(
-  () => import("@/sections/AttendanceManagementSection"),
-);
-const ROLE_LABEL: Record<UserRole, string> = {
-  admin: "Admin",
-  secretary: "Secretary",
-  treasurer: "Treasurer",
-  auditor: "Auditor",
-  "board-member": "Board Member",
+// Public pages other than the landing page, and every staff page, are
+// code-split so first-time visitors only download the landing bundle.
+const load = {
+  record: () => import("@/sections/StudentRecordSection"),
+  officerRecord: () => import("@/sections/OfficerRecordSection"),
+  transparency: () => import("@/sections/TransparencyBoardSection"),
+  feedback: () => import("@/sections/FeedbackSection"),
+  login: () => import("@/sections/AdminLoginSection"),
+  forgot: () => import("@/sections/ForgotPasswordSection"),
+  reset: () => import("@/sections/ResetPasswordSection"),
+  dashboard: () => import("@/sections/AdminDashboardSection"),
+  students: () => import("@/sections/StudentManagementSection"),
+  officers: () => import("@/sections/OfficerVolunteersManagementSection"),
+  files: () => import("@/sections/RequirementFilesManagementSection"),
+  events: () => import("@/sections/EventManagementSection"),
+  contributions: () => import("@/sections/ContributionManagementSection"),
+  feedbackAdmin: () => import("@/sections/FeedbackManagementSection"),
+  reports: () => import("@/sections/ReportManagementSection"),
+  logs: () => import("@/sections/SystemLogsSection"),
+  attendance: () => import("@/sections/AttendanceManagementSection"),
+};
+const StudentRecordSection = lazy(load.record);
+const OfficerRecordSection = lazy(load.officerRecord);
+const TransparencyBoardSection = lazy(load.transparency);
+const FeedbackSection = lazy(load.feedback);
+const AdminLoginSection = lazy(load.login);
+const ForgotPasswordSection = lazy(load.forgot);
+const ResetPasswordSection = lazy(load.reset);
+const AdminDashboardSection = lazy(load.dashboard);
+const StudentManagementSection = lazy(load.students);
+const OfficerVolunteersManagementSection = lazy(load.officers);
+const RequirementFilesManagementSection = lazy(load.files);
+const EventManagementSection = lazy(load.events);
+const ContributionManagementSection = lazy(load.contributions);
+const FeedbackManagementSection = lazy(load.feedbackAdmin);
+const ReportManagementSection = lazy(load.reports);
+const SystemLogsSection = lazy(load.logs);
+const AttendanceManagementSection = lazy(load.attendance);
+
+/** Code each view needs, fetched before a transition so the page grows in fully drawn. */
+const VIEW_CODE: Partial<Record<ViewState, () => Promise<unknown>>> = {
+  "student-record": load.record,
+  "officer-record": () => Promise.all([load.officerRecord(), load.record()]),
+  "evaluation-required": load.record,
+  transparency: load.transparency,
+  inquiry: load.feedback,
+  complaint: load.feedback,
+  suggestion: load.feedback,
+  "admin-forgot-password": load.forgot,
+  "admin-reset-password": load.reset,
+  "admin-dashboard": () => Promise.all([load.dashboard(), load.login()]),
+  "admin-login": () => Promise.all([load.dashboard(), load.login()]),
+  "student-management": load.students,
+  "officer-volunteers-management": load.officers,
+  "requirement-files-management": load.files,
+  "event-management": load.events,
+  "contribution-management": load.contributions,
+  "payment-management": load.contributions,
+  "transaction-management": load.transparency,
+  "feedback-management": load.feedbackAdmin,
+  "report-management": load.reports,
+  "system-logs": load.logs,
+  "attendance-management": load.attendance,
 };
 
-// Views only reachable once signed in as an officer — the set the session
-// keeper is allowed to restore someone into after a reload.
-const ADMIN_VIEWS: ViewState[] = [
-  "admin-dashboard",
-  "student-management",
-  "officer-volunteers-management",
-  "requirement-files-management",
-  "event-management",
-  "payment-management",
-  "contribution-management",
-  "attendance-management",
-  "transaction-management",
-  "feedback-management",
-  "report-management",
-  "system-logs",
-];
+/** Views that show one verified student's own record (restorable after a reload). */
+const STUDENT_VIEWS: ViewState[] = ["student-record", "officer-record", "evaluation-required"];
 
-// Pure version of the in-component `canAccess` check below, usable from
-// the session-restore effect before `auth`/`role` state has settled.
-function canRoleAccess(view: ViewState, role: UserRole | null): boolean {
-  if (!role) return false;
-  switch (view) {
-    case "student-management":
-      return role === "admin" || role === "secretary";
-    case "officer-volunteers-management":
-      return role === "admin";
-    case "requirement-files-management":
-      return role === "admin";
-    case "system-logs":
-      return role === "admin";
-    case "contribution-management":
-      return role === "admin" || role === "treasurer" || role === "auditor";
-    case "payment-management":
-    case "transaction-management":
-      return role === "admin" || role === "treasurer" || role === "auditor";
-    case "attendance-management":
-      return role === "admin" || role === "secretary";
-    case "report-management":
-      return role === "admin" || role === "secretary";
-    case "event-management":
-      return true;
-    case "feedback-management":
-    case "admin-dashboard":
-      return true;
-    default:
-      return true;
-  }
-}
-const SectionFallback = () => (
-  <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-    <div
-      className="w-full max-w-3xl space-y-5 px-6"
-      role="status"
-      aria-label="Loading section"
-    >
-      <Skeleton className="h-8 w-56" />
-      <Skeleton className="h-4 w-80 max-w-full" />
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Skeleton className="h-28 w-full rounded-xl" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-      </div>
-      <Skeleton className="h-64 w-full rounded-xl" />
-    </div>
-  </section>
+const recordView = (pending: Event | null, verification: StudentAppointmentVerification): ViewState =>
+  pending ? "evaluation-required" : verification.status === "verified" ? "officer-record" : "student-record";
+
+const Fallback = () => (
+  <div className="mx-auto max-w-5xl px-4 pt-28">
+    <LoadingCard />
+  </div>
 );
+
 function App() {
-  const [currentView, setCurrentView] = useState<ViewState>("landing");
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [pendingEvaluationEvent, setPendingEvaluationEvent] =
-    useState<Event | null>(null);
-  const [appointmentVerification, setAppointmentVerification] =
-    useState<StudentAppointmentVerification | null>(null);
+  const [view, setView] = useState<ViewState>("landing");
+  const [student, setStudent] = useState<Student | null>(null);
+  const [pendingEvaluation, setPendingEvaluation] = useState<Event | null>(null);
+  const [appointment, setAppointment] = useState<StudentAppointmentVerification | null>(null);
   const [auth, setAuth] = useState<AuthSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [searching, setSearching] = useState(false);
-  const logoutInProgressRef = useRef(false);
-  const appointmentCheckRef = useRef(0);
+  const loggingOut = useRef(false);
+  const appointmentCheck = useRef(0);
+  const role: UserRole | null = auth?.role ?? null;
+  useInteractionMotion();
 
-  const mainRef = useRef<HTMLDivElement>(null);
-
-  // Start / stop the connectivity listeners for the offline sync service.
+  // Restore the Supabase session after a reload, and reopen whichever staff
+  // page or verified student record was showing before it (lib/Sessionkeeper).
   useEffect(() => {
     offlineSyncService.start();
-    return () => offlineSyncService.stop();
-  }, []);
-
-  // Keep the offline sync service in sync with the authenticated officer session.
-  useEffect(() => {
-    offlineSyncService.configure(auth?.user.id ?? null, auth?.role ?? null);
-  }, [auth]);
-
-  // Restore the persisted Supabase session after a reload, and reopen
-  // whichever admin section or verified student record was showing before
-  // the reload (see lib/sessionKeeper.ts).
-  useEffect(() => {
     const persisted = loadViewSession();
-
     authService
       .restoreSession()
       .then(async (session) => {
         setAuth(session);
-
-        if (persisted && ADMIN_VIEWS.includes(persisted.view)) {
-          if (session && canRoleAccess(persisted.view, session.role)) {
-            setCurrentView(persisted.view);
-          } else if (session) {
-            // Signed in, but this role can no longer open that section
-            // (e.g. role changed) — land on the dashboard instead.
-            setCurrentView("admin-dashboard");
-          } else {
-            // No Supabase session came back — the officer was actually
-            // signed out (expired/revoked) since the tab was left open.
-            clearViewSession();
-          }
+        if (persisted && STAFF_VIEWS.includes(persisted.view)) {
+          if (!session) return clearViewSession(); // signed out since the tab was left open
+          // A role change can revoke access: land on the dashboard instead.
+          setView(canAccess(session.role, persisted.view) === false ? "admin-dashboard" : persisted.view);
           return;
         }
-
-        if (
-          persisted?.studentId &&
-          (persisted.view === "student-record" ||
-            persisted.view === "officer-record" ||
-            persisted.view === "evaluation-required")
-        ) {
+        if (session) setView((v) => (v === "admin-login" ? "admin-dashboard" : v));
+        if (persisted?.studentId && STUDENT_VIEWS.includes(persisted.view)) {
           try {
-            const student = await studentsService.getByStudentId(
-              persisted.studentId,
-            );
-            if (student) {
-              const pendingEvent = await eventEvaluationsService.getPendingGate(
-                student.studentId,
-              );
-              setSelectedStudent(student);
-              setPendingEvaluationEvent(pendingEvent);
-              const verification = await lscOfficersService.verifyForStudent(
-                student,
-              );
-              setAppointmentVerification(verification);
-              setCurrentView(
-                pendingEvent
-                  ? "evaluation-required"
-                  : verification.status === "verified"
-                    ? "officer-record"
-                    : "student-record",
-              );
-            } else {
-              clearViewSession();
-            }
+            const found = await studentsService.getByStudentId(persisted.studentId);
+            if (!found) return clearViewSession();
+            const pending = await eventEvaluationsService.getPendingGate(found.studentId);
+            const verification = await lscOfficersService.verifyForStudent(found);
+            setStudent(found);
+            setPendingEvaluation(pending);
+            setAppointment(verification);
+            setView(recordView(pending, verification));
           } catch (error) {
             console.warn("Could not restore student session:", error);
           }
@@ -229,73 +148,60 @@ function App() {
       })
       .catch((error) => console.error("Failed to restore session:", error))
       .finally(() => setAuthReady(true));
-  }, []);
-
-  // Listen for Supabase's PASSWORD_RECOVERY event, fired once when the user
-  // lands here via a password-reset email link (see authService.requestPasswordReset).
-  useEffect(() => {
+    // Fired when the user arrives through a password-reset email link.
     const unsubscribe = authService.onPasswordRecovery(() => {
       setAuth(null);
-      setCurrentView("admin-reset-password");
+      setView("admin-reset-password");
     });
-
-    return unsubscribe;
+    return () => {
+      offlineSyncService.stop();
+      unsubscribe();
+    };
   }, []);
 
-  const role: UserRole | null = auth?.role ?? null;
+  useEffect(() => {
+    offlineSyncService.configure(auth?.user.id ?? null, auth?.role ?? null);
+  }, [auth]);
 
-  // Handle student search - now using database
+  const navigate = async (next: ViewState, studentId?: string) => {
+    if (STAFF_VIEWS.includes(next)) saveViewSession({ view: next });
+    else if (studentId && STUDENT_VIEWS.includes(next)) saveViewSession({ view: next, studentId });
+    else if (next === "landing") clearViewSession();
+    await VIEW_CODE[next]?.().catch(() => undefined); // a failed chunk still falls back to Suspense
+    growFrom(() => {
+      setView(next);
+      scrollToTop();
+    });
+  };
+
+  // Warm the public pages once the landing page is idle so they open instantly.
+  useEffect(() => {
+    const warm = () => [load.record, load.transparency, load.feedback, load.login].forEach((f) => f().catch(() => undefined));
+    const id = "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 4000 }) : setTimeout(warm, 2500);
+    return () => ("cancelIdleCallback" in window ? cancelIdleCallback(id as number) : clearTimeout(id));
+  }, []);
+
   const handleSearch = async (name: string, studentId: string) => {
-    const normalizedName = name.trim();
-    const normalizedStudentId = studentId.trim().toLowerCase();
-
-    if (!normalizedName || !normalizedStudentId) {
+    if (!name.trim() || !studentId.trim()) {
       toast.error("Please enter both your Student Name and Student ID.");
       return;
     }
-
+    setSearching(true);
     try {
-      setSearching(true);
-      const student = await studentsService.getByStudentId(studentId.trim());
-      // Word-order-agnostic: "Juan Dela Cruz" and "Dela Cruz Juan" both
-      // verify against a DB record of "Juan Dela Cruz".
-      const isVerified =
-        student !== null && namesMatch(student.name, normalizedName);
-
-      if (isVerified) {
-        const pendingEvent = await eventEvaluationsService.getPendingGate(
-          student.studentId,
-        );
-        const verification = await lscOfficersService.verifyForStudent(student);
-
-        if (pendingEvent) {
-          setSelectedStudent(student);
-          setPendingEvaluationEvent(pendingEvent);
-          setAppointmentVerification(verification);
-          setCurrentView("evaluation-required");
-          saveViewSession({
-            view: "evaluation-required",
-            studentId: student.studentId,
-          });
-        } else {
-          setSelectedStudent(student);
-          setAppointmentVerification(verification);
-          const nextView: ViewState =
-            verification.status === "verified"
-              ? "officer-record"
-              : "student-record";
-          setCurrentView(nextView);
-          saveViewSession({
-            view: nextView,
-            studentId: student.studentId,
-          });
-        }
-
-        if (verification.status === "error") {
-          toast.info("Showing the regular student record while appointment verification is unavailable.");
-        }
-      } else {
+      const found = await studentsService.getByStudentId(studentId.trim());
+      // Word-order-agnostic: "Dela Cruz Juan" verifies against "Juan Dela Cruz".
+      if (!found || !namesMatch(found.name, name)) {
         toast.error("Student Name and Student ID do not match.");
+        return;
+      }
+      const pending = await eventEvaluationsService.getPendingGate(found.studentId);
+      const verification = await lscOfficersService.verifyForStudent(found);
+      setStudent(found);
+      setPendingEvaluation(pending);
+      setAppointment(verification);
+      navigate(recordView(pending, verification), found.studentId);
+      if (verification.status === "error") {
+        toast.info("Showing the regular student record while appointment verification is unavailable.");
       }
     } catch (error) {
       console.error("Error searching student:", error);
@@ -305,428 +211,184 @@ function App() {
     }
   };
 
-  // Appointment changes are authoritative. Re-check the current student rather
-  // than trusting the previous result, so creation, replacement, role changes,
-  // and removal take effect without a page reload. Errors fail closed to the
-  // unchanged regular student UI.
+  // Appointment changes are authoritative: re-check the open student on every
+  // lsc_officers change so creation, replacement and removal apply without a
+  // reload. While a check is in flight (or after an error) the officer page
+  // fails closed to the regular student record.
   useEffect(() => {
-    if (!selectedStudent) return;
-
+    if (!student) return;
     let cancelled = false;
-    // Never keep rendering officer-only content while a fresh appointment
-    // check is in flight. The officer route will fail closed to the regular
-    // student record until this request verifies again.
-    setAppointmentVerification(null);
-    const verifyAppointment = async () => {
-      const requestId = ++appointmentCheckRef.current;
-      const verification = await lscOfficersService.verifyForStudent(
-        selectedStudent,
-      );
-      if (cancelled || requestId !== appointmentCheckRef.current) return;
-
-      setAppointmentVerification(verification);
-      if (currentView !== "student-record" && currentView !== "officer-record") {
-        return;
-      }
-
-      if (verification.status === "verified") {
-        setCurrentView("officer-record");
-        saveViewSession({
-          view: "officer-record",
-          studentId: selectedStudent.studentId,
-        });
-      } else {
-        setCurrentView("student-record");
-        saveViewSession({
-          view: "student-record",
-          studentId: selectedStudent.studentId,
-        });
-      }
+    setAppointment(null);
+    const verify = async () => {
+      const requestId = ++appointmentCheck.current;
+      const verification = await lscOfficersService.verifyForStudent(student);
+      if (cancelled || requestId !== appointmentCheck.current) return;
+      setAppointment(verification);
+      if (view !== "student-record" && view !== "officer-record") return;
+      const next: ViewState = verification.status === "verified" ? "officer-record" : "student-record";
+      setView(next);
+      saveViewSession({ view: next, studentId: student.studentId });
     };
-
-    void verifyAppointment();
-    const unsubscribe = subscribeToTables(
-      ["lsc_officers"],
-      () => void verifyAppointment(),
-      `student-appointment-${selectedStudent.id}`,
-    );
+    void verify();
+    const unsubscribe = subscribeToTables(["lsc_officers"], () => void verify(), `student-appointment-${student.id}`);
     return () => {
       cancelled = true;
-      appointmentCheckRef.current += 1;
+      appointmentCheck.current += 1;
       unsubscribe();
     };
-  }, [currentView, selectedStudent]);
+  }, [view, student]);
 
-  // Handle admin/staff login. Throws so the login form can surface errors.
   const handleLogin = async (email: string, password: string) => {
     const session = await authService.signIn(email, password);
     setAuth(session);
-    setCurrentView("admin-dashboard");
+    navigate("admin-dashboard");
     toast.success(`Welcome, ${ROLE_LABEL[session.role]}!`);
   };
 
-  // Send a password-reset email for the "forgot password" flow.
-  const handleRequestPasswordReset = async (email: string) => {
-    await authService.requestPasswordReset(email);
-  };
-
-  // Finish the "forgot password" flow: set the new password, then sign the
-  // recovery session out so the officer re-authenticates normally.
-  const handleSetNewPassword = async (newPassword: string) => {
-    const hasSession = await authService.hasRecoverySession();
-
-    if (!hasSession) {
-      throw new Error(
-        "Your password reset session is no longer valid. Please request a new reset link.",
-      );
+  const handleSetNewPassword = async (password: string) => {
+    if (!(await authService.hasRecoverySession())) {
+      throw new Error("Your password reset session is no longer valid. Please request a new reset link.");
     }
-
-    await authService.updatePassword(newPassword);
-
+    await authService.updatePassword(password);
     await authService.signOut();
-
     setAuth(null);
-    setCurrentView("admin-login");
-
-    toast.success(
-      "Password updated successfully. Please sign in with your new password.",
-    );
+    navigate("admin-login");
+    toast.success("Password updated. Please sign in with your new password.");
   };
 
-  // Handle navigation
-  const navigateTo = (view: ViewState) => {
-    setCurrentView(view);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-
-    if (ADMIN_VIEWS.includes(view)) {
-      saveViewSession({ view });
-    } else if (view === "landing") {
-      clearViewSession();
-    }
-  };
-
-  // Reset admin state on logout
   const handleLogout = async () => {
-    if (logoutInProgressRef.current) return;
-    logoutInProgressRef.current = true;
-
+    if (loggingOut.current) return;
+    loggingOut.current = true;
     try {
       await authService.signOut(auth ?? undefined);
     } catch (error) {
       console.error("Error signing out:", error);
     } finally {
-      logoutInProgressRef.current = false;
+      loggingOut.current = false;
     }
     setAuth(null);
     offlineSyncService.configure(null, null);
-    setCurrentView("landing");
-    clearViewSession();
+    navigate("landing");
     toast.info("You have been logged out");
   };
 
-  // Which admin views each role may open.
-  const canAccess = (view: ViewState): boolean => canRoleAccess(view, role);
+  const renderView = (): ReactNode => {
+    if (!authReady) return <Fallback />;
 
-  // Render current view
-  const renderView = () => {
-    if (!authReady) {
-      return (
-        <section className="min-h-screen w-full gradient-bg-warm flex items-center justify-center">
-          <div
-            className="w-full max-w-3xl space-y-5 px-6"
-            role="status"
-            aria-label="Loading application"
-          >
-            <Skeleton className="h-8 w-56" />
-            <Skeleton className="h-4 w-80 max-w-full" />
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Skeleton className="h-28 w-full rounded-xl" />
-              <Skeleton className="h-28 w-full rounded-xl" />
-              <Skeleton className="h-28 w-full rounded-xl" />
-            </div>
-            <Skeleton className="h-64 w-full rounded-xl" />
-          </div>
-        </section>
-      );
-    }
-
-    const renderAdminLogin = () => (
-      <AdminLoginSection
-        onLogin={handleLogin}
-        onForgotPassword={() => navigateTo("admin-forgot-password")}
-      />
-    );
-    const renderDashboard = () => (
-      <AdminDashboardSection
-        role={role!}
-        userEmail={auth?.user.email ?? ""}
-        userId={auth?.user.id ?? ""}
-        onNavigate={navigateTo}
-        onLogout={handleLogout}
-      />
+    const toDashboard = () => navigate("admin-dashboard");
+    const toLanding = () => navigate("landing");
+    const login = <AdminLoginSection onLogin={handleLogin} onForgotPassword={() => navigate("admin-forgot-password")} />;
+    const landing = (
+      <LandingSection onSearch={handleSearch} onViewTransparency={() => navigate("transparency")} searching={searching} />
     );
 
-    switch (currentView) {
-      case "landing":
-        return (
-          <LandingSection
-            onSearch={handleSearch}
-            onViewTransparency={() => navigateTo("transparency")}
-            searching={searching}
-          />
-        );
+    // Staff-only views: fall back to the login screen when not permitted.
+    if (canAccess(role, view) === false) return login;
+    const staff = { role: role!, userId: auth?.user.id ?? "", staffName: auth?.displayName ?? "", onBack: toDashboard };
+    const viewer = { currentUserId: auth?.user.id, currentUserRole: role };
+    const record = student ? <StudentRecordSection student={student} onBack={toLanding} {...viewer} /> : landing;
 
+    switch (view) {
       case "student-record":
-        return (
-          selectedStudent && (
-            <StudentRecordSection
-              student={selectedStudent}
-              onBack={() => navigateTo("landing")}
-              currentUserId={auth?.user.id}
-              currentUserRole={role}
-            />
-          )
-        );
-
+        return record;
       case "officer-record":
-        return selectedStudent &&
-          appointmentVerification?.status === "verified" &&
-          appointmentVerification.appointments.length > 0 ? (
-          <OfficerRecordSection
-            student={selectedStudent}
-            appointments={appointmentVerification.appointments}
-            onBack={() => navigateTo("landing")}
-            currentUserId={auth?.user.id}
-            currentUserRole={role}
-          />
-        ) : selectedStudent ? (
-          <StudentRecordSection
-            student={selectedStudent}
-            onBack={() => navigateTo("landing")}
-            currentUserId={auth?.user.id}
-            currentUserRole={role}
+        return student && appointment?.status === "verified" && appointment.appointments.length > 0 ? (
+          <OfficerRecordSection student={student} appointments={appointment.appointments} onBack={toLanding} {...viewer} />
+        ) : (
+          record
+        );
+      case "evaluation-required":
+        return student && pendingEvaluation ? (
+          <EvaluationGate
+            event={pendingEvaluation}
+            onRecheck={() => handleSearch(student.name, student.studentId)}
+            onBack={toLanding}
+            checking={searching}
           />
         ) : (
-          <LandingSection
-            onSearch={handleSearch}
-            onViewTransparency={() => navigateTo("transparency")}
-            searching={searching}
-          />
+          landing
         );
-
-      case "evaluation-required":
-        return (
-          pendingEvaluationEvent && (
-            <div className="min-h-screen w-full bg-surface py-20 lg:py-24 px-4 flex items-center justify-center">
-              <div className="max-w-md w-full text-center">
-                <h2 className="text-xl font-semibold mb-2">
-                  One quick thing first
-                </h2>
-                <p className="text-muted-foreground mb-6">
-                  Please complete the evaluation for{" "}
-                  <span className="font-medium">
-                    {pendingEvaluationEvent.name}
-                  </span>{" "}
-                  before accessing your record.
-                </p>
-                <a
-                  href={pendingEvaluationEvent.evaluationFormUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block rounded-md bg-primary text-primary-foreground px-4 py-2 font-medium mb-3"
-                >
-                  Fill out the evaluation
-                </a>
-                <div>
-                  <button
-                    onClick={() =>
-                      selectedStudent &&
-                      handleSearch(
-                        selectedStudent.name,
-                        selectedStudent.studentId,
-                      )
-                    }
-                    className="text-sm underline text-muted-foreground"
-                  >
-                    I've submitted it — check again
-                  </button>
-                </div>
-                <div className="mt-4">
-                  <button
-                    onClick={() => navigateTo("landing")}
-                    className="text-sm text-muted-foreground"
-                  >
-                    Back
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-        );
-
       case "transparency":
-        return <TransparencyBoardSection onNavigate={navigateTo} />;
-
+        return <TransparencyBoardSection onNavigate={navigate} />;
       case "inquiry":
       case "complaint":
       case "suggestion":
-        return <FeedbackSection defaultTab={currentView} />;
-
+        return <FeedbackSection key={view} defaultTab={view} />;
       case "admin-login":
-        return auth ? renderDashboard() : renderAdminLogin();
-
-      case "admin-forgot-password":
-        return (
-          <ForgotPasswordSection
-            onRequestReset={handleRequestPasswordReset}
-            onBack={() => navigateTo("admin-login")}
-          />
+      case "admin-dashboard":
+        return auth ? (
+          <AdminDashboardSection role={staff.role} userEmail={auth.user.email ?? ""} userId={staff.userId} onNavigate={navigate} onLogout={handleLogout} />
+        ) : (
+          login
         );
-
+      case "admin-forgot-password":
+        return <ForgotPasswordSection onRequestReset={authService.requestPasswordReset} onBack={() => navigate("admin-login")} />;
       case "admin-reset-password":
         return <ResetPasswordSection onSetNewPassword={handleSetNewPassword} />;
-
-      case "admin-dashboard":
-        return auth ? renderDashboard() : renderAdminLogin();
-
       case "student-management":
-        return canAccess("student-management") ? (
-          <StudentManagementSection
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <StudentManagementSection onBack={toDashboard} />;
       case "officer-volunteers-management":
-        return canAccess("officer-volunteers-management") ? (
-          <OfficerVolunteersManagementSection
-            role={role!}
-            staffName={auth?.displayName ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <OfficerVolunteersManagementSection role={staff.role} staffName={staff.staffName} onBack={toDashboard} />;
       case "requirement-files-management":
-        return canAccess("requirement-files-management") ? (
-          <RequirementFilesManagementSection
-            role={role!}
-            userId={auth?.user.id ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <RequirementFilesManagementSection role={staff.role} userId={staff.userId} onBack={toDashboard} />;
       case "event-management":
-        return canAccess(currentView) ? (
-          <EventManagementSection
-            role={role!}
-            staffName={auth?.displayName ?? ""}
-            userId={auth?.user.id ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <EventManagementSection {...staff} />;
       case "attendance-management":
-        return canAccess("attendance-management") ? (
-          <AttendanceManagementSection
-            role={role!}
-            userId={auth?.user.id ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <AttendanceManagementSection role={staff.role} userId={staff.userId} onBack={toDashboard} />;
       case "contribution-management":
       case "payment-management":
-        return canAccess(currentView) ? (
-          <ContributionManagementSection
-            role={role!}
-            staffName={auth?.displayName ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <ContributionManagementSection role={staff.role} staffName={staff.staffName} onBack={toDashboard} />;
       case "transaction-management":
-        return canAccess(currentView) ? (
-          <TransparencyBoardSection
-            adminMode
-            role={role!}
-            staffName={auth?.displayName ?? ""}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <TransparencyBoardSection adminMode role={staff.role} staffName={staff.staffName} onBack={toDashboard} />;
       case "feedback-management":
-        return canAccess(currentView) ? (
-          <FeedbackManagementSection
-            role={role!}
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <FeedbackManagementSection role={staff.role} onBack={toDashboard} />;
       case "report-management":
-        return canAccess(currentView) ? (
-          <ReportManagementSection
-            onBack={() => navigateTo("admin-dashboard")}
-          />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <ReportManagementSection onBack={toDashboard} />;
       case "system-logs":
-        return canAccess(currentView) ? (
-          <SystemLogsSection onBack={() => navigateTo("admin-dashboard")} />
-        ) : (
-          renderAdminLogin()
-        );
-
+        return <SystemLogsSection onBack={toDashboard} />;
       default:
-        return (
-          <LandingSection
-            onSearch={handleSearch}
-            onViewTransparency={() => navigateTo("transparency")}
-            searching={searching}
-          />
-        );
+        return landing;
     }
   };
 
   return (
-    <div ref={mainRef} className="min-h-screen">
-      {/* Toast notifications */}
+    <div className="min-h-screen">
       <Toaster position="top-center" richColors />
+      <SmoothScroll />
       <SyncStatusBadge />
-      {/* Navigation */}
-      <Navigation
-        currentView={currentView}
-        onNavigate={navigateTo}
-        role={auth ? role : null}
-        onLogout={handleLogout}
-        studentId={selectedStudent?.id}
-      />
-      <PushPromptModal
-        isLoggedIn={!!(auth && role)}
-        studentId={selectedStudent?.id}
-      />
-      {/* Main Content */}
-      <main className="relative">
-        <Suspense fallback={<SectionFallback />}>{renderView()}</Suspense>
+      <Navigation currentView={view} onNavigate={navigate} role={role} onLogout={handleLogout} studentId={student?.id} />
+      <PushPromptModal isLoggedIn={!!role} studentId={student?.id} />
+      <main>
+        <Suspense fallback={<Fallback />}>
+          <div key={view} className="page-enter">{renderView()}</div>
+        </Suspense>
       </main>
-      {/* Footer - only show on landing page */}
-      {currentView === "landing" && <FooterSection onNavigate={navigateTo} />}
+      {view === "landing" && <FooterSection onNavigate={navigate} />}
+    </div>
+  );
+}
+
+function EvaluationGate({ event, onRecheck, onBack, checking }: { event: Event; onRecheck: () => void; onBack: () => void; checking: boolean }) {
+  return (
+    <div className="hero-bg flex min-h-screen items-center justify-center px-4 py-24">
+      <div className="glass w-full max-w-md p-8 text-center">
+        <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-full bg-white/15">
+          <ClipboardCheck className="h-6 w-6" />
+        </div>
+        <h2 className="text-2xl font-extrabold text-white">One quick thing first</h2>
+        <p className="mt-2 text-sm text-white/75">
+          Please complete the evaluation for <b className="text-white">{event.name}</b> before accessing your record.
+        </p>
+        <a href={event.evaluationFormUrl} target="_blank" rel="noopener noreferrer" className="btn btn-light btn-lg mt-6 w-full">
+          Fill out the evaluation
+        </a>
+        <div className="mt-3 flex justify-center gap-2">
+          <button onClick={onRecheck} disabled={checking} className="btn btn-sm text-white/80 hover:bg-white/10">
+            {checking ? "Checking…" : "I've submitted it — check again"}
+          </button>
+          <button onClick={onBack} className="btn btn-sm text-white/60 hover:bg-white/10">Back</button>
+        </div>
+      </div>
     </div>
   );
 }
