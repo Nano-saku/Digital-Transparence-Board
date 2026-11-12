@@ -35,7 +35,7 @@ import Page from "@/components/ui/Page";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
 import { LoadingCard } from "@/components/ui/Skeleton";
-import FinancialSummaryCard from "@/components/common/FinancialSummaryCard";
+import FinancialSummaryCard from "@/components/FinancialSummaryCard";
 
 interface AdminDashboardSectionProps {
   onNavigate: (view: ViewState) => void;
