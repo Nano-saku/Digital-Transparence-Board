@@ -3,7 +3,7 @@ import { prefersReducedMotion } from "@/lib/gsap";
 
 /** One fluid curve for every grow/shrink (decelerates like a settling liquid). */
 export const FLUID_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
-export const FLUID_MS = 750;
+export const FLUID_MS = 520;
 
 const PRESSABLE = "button, a, [role=button], [role=menuitem], [role=tab], .card-hover, .card-brand";
 let last: { el: Element; rect: DOMRect; at: number } | null = null;
@@ -68,8 +68,8 @@ export function growFrom(update: (animated: boolean) => void, { origin = pressOr
     }
     const full = "inset(0px 0px 0px 0px round 0px)";
     const shrunk = `inset(${origin.top}px ${w - origin.right}px ${h - origin.bottom}px ${origin.left}px round ${radiusFor(origin)}px)`;
-    const sunk = { scale: 0.94, opacity: 0.5, filter: "blur(6px)" };
-    const shown = { scale: 1, opacity: 1, filter: "blur(0px)" };
+    const sunk = { scale: 0.97, opacity: 0.6 };
+    const shown = { scale: 1, opacity: 1 };
     if (back) {
       // Fade out only at the very end so the page visibly lands in its button.
       root.animate({ clipPath: [full, shrunk] }, { ...timing, pseudoElement: "::view-transition-old(root)" });

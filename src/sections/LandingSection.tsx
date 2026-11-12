@@ -31,8 +31,8 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
   useGSAP(
     () => {
       if (prefersReducedMotion()) return;
-      gsap.from(".hero-intro", { y: 28, opacity: 0, filter: "blur(6px)", stagger: 0.1, delay: 0.45, clearProps: "filter,transform" });
-      gsap.from(".hero-card", { y: 140, opacity: 0, rotate: 0, stagger: 0.12, delay: 0.7, duration: 1.3, ease: "expo.out" });
+      gsap.from(".hero-intro", { y: 12, opacity: 0, stagger: 0.06, delay: 0.3, duration: 0.5, ease: "power2.out", clearProps: "transform" });
+      gsap.from(".hero-card", { y: 40, opacity: 0, stagger: 0.08, delay: 0.5, duration: 0.7, ease: "power3.out" });
       gsap.to(".hero-cards", { yPercent: -30, ease: "none", scrollTrigger: { trigger: heroRef.current, start: "top top", end: "bottom top", scrub: true } });
     },
     { scope: heroRef },
@@ -99,7 +99,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
             <ShieldCheck className="h-3.5 w-3.5 text-powder" />
             LSC Student Digital Board · Transparency you can check
           </span>
-          <SplitText by="chars" delay={0.1} className="mt-6 text-[2.5rem] font-extrabold leading-[1.05] text-white sm:text-6xl lg:text-7xl">
+          <SplitText delay={0.1} className="mt-6 text-[2.5rem] font-extrabold leading-[1.05] text-white sm:text-6xl lg:text-7xl">
             Your Council Records,
             <br />
             Clear &amp; <span className="text-brand-400">Transparent</span>
@@ -179,18 +179,18 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
         {/* Decorative preview cards */}
         <div aria-hidden className="hero-cards pointer-events-none mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
-          <Floating tilt="-rotate-6" delay="">
+          <Floating tilt="-rotate-6">
             <div className="glass p-5">
               <p className="text-xs font-semibold text-white/60">Funds Collected</p>
               <p className="mt-1 text-2xl font-extrabold">₱48,250</p>
               <div className="mt-4 flex h-14 items-end gap-1.5">
                 {[40, 65, 50, 85, 60, 95, 75].map((h, i) => (
-                  <span key={i} className="flex-1 rounded-full bg-gradient-to-t from-brand-500 to-powder" style={{ height: `${h}%` }} />
+                  <span key={i} className="flex-1 rounded-full bg-powder/80" style={{ height: `${h}%` }} />
                 ))}
               </div>
             </div>
           </Floating>
-          <Floating tilt="rotate-0" delay="[animation-delay:-2s]">
+          <Floating tilt="rotate-0">
             <div className="card p-5 pb-16">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted">Attendance</p>
@@ -198,12 +198,12 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
               </div>
               <p className="mt-1 text-3xl font-extrabold text-ink">92%</p>
               <div className="mt-4 h-2 rounded-full bg-surface-2">
-                <div className="h-full w-[92%] rounded-full bg-gradient-to-r from-brand-500 to-indigo-500" />
+                <div className="h-full w-[92%] rounded-full bg-brand-500" />
               </div>
               <p className="mt-3 text-xs text-muted">Across 12 council events</p>
             </div>
           </Floating>
-          <Floating tilt="rotate-6" delay="[animation-delay:-4s]">
+          <Floating tilt="rotate-6">
             <div className="glass space-y-3 p-5">
               <p className="text-xs font-semibold text-white/60">Receipts verified</p>
               {["Sports fest supplies", "Org fair booth", "Seminar snacks"].map((r) => (
@@ -277,11 +277,11 @@ function Segment({ id, label, divided, children }: { id: string; label: string; 
   );
 }
 
-/** Rotation lives on the wrapper because `animate-float` owns the transform. */
-function Floating({ tilt, delay, children }: { tilt: string; delay: string; children: ReactNode }) {
+/** A tilted, static preview card in the hero. */
+function Floating({ tilt, children }: { tilt: string; children: ReactNode }) {
   return (
     <div className={cn("hero-card", tilt)}>
-      <div className={cn("animate-float", delay)}>{children}</div>
+      {children}
     </div>
   );
 }

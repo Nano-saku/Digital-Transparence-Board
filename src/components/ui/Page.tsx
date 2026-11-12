@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
-import SplitText from "@/components/motion/SplitText";
 
 interface PageProps {
   title: ReactNode;
@@ -32,7 +31,7 @@ export default function Page({ title, subtitle, eyebrow, onBack, actions, hero, 
             )}
             <div className="animate-fade-up">
               {eyebrow && <span className="eyebrow mb-3">{eyebrow}</span>}
-              <SplitText className="text-3xl font-extrabold text-white lg:text-4xl">{title}</SplitText>
+              <h1 className="text-3xl font-extrabold text-white lg:text-4xl">{title}</h1>
               {subtitle && <p className="mt-2 max-w-2xl text-sm text-white/70 lg:text-base">{subtitle}</p>}
             </div>
           </div>

@@ -139,7 +139,7 @@ export default function AdminDashboardSection({ onNavigate, role, userEmail }: A
         </div>
       }
     >
-      <div className="pt-16">
+      <div className="pt-32">
         <span className="eyebrow">Workspace</span>
         <h2 className="mt-3 text-2xl font-extrabold text-ink">Everything you manage, in one place</h2>
       </div>
@@ -192,7 +192,7 @@ export default function AdminDashboardSection({ onNavigate, role, userEmail }: A
                         {formatPeso(collected)} / {formatPeso(expected)}
                       </p>
                       <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2">
-                        <div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+                        <div className="h-full rounded-full bg-brand-500 transition-all duration-500" style={{ width: `${progress}%` }} />
                       </div>
                     </li>
                   );

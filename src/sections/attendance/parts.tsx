@@ -41,7 +41,7 @@ export function Segmented<T extends string>({
             onClick={() => onChange(v)}
             className={cn(
               "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-xs font-semibold transition disabled:opacity-60",
-              v === value ? "bg-brand-500 text-white shadow-glow" : "text-muted hover:bg-surface hover:text-ink",
+              v === value ? "bg-brand-500 text-white shadow-soft" : "text-muted hover:bg-surface hover:text-ink",
             )}
           >
             {Icon && <Icon className="h-3.5 w-3.5" />}
