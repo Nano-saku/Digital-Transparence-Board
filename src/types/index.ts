@@ -1,4 +1,3 @@
-// Student Requirement File Types
 export interface StudentRequirementFile {
   id: string;
   title: string;
@@ -15,7 +14,6 @@ export interface StudentRequirementFile {
   updatedAt: string;
 }
 
-// Student Types
 export interface Student {
   id: string;
   studentId: string;
@@ -34,13 +32,12 @@ export type EventSession = "morning" | "afternoon" | "evening";
 
 export interface EventSchedule {
   period: EventSession;
-
   timeInEnabled: boolean;
   timeOutEnabled: boolean;
-
   timeIn?: string;
   timeOut?: string;
 }
+
 export interface AuditLog {
   id: string;
   actorUserId?: string;
@@ -53,21 +50,17 @@ export interface AuditLog {
   metadata: Record<string, unknown>;
   createdAt: string;
 }
-// Event Types
+
 export interface Event {
   id: string;
   name: string;
   allocationAmount: number;
-
-  /** When true, this event is excluded from Attendance Management. */
+  /** Excluded from Attendance Management. */
   isNonConducting?: boolean;
-
-
-  /** When true, eligible students may be automatically marked absent after the event date ends. */
+  /** Eligible students may be automatically marked absent after the event date ends. */
   autoMarkAbsent?: boolean;
-  /** When true, this event has no contribution requirement and is excluded from Event Collection Performance. */
+  /** No contribution requirement; excluded from Event Collection Performance. */
   isNoContribution?: boolean;
-
   date?: string;
   /** Last day a student's contribution counts as on-time. Empty string = no deadline set. */
   contributionDeadline?: string;
@@ -75,26 +68,21 @@ export interface Event {
   evaluationActive?: boolean;
   /** Google Form URL for this event's evaluation (ideally prefilled with name/ID entry IDs). */
   evaluationFormUrl?: string;
-
   schedules?: EventSchedule[];
-
   /** Board members assigned to oversee this event. */
   assignedMembers?: { memberId: string; memberName: string }[];
-
-  // Legacy fields - keep temporarily for older events
+  // Legacy per-session times, read only as a fallback for events created before `schedules`.
   morningTimeIn?: string;
   morningTimeOut?: string;
   afternoonTimeIn?: string;
   afternoonTimeOut?: string;
   eveningTimeIn?: string;
   eveningTimeOut?: string;
-
   timeIn?: string;
   timeOut?: string;
 }
 
-// A row synced from an event's evaluation Google Sheet (via Apps Script).
-// studentId/studentName are stored normalized (trim + lowercase).
+/** A row synced from an event's evaluation Google Sheet; studentId/studentName are trimmed + lowercased. */
 export interface EventEvaluation {
   id: string;
   eventId: string;
@@ -103,7 +91,6 @@ export interface EventEvaluation {
   submittedAt: string;
 }
 
-// Attendance Types
 export interface AttendanceRecord {
   id: string;
   studentId: string;
@@ -111,23 +98,13 @@ export interface AttendanceRecord {
   eventName: string;
   date: string;
   status: "present" | "absent" | "excuse";
-  /**
-   * Session for the attendance record: 'morning', 'afternoon', or 'evening'.
-   * Each event has separate attendance tracking for Morning, Afternoon,
-   * and Evening Time In/Out.
-   */
+  /** Each event tracks attendance separately per session. */
   session: EventSession;
-  /**
-   * Time-in / time-out captured automatically from the QR scan time (24h
-   * "HH:MM", e.g. "06:00"). Time In is set when the student's QR is scanned
-   * to mark them in; Time Out when they are scanned out. The UI always
-   * displays both in 12-hour AM/PM labels.
-   */
+  /** 24h "HH:MM" captured from the QR scan in / out (shown as 12-hour labels). */
   timeIn?: string;
   timeOut?: string;
 }
 
-// Contribution/Payment Types
 export interface ContributionRecord {
   id: string;
   studentId: string;
@@ -138,15 +115,10 @@ export interface ContributionRecord {
   remainingBalance: number;
 }
 
-/**
- * One installment in the cumulative payment history stored on a PaymentRecord.
- * Every time a partial or full payment is recorded, a new PaymentItem is
- * appended to PaymentRecord.paymentItems — the history is never overwritten.
- */
+/** One installment in a PaymentRecord's append-only payment history. */
 export interface PaymentItem {
-  /** Amount paid in this installment. */
   amount: number;
-  /** ISO date (YYYY-MM-DD) when this installment was recorded. */
+  /** ISO date (YYYY-MM-DD) the installment was recorded. */
   date: string;
   /** Payment status at the time of this installment. */
   status: "Partial" | "Fully Paid";
@@ -159,26 +131,19 @@ export interface PaymentRecord {
   eventId: string;
   eventName: string;
   contributionId: string;
-  /** Cumulative total amount paid for this contribution (sum of all installments). */
+  /** Cumulative total paid for this contribution (sum of all installments). */
   amount: number;
   date: string;
   /** Database timestamp of the successful payment insert/update. */
   recordedAt?: string;
   receiptUrl?: string;
-  /** Official Receipt (OR) number, e.g. "OR-2026-000001". Assigned on the
-   *  first payment (partial or full) and reused for all subsequent updates. */
+  /** Official Receipt number, e.g. "OR-2026-000001"; assigned on the first payment and reused after. */
   orNumber?: string;
   recordedBy: string;
-  /**
-   * Ordered list of individual payment installments. Each element records
-   * the amount, date, and status of one installment. The first element is
-   * the initial partial payment; successive elements are added cumulatively.
-   * Never modified retroactively — only appended to.
-   */
+  /** Installments in order, only ever appended to. */
   paymentItems: PaymentItem[];
 }
 
-// Transaction Types
 export interface Transaction {
   id: string;
   date: string;
@@ -191,7 +156,7 @@ export interface Transaction {
   receiptUrl?: string;
 }
 
-// Inquiry/Complaint/Suggestion Types
+/** An inquiry, complaint or suggestion. */
 export interface FeedbackItem {
   id: string;
   type: "inquiry" | "complaint" | "suggestion";
@@ -204,22 +169,15 @@ export interface FeedbackItem {
   status: "pending" | "in-progress" | "resolved";
 }
 
-// Staff / auth types
-export type UserRole =
-  | "admin"
-  | "secretary"
-  | "treasurer"
-  | "auditor"
-  | "board-member";
+export type UserRole = "admin" | "secretary" | "treasurer" | "auditor" | "board-member";
 
-/** A catalog board member; account_user_id is optional for login access. */
+/** A catalog board member; accountUserId is optional for login access. */
 export interface BoardMember {
   id: string;
   name: string;
   accountUserId?: string;
 }
 
-// LSC Officers and Event Volunteers Types
 export const OFFICIAL_LSC_POSITIONS = [
   "Governor",
   "Vice Governor",
@@ -270,7 +228,6 @@ export interface EventVolunteer {
   createdAt: string;
 }
 
-// Financial Summary Types
 export interface FinancialSummary {
   totalBudget: number;
   totalFundsCollected: number;
@@ -296,7 +253,6 @@ export interface FinancialReport {
   eventAllocations: EventAllocation[];
 }
 
-// View State Types
 export type ViewState =
   | "landing"
   | "student-record"

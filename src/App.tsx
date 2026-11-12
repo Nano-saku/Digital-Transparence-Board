@@ -116,7 +116,7 @@ function App() {
   useInteractionMotion();
 
   // Restore the Supabase session after a reload, and reopen whichever staff
-  // page or verified student record was showing before it (lib/Sessionkeeper).
+  // page or verified student record was showing before it (lib/sessionKeeper).
   useEffect(() => {
     offlineSyncService.start();
     const persisted = loadViewSession();
