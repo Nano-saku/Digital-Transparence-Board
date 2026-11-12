@@ -4,7 +4,7 @@ import type { Student } from "@/types";
 import { studentsService } from "@/services/db";
 import { cn } from "@/lib/utils";
 import LSCOfficerCarousel from "@/components/LSCOfficerCarousel";
-import FacebookFeed from "@/components/FacebookFeed";
+import CouncilUpdates from "@/components/CouncilUpdates";
 import UpcomingEvents from "@/components/UpcomingEvents";
 import SplitText from "@/components/motion/SplitText";
 import Reveal from "@/components/motion/Reveal";
@@ -93,7 +93,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
   return (
     <>
-      <section ref={heroRef} className="hero-bg blend-bottom flex min-h-[100svh] flex-col items-center px-4 pt-32 sm:px-6 lg:pt-40">
+      <section ref={heroRef} className="hero-bg band-bottom flex min-h-[100svh] flex-col items-center px-4 pb-14 pt-32 sm:px-6 lg:pt-40">
         <div className="mx-auto w-full max-w-4xl text-center">
           <span className="hero-intro eyebrow">
             <ShieldCheck className="h-3.5 w-3.5 text-powder" />
@@ -178,7 +178,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
         </div>
 
         {/* Decorative preview cards */}
-        <div aria-hidden className="hero-cards pointer-events-none -mb-10 mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
+        <div aria-hidden className="hero-cards pointer-events-none mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
           <Floating tilt="-rotate-6" delay="">
             <div className="glass p-5">
               <p className="text-xs font-semibold text-white/60">Funds Collected</p>
@@ -249,7 +249,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
         </div>
       </section>
 
-      <FacebookFeed />
+      <CouncilUpdates />
 
       {/* Council officers */}
       <section className="bg-page px-4 pb-20 sm:px-6 lg:pb-28">

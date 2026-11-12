@@ -32,37 +32,52 @@ export function pressOrigin(): DOMRect | null {
 /** Corner radius an element of this size most likely has (pills stay pills). */
 export const radiusFor = (r: DOMRect) => Math.min(r.height / 2, 28);
 
+type GrowOptions = {
+  origin?: DOMRect | null;
+  /** "circle" spreads from the origin (theme switch); "morph" grows the new view out of it. */
+  shape?: "morph" | "circle";
+  /** "back" reverses the morph: the current view shrinks back into `origin`. */
+  direction?: "forward" | "back";
+};
+
 /**
  * Swap the page so the new state grows out of the pressed element while the
- * old one sinks back (View Transitions API). Falls back to an instant update.
- * `shape: "circle"` spreads a circle from the origin instead (theme switch).
+ * old one sinks back (View Transitions API) — or, going back, so the current
+ * view shrinks into the element that opened it while the previous one rises.
+ * `update` receives whether a transition is animating it (false = instant
+ * fallback), so callers can skip their own entrance animation.
  */
-export function growFrom(update: () => void, { origin = pressOrigin(), shape = "morph" as "morph" | "circle" } = {}) {
+export function growFrom(update: (animated: boolean) => void, { origin = pressOrigin(), shape = "morph", direction = "forward" }: GrowOptions = {}) {
   if (!document.startViewTransition || !origin || prefersReducedMotion()) {
-    update();
+    update(false);
     return;
   }
   const root = document.documentElement;
-  root.dataset.vt = "";
-  const transition = document.startViewTransition(() => flushSync(update));
+  const back = direction === "back";
+  root.dataset.vt = back ? "back" : "";
+  const transition = document.startViewTransition(() => flushSync(() => update(true)));
   transition.ready.then(() => {
     const { innerWidth: w, innerHeight: h } = window;
     const cx = origin.left + origin.width / 2;
     const cy = origin.top + origin.height / 2;
-    const clipPath =
-      shape === "circle"
-        ? [`circle(0px at ${cx}px ${cy}px)`, `circle(${Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy))}px at ${cx}px ${cy}px)`]
-        : [
-            `inset(${origin.top}px ${w - origin.right}px ${h - origin.bottom}px ${origin.left}px round ${radiusFor(origin)}px)`,
-            "inset(0px 0px 0px 0px round 0px)",
-          ];
     const timing = { duration: FLUID_MS, easing: FLUID_EASE };
-    root.animate({ clipPath }, { ...timing, pseudoElement: "::view-transition-new(root)" });
-    if (shape === "morph") {
-      root.animate(
-        { scale: [1, 0.94], opacity: [1, 0.5], filter: ["blur(0px)", "blur(6px)"] },
-        { ...timing, pseudoElement: "::view-transition-old(root)" },
-      );
+    if (shape === "circle") {
+      const radius = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy));
+      root.animate({ clipPath: [`circle(0px at ${cx}px ${cy}px)`, `circle(${radius}px at ${cx}px ${cy}px)`] }, { ...timing, pseudoElement: "::view-transition-new(root)" });
+      return;
+    }
+    const full = "inset(0px 0px 0px 0px round 0px)";
+    const shrunk = `inset(${origin.top}px ${w - origin.right}px ${h - origin.bottom}px ${origin.left}px round ${radiusFor(origin)}px)`;
+    const sunk = { scale: 0.94, opacity: 0.5, filter: "blur(6px)" };
+    const shown = { scale: 1, opacity: 1, filter: "blur(0px)" };
+    if (back) {
+      // Fade out only at the very end so the page visibly lands in its button.
+      root.animate({ clipPath: [full, shrunk] }, { ...timing, pseudoElement: "::view-transition-old(root)" });
+      root.animate({ opacity: [1, 0] }, { duration: FLUID_MS * 0.25, delay: FLUID_MS * 0.75, fill: "forwards", pseudoElement: "::view-transition-old(root)" });
+      root.animate([sunk, shown], { ...timing, pseudoElement: "::view-transition-new(root)" });
+    } else {
+      root.animate({ clipPath: [shrunk, full] }, { ...timing, pseudoElement: "::view-transition-new(root)" });
+      root.animate([shown, sunk], { ...timing, pseudoElement: "::view-transition-old(root)" });
     }
   });
   transition.finished.finally(() => delete root.dataset.vt);

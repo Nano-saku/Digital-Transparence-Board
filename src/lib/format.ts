@@ -27,8 +27,9 @@ export function formatPhilippineDateTime(value?: string | null): string {
 }
 
 /** e.g. `1500 -> "₱1,500"`. */
-export function formatPeso(amount: number): string {
-  return `₱${amount.toLocaleString("en-US")}`;
+export function formatPeso(amount: number | null | undefined): string {
+  // Missing figures (e.g. a report field the server left out) read as ₱0 instead of crashing.
+  return `₱${(Number(amount) || 0).toLocaleString("en-US")}`;
 }
 
 /** e.g. `1 -> "st"`, `22 -> "nd"`, `13 -> "th"`. */
