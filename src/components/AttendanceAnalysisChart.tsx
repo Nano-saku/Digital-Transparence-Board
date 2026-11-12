@@ -27,7 +27,11 @@ interface AttendanceAnalysisChartProps {
 
 const Swatch = ({ color }: { color: string }) => <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />;
 
-/** Per-event comparison of registered students vs. unique students who attended (present or late). */
+/**
+ * Per-event comparison of registered students vs. unique students who attended
+ * (present or excused). Rows are scoped to the event's configured date, since an
+ * event can keep rows from before its date was edited.
+ */
 export default function AttendanceAnalysisChart({ events, students, records }: AttendanceAnalysisChartProps) {
   const rows = useMemo<Row[]>(() => {
     const registered = new Set(students.map((s) => s.id));
@@ -37,7 +41,7 @@ export default function AttendanceAnalysisChart({ events, students, records }: A
       .map((event) => {
         const attended = new Set(
           records
-            .filter((r) => r.eventId === event.id && r.status !== "absent" && registered.has(r.studentId))
+            .filter((r) => r.eventId === event.id && (!event.date || r.date === event.date) && r.status !== "absent" && registered.has(r.studentId))
             .map((r) => r.studentId),
         ).size;
         return {
