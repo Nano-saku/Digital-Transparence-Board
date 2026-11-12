@@ -357,8 +357,10 @@ export const boardMembersService = {
       const officerMembers = (await lscOfficersService.getAll())
         .filter((o) => (o.positions as string[]).includes("Board Member"))
         .map((o): BoardMember => ({ id: `officer-${o.id}`, name: o.name }));
+      // A later catalog row replaces an earlier same-name one; officers only fill gaps.
       const byName = new Map<string, BoardMember>();
-      for (const member of [...catalog, ...officerMembers]) {
+      for (const member of catalog) byName.set(member.name.toLowerCase().trim(), member);
+      for (const member of officerMembers) {
         const key = member.name.toLowerCase().trim();
         if (!byName.has(key)) byName.set(key, member);
       }
