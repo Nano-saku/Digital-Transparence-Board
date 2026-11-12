@@ -24,7 +24,7 @@ function eventTimes(event: Event): string[] {
 function DateTile({ date }: { date?: string }) {
   const parsed = date ? parseCalendarDate(date) : null;
   return (
-    <div className="grid h-14 w-14 shrink-0 place-content-center rounded-2xl bg-gradient-to-br from-indigo-700 to-brand-500 text-center text-white shadow-glow">
+    <div className="grid h-14 w-14 shrink-0 place-content-center rounded-2xl bg-brand-600 text-center text-white">
       <span className="text-[10px] font-bold uppercase leading-none tracking-wider text-white/75">
         {parsed ? parsed.toLocaleDateString("en-US", { month: "short" }) : "TBD"}
       </span>

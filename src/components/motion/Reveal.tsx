@@ -16,12 +16,12 @@ export default function Reveal({ children, className, stagger }: RevealProps) {
     () => {
       if (!ref.current || prefersReducedMotion()) return;
       gsap.from(stagger ? ref.current.children : ref.current, {
-        y: 48,
+        y: 16,
         opacity: 0,
-        filter: "blur(8px)",
-        duration: 0.9,
-        stagger: 0.09,
-        clearProps: "filter,transform",
+        duration: 0.5,
+        stagger: 0.05,
+        ease: "power2.out",
+        clearProps: "transform",
         scrollTrigger: { trigger: ref.current, start: "top 85%", once: true },
       });
     },

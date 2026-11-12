@@ -611,7 +611,7 @@ function EventCard({ event, expected, collected, actions }: { event: Event; expe
                 </div>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-                <div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-indigo-500" style={{ width: `${pct}%` }} />
+                <div className="h-full rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
               </div>
             </>
           )}
