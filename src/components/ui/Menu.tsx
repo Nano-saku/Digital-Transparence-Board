@@ -1,15 +1,20 @@
-import type { ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import * as M from "@radix-ui/react-dropdown-menu";
 import { MoreVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { liquidGlass } from "@/lib/liquidGlass";
 
 export const Menu = M.Root;
 export const MenuTrigger = M.Trigger;
 
 export function MenuContent({ className, align = "end", sideOffset = 6, ...props }: ComponentProps<typeof M.Content>) {
+  // Dense glass with lens refraction at the rim (Chromium; frosted elsewhere).
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  useEffect(() => (el ? liquidGlass(el, { scale: -40, chroma: 3, border: 0.06, blur: 36, saturate: 1.8, fallbackBlur: 36 }) : undefined), [el]);
   return (
     <M.Portal>
       <M.Content
+        ref={setEl}
         align={align}
         sideOffset={sideOffset}
         className={cn("card z-50 min-w-[10rem] p-1.5 shadow-lift data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 origin-[var(--radix-dropdown-menu-content-transform-origin)]", className)}

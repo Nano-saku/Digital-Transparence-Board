@@ -1,7 +1,8 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { liquidGlass } from "@/lib/liquidGlass";
 import { gsap, useGSAP, prefersReducedMotion } from "@/lib/gsap";
 import { pressOrigin, radiusFor } from "@/lib/transition";
 
@@ -54,6 +55,8 @@ export default function Modal({ open, onClose, title, description, icon, size = 
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const origin = useRef<DOMRect | null>(null);
+  // Lens refraction at the panel's rim (Chromium; frosted elsewhere).
+  useEffect(() => (panel ? liquidGlass(panel, { scale: -50, chroma: 3, border: 0.05, blur: 36, saturate: 1.8, fallbackBlur: 36 }) : undefined), [panel]);
 
   useGSAP(
     () => {
@@ -84,7 +87,8 @@ export default function Modal({ open, onClose, title, description, icon, size = 
   return (
     <Dialog.Root open={mounted} onOpenChange={(o) => !o && open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay ref={overlayRef} className="fixed inset-0 z-50 bg-brand-950/50 backdrop-blur-sm" />
+        {/* Soften the glass panes behind, so the modal's glass never stacks on another layer of glass. */}
+        <Dialog.Overlay ref={overlayRef} className="fixed inset-0 z-50 bg-[rgb(2_4_24/0.42)] backdrop-blur-[14px] backdrop-saturate-[1.2]" />
         <div className={cn("fixed inset-0 z-50 grid place-items-center p-4", !open && "pointer-events-none")}>
           <Dialog.Content
             ref={setPanel}
