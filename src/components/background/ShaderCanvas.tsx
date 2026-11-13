@@ -1,11 +1,11 @@
 import { ShaderGradient, ShaderGradientCanvas } from "@shadergradient/react";
 
 /** The animated WebGL gradient (loaded lazily by <ShaderBackground />). */
-export default function ShaderCanvas({ still, pixelDensity }: { still: boolean; pixelDensity: number }) {
+export default function ShaderCanvas({ pixelDensity }: { pixelDensity: number }) {
   return (
     <ShaderGradientCanvas style={{ position: "absolute", inset: 0 }} pixelDensity={pixelDensity} fov={45} pointerEvents="none" lazyLoad={false}>
       <ShaderGradient
-        animate={still ? "off" : "on"}
+        animate="on"
         brightness={1.2}
         cAzimuthAngle={180}
         cDistance={3.6}

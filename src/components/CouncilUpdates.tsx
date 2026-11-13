@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, ExternalLink, Facebook, Megaphone } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Facebook } from "lucide-react";
 import { notificationsService, type AppNotification } from "@/services/notificationsService";
 import { FACEBOOK_PAGE_URL } from "@/lib/constants";
 import { formatDate } from "@/lib/format";
-import Reveal from "@/components/motion/Reveal";
 
 const SHOWN = 4;
 
@@ -35,17 +34,14 @@ export default function CouncilUpdates() {
   }, []);
 
   return (
-    <section className="bg-page px-4 pb-20 sm:px-6 lg:pb-28">
-      <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-16">
-        <Reveal stagger className="text-center lg:text-left">
-          <span className="eyebrow">
-            <Megaphone className="h-3.5 w-3.5" /> Council updates
-          </span>
-          <h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Latest from the council</h2>
-          <p className="mx-auto mt-4 max-w-md text-muted lg:mx-0">
-            Announcements posted here the moment officers send them. Photos, event coverage and daily posts live on our Facebook page.
+    <section className="bg-page px-4 py-16 sm:px-6 lg:py-24">
+      <div className="mx-auto grid max-w-6xl items-start gap-8 lg:grid-cols-[1fr_1.2fr] lg:gap-16">
+        <div>
+          <h2 className="text-2xl font-extrabold sm:text-3xl">Council announcements</h2>
+          <p className="mt-3 max-w-md text-muted">
+            Deadlines and notices from the officers appear here as they are sent. Photos and event coverage are on the Facebook page.
           </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+          <div className="mt-6 flex flex-wrap gap-3">
             <a href={FACEBOOK_PAGE_URL} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-lg">
               <Facebook className="h-4 w-4" /> Follow the council
               <span className="btn-orb">
@@ -53,9 +49,9 @@ export default function CouncilUpdates() {
               </span>
             </a>
           </div>
-        </Reveal>
+        </div>
 
-        <Reveal className="card overflow-hidden p-0">
+        <div className="card overflow-hidden p-0">
           <a href={FACEBOOK_PAGE_URL} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-4 border-b border-line px-6 py-5 hover:bg-surface-2/60">
             <img src="/lsc-logo.jpg" alt="" className="h-12 w-12 rounded-full object-cover ring-4 ring-brand-500/10" />
             <div className="min-w-0 flex-1">
@@ -90,7 +86,7 @@ export default function CouncilUpdates() {
               ))}
             </ul>
           )}
-        </Reveal>
+        </div>
       </div>
     </section>
   );

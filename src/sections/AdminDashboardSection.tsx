@@ -16,7 +16,6 @@ import {
   TrendingDown,
   TrendingUp,
   UserCog,
-  Users,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole, ViewState } from "@/types";
@@ -26,7 +25,6 @@ import { ROLE_LABEL, canAccess } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { useLiveData } from "@/hooks/useLiveData";
 import Page from "@/components/ui/Page";
-import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
 import { LoadingCard } from "@/components/ui/Skeleton";
 import FinancialSummaryCard from "@/components/FinancialSummaryCard";
@@ -61,13 +59,12 @@ const MODULES: Module[] = [
   { view: "transparency", title: "Transparency Board", description: "The public council financial report.", icon: Eye },
 ];
 
-const ROLE_FOCUS: Record<UserRole, string> = {
-  admin: "operations",
-  secretary: "attendance",
-  treasurer: "finance",
-  auditor: "finance & audit",
-  "board-member": "events",
-};
+const GROUPS: { title: string; views: ViewState[] }[] = [
+  { title: "People", views: ["student-management", "officer-volunteers-management"] },
+  { title: "Money", views: ["contribution-management", "transaction-management", "transparency"] },
+  { title: "Events", views: ["event-management", "attendance-management", "report-management"] },
+  { title: "Records", views: ["feedback-management", "requirement-files-management", "system-logs"] },
+];
 
 const NONE: never[] = [];
 
@@ -113,155 +110,171 @@ export default function AdminDashboardSection({ onNavigate, role, userEmail }: A
   const showLedger = canAccess(role, "transaction-management");
   const funds = { transactions, loading };
 
+  // What needs an officer today, from live data (each links to where it gets done).
+  const thisWeek = upcoming.filter((e) => daysUntil(e.date ?? "", getEarliestScheduledTime(e.schedules)) <= 7);
+  const behind = allocations.filter((a) => {
+    const expected = a.expectedAmount != null ? Number(a.expectedAmount) : Number(a.allocationAmount ?? 0) * studentCount;
+    return expected > 0 && Number(a.totalCollected ?? 0) / expected < 0.5;
+  });
+  const attention = [
+    pending.length > 0 && canAccess(role, "feedback-management") !== false && { view: "feedback-management" as ViewState, icon: MessageSquare, text: `${pending.length} feedback ${pending.length === 1 ? "message waits" : "messages wait"} for a reply` },
+    thisWeek.length > 0 && canAccess(role, "attendance-management") !== false && { view: "attendance-management" as ViewState, icon: ClipboardCheck, text: `${thisWeek.length} ${thisWeek.length === 1 ? "event takes" : "events take"} attendance this week` },
+    behind.length > 0 && canAccess(role, "contribution-management") !== false && { view: "contribution-management" as ViewState, icon: Coins, text: `${behind.length} ${behind.length === 1 ? "event is" : "events are"} under half collected` },
+  ].filter(Boolean) as { view: ViewState; icon: LucideIcon; text: string }[];
+
   return (
     <Page
-      eyebrow="Council dashboard"
       title={greeting()}
-      subtitle={`${userEmail} — your council ${ROLE_FOCUS[role]} overview.`}
-      actions={
-        <div className="glass flex items-center gap-3 rounded-full py-1.5 pl-1.5 pr-5">
-          <img src="/DSSC-logo.png" alt="DSSC logo" className="h-11 w-11 rounded-full bg-white object-contain p-1" />
-          <div className="leading-tight">
-            <p className="text-[11px] text-white/70">Signed in as</p>
-            <p className="text-sm font-bold">{ROLE_LABEL[role]}</p>
-          </div>
-        </div>
-      }
+      subtitle={`${ROLE_LABEL[role]} · ${userEmail}`}
       hero={
-        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-1 sm:gap-4">
-            <StatCard featured label="Total Students" value={loading ? "—" : studentCount} icon={Users} hint={`${upcoming.length} upcoming events`} />
-            <StatCard label="Expected Contributions" value={loading ? "—" : formatPeso(summary?.totalExpectedContributions ?? 0)} icon={Coins} />
+        // One strip of figures instead of a row of separate boxes.
+        <div className="card grid overflow-hidden sm:grid-cols-2 lg:grid-cols-4 [&>*+*]:border-t [&>*+*]:border-line sm:[&>*:nth-child(2)]:border-t-0 lg:[&>*+*]:border-l lg:[&>*+*]:border-t-0">
+          <div className="flex min-h-[150px] flex-col justify-between px-5 pb-5 pt-5">
+            <p className="text-xs font-semibold text-muted">Students</p>
+            <p className="text-3xl font-extrabold tabular-nums tracking-tight text-ink">{loading ? "—" : studentCount.toLocaleString("en-US")}</p>
+            <p className="text-xs text-muted">
+              Expected contributions {loading ? "—" : formatPeso(summary?.totalExpectedContributions ?? 0)}
+            </p>
           </div>
-          <FinancialSummaryCard title="Funds Collected" value={summary?.totalFundsCollected ?? 0} chartMode="income" {...funds} />
-          <FinancialSummaryCard title="Funds Spent" value={summary?.totalFundsSpent ?? 0} chartMode="expense" {...funds} />
-          <FinancialSummaryCard title="Remaining Budget" value={summary?.remainingBudget ?? 0} chartMode="balance" {...funds} />
+          <FinancialSummaryCard bare title="Funds collected" value={summary?.totalFundsCollected ?? 0} chartMode="income" {...funds} />
+          <FinancialSummaryCard bare title="Funds spent" value={summary?.totalFundsSpent ?? 0} chartMode="expense" {...funds} />
+          <FinancialSummaryCard bare title="Remaining budget" value={summary?.remainingBudget ?? 0} chartMode="balance" {...funds} />
         </div>
       }
     >
-      <div className="pt-32">
-        <span className="eyebrow">Workspace</span>
-        <h2 className="mt-3 text-2xl font-extrabold text-ink">Everything you manage, in one place</h2>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {modules.map((m, i) => (
-          <ModuleCard key={m.view} module={m} primary={i === 0} badge={badges[m.view]} onOpen={() => onNavigate(m.view)} />
-        ))}
-      </div>
-
-      {loading ? (
-        <LoadingCard label="Loading dashboard…" />
-      ) : (
-        <div className={cn("grid gap-6", showLedger ? "lg:grid-cols-2 xl:grid-cols-3" : "lg:grid-cols-2")}>
-          <Panel title="Upcoming Events" subtitle="Scheduled council activities" onMore={() => onNavigate("event-management")}>
-            {upcoming.length === 0 ? (
-              <EmptyState icon={Calendar} title="No upcoming events scheduled" />
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="space-y-6">
+          <section className="card p-5 lg:p-6" aria-labelledby="attention-heading">
+            <h2 id="attention-heading" className="text-base font-bold text-ink">Needs attention</h2>
+            {loading ? (
+              <LoadingCard rows={2} label="Checking…" />
+            ) : attention.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">Nothing is waiting on you right now.</p>
             ) : (
-              <ul data-lenis-prevent className="max-h-72 space-y-2 overflow-y-auto">
-                {upcoming.map((event) => {
-                  const date = event.date ?? ""; // always set: filtered above
-                  const { label, chip } = countdown(daysUntil(date, getEarliestScheduledTime(event.schedules)));
-                  return (
-                    <Row key={event.id} title={event.name} meta={`${formatDate(date)} · Allocation ${formatPeso(event.allocationAmount)}`}>
-                      <span className={cn("chip", chip)}>{label}</span>
-                    </Row>
-                  );
-                })}
+              <ul className="mt-3 divide-y divide-line">
+                {attention.map(({ view, icon: Icon, text }) => (
+                  <li key={view}>
+                    <button onClick={() => onNavigate(view)} className="group flex w-full items-center gap-3 py-3 text-left">
+                      <Icon className="h-4 w-4 shrink-0 text-muted" />
+                      <span className="flex-1 text-sm font-medium text-ink">{text}</span>
+                      <ArrowRight className="h-4 w-4 text-muted" />
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
-          </Panel>
+          </section>
 
-          <Panel title="Collection Performance" subtitle="Progress against event allocation targets" onMore={() => onNavigate("event-management")}>
-            {allocations.length === 0 ? (
-              <EmptyState icon={PieChart} title="No event collection data yet" />
-            ) : (
-              <ul data-lenis-prevent className="max-h-72 space-y-4 overflow-y-auto pr-1">
-                {allocations.map((event) => {
-                  // The report already excludes appointed LSC officers from the
-                  // expected amount; older deployed functions don't return it yet.
-                  const expected = event.expectedAmount != null ? Number(event.expectedAmount) : Number(event.allocationAmount ?? 0) * studentCount;
-                  const collected = Number(event.totalCollected ?? 0);
-                  const progress = expected > 0 ? Math.min((collected / expected) * 100, 100) : 0;
-                  return (
-                    <li key={event.eventId}>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <p className="truncate text-sm font-semibold text-ink">{event.eventName}</p>
-                        <span className="text-xs font-bold text-brand-600">{Math.round(progress)}%</span>
-                      </div>
-                      <p className="text-xs text-muted">
-                        {formatPeso(collected)} / {formatPeso(expected)}
-                      </p>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2">
-                        <div className="h-full rounded-full bg-brand-500 transition-all duration-500" style={{ width: `${progress}%` }} />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Panel>
+          {!loading && (
+            <div className="grid gap-6 xl:grid-cols-2">
+              <Panel title="Upcoming events" onMore={() => onNavigate("event-management")}>
+                {upcoming.length === 0 ? (
+                  <EmptyState icon={Calendar} title="No upcoming events scheduled" />
+                ) : (
+                  <ul data-lenis-prevent className="max-h-72 space-y-2 overflow-y-auto">
+                    {upcoming.map((event) => {
+                      const date = event.date ?? ""; // always set: filtered above
+                      const { label, chip } = countdown(daysUntil(date, getEarliestScheduledTime(event.schedules)));
+                      return (
+                        <Row key={event.id} title={event.name} meta={`${formatDate(date)} · Allocation ${formatPeso(event.allocationAmount)}`}>
+                          <span className={cn("chip", chip)}>{label}</span>
+                        </Row>
+                      );
+                    })}
+                  </ul>
+                )}
+              </Panel>
 
-          {showLedger && (
-            <Panel title="Recent Transactions" subtitle="Latest income and expense records" onMore={() => onNavigate("transaction-management")}>
-              {transactions.length === 0 ? (
-                <EmptyState icon={Receipt} title="No transactions recorded yet" />
-              ) : (
-                <ul className="space-y-2">
-                  {transactions.slice(0, 5).map((t) => {
-                    const income = t.type === "income";
-                    const Icon = income ? TrendingUp : TrendingDown;
-                    return (
-                      <Row
-                        key={t.id}
-                        icon={<Icon className={cn("h-4 w-4", income ? "text-success" : "text-danger")} />}
-                        title={t.description || "Transaction"}
-                        meta={`${income ? "Income" : "Expense"} · ${t.date ? formatDate(t.date) : "No date"}`}
-                      >
-                        <span className={cn("text-sm font-bold", income ? "text-success" : "text-danger")}>
-                          {income ? "+" : "−"}
-                          {formatPeso(Math.abs(Number(t.amount) || 0))}
-                        </span>
-                      </Row>
-                    );
-                  })}
-                </ul>
+              <Panel title="Collection progress" onMore={() => onNavigate("contribution-management")}>
+                {allocations.length === 0 ? (
+                  <EmptyState icon={PieChart} title="No event collection data yet" />
+                ) : (
+                  <ul data-lenis-prevent className="max-h-72 space-y-4 overflow-y-auto pr-1">
+                    {allocations.map((event) => {
+                      // The report already excludes appointed LSC officers from the
+                      // expected amount; older deployed functions don't return it yet.
+                      const expected = event.expectedAmount != null ? Number(event.expectedAmount) : Number(event.allocationAmount ?? 0) * studentCount;
+                      const collected = Number(event.totalCollected ?? 0);
+                      const progress = expected > 0 ? Math.min((collected / expected) * 100, 100) : 0;
+                      return (
+                        <li key={event.eventId}>
+                          <div className="flex items-baseline justify-between gap-3">
+                            <p className="truncate text-sm font-semibold text-ink">{event.eventName}</p>
+                            <span className="text-xs font-bold tabular-nums text-ink">{Math.round(progress)}%</span>
+                          </div>
+                          <p className="text-xs text-muted">
+                            {formatPeso(collected)} / {formatPeso(expected)}
+                          </p>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2">
+                            <div className="h-full rounded-full bg-[#1449ff] transition-all duration-500" style={{ width: `${progress}%` }} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </Panel>
+
+              {showLedger && (
+                <Panel title="Recent transactions" onMore={() => onNavigate("transaction-management")} className="xl:col-span-2">
+                  {transactions.length === 0 ? (
+                    <EmptyState icon={Receipt} title="No transactions recorded yet" />
+                  ) : (
+                    <ul className="space-y-2">
+                      {transactions.slice(0, 5).map((t) => {
+                        const income = t.type === "income";
+                        const Icon = income ? TrendingUp : TrendingDown;
+                        return (
+                          <Row
+                            key={t.id}
+                            icon={<Icon className={cn("h-4 w-4", income ? "text-success" : "text-danger")} />}
+                            title={t.description || "Transaction"}
+                            meta={`${income ? "Income" : "Expense"} · ${t.date ? formatDate(t.date) : "No date"}`}
+                          >
+                            <span className={cn("text-sm font-bold", income ? "text-success" : "text-danger")}>
+                              {income ? "+" : "−"}
+                              {formatPeso(Math.abs(Number(t.amount) || 0))}
+                            </span>
+                          </Row>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </Panel>
               )}
-            </Panel>
+            </div>
           )}
         </div>
-      )}
+
+        {/* Everything else, grouped by the job it belongs to: a list, not a wall of tiles. */}
+        <nav aria-label="Council tools" className="card p-2 lg:sticky lg:top-24">
+          {GROUPS.map((group) => {
+            const items = modules.filter((m) => group.views.includes(m.view));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.title} className="py-1">
+                <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted">{group.title}</p>
+                {items.map((m) => (
+                  <button key={m.view} onClick={() => onNavigate(m.view)} title={m.description} className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-surface-2">
+                    <m.icon className="h-4 w-4 shrink-0 text-muted group-hover:text-ink" />
+                    <span className="flex-1 text-sm font-medium text-ink">{m.title}</span>
+                    {badges[m.view] && <span className="chip chip-brand">{badges[m.view]}</span>}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </nav>
+      </div>
     </Page>
   );
 }
 
-/** AirLume-style feature card: outlined icon circle, title, one-liner, "Open →". */
-function ModuleCard({ module: m, primary, badge, onOpen }: { module: Module; primary: boolean; badge?: string; onOpen: () => void }) {
-  const Icon = m.icon;
+function Panel({ title, onMore, className, children }: { title: string; onMore: () => void; className?: string; children: ReactNode }) {
   return (
-    <button onClick={onOpen} className={cn("group flex flex-col items-start p-6 text-left", primary ? "card-brand" : "card card-hover")}>
-      <div className="flex w-full items-start justify-between gap-3">
-        <span className={cn("icon-tile", primary && "border-white/30 bg-white/10 text-white")}>
-          <Icon className="h-5 w-5" />
-        </span>
-        {badge && <span className={cn("chip", primary ? "bg-white/15 text-white" : "chip-brand")}>{badge}</span>}
-      </div>
-      <h3 className={cn("mt-5 text-lg font-bold", primary ? "text-white" : "text-ink")}>{m.title}</h3>
-      <p className={cn("mt-1 line-clamp-1 text-sm", primary ? "text-white/75" : "text-muted")}>{m.description}</p>
-      <span className={cn("mt-5 inline-flex items-center gap-1.5 text-sm font-semibold", primary ? "text-white" : "text-brand-600")}>
-        Open <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-      </span>
-    </button>
-  );
-}
-
-function Panel({ title, subtitle, onMore, children }: { title: string; subtitle: string; onMore: () => void; children: ReactNode }) {
-  return (
-    <section className="card p-5 lg:p-6">
-      <header className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-bold text-ink">{title}</h3>
-          <p className="mt-0.5 text-xs text-muted">{subtitle}</p>
-        </div>
+    <section className={cn("card p-5 lg:p-6", className)}>
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-base font-bold text-ink">{title}</h2>
         <button onClick={onMore} className="btn btn-ghost btn-sm">
           View all <ArrowRight className="h-3.5 w-3.5" />
         </button>

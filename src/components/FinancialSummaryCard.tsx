@@ -17,6 +17,8 @@ interface FinancialSummaryCardProps {
   chartMode: ChartMode;
   /** Show a placeholder amount while the dashboard loads. */
   loading?: boolean;
+  /** Render as a cell of a shared strip: no card chrome, no icon. */
+  bare?: boolean;
 }
 
 const MODE_STYLE: Record<ChartMode, { icon: LucideIcon; tone: string; tile: string }> = {
@@ -84,7 +86,7 @@ const whole = (n: number) => Math.floor(Math.abs(n)).toLocaleString("en-US");
  * change between the two latest transaction dates, and a sparkline of the
  * history that draws itself in whenever the data changes.
  */
-export default function FinancialSummaryCard({ title, value, transactions, chartMode, loading }: FinancialSummaryCardProps) {
+export default function FinancialSummaryCard({ title, value, transactions, chartMode, loading, bare = false }: FinancialSummaryCardProps) {
   const lineRef = useRef<SVGPathElement>(null);
   const gradId = `fsc-${useId().replace(/[^\w-]/g, "")}`;
   const { icon: Icon, tone, tile } = MODE_STYLE[chartMode];
@@ -107,13 +109,15 @@ export default function FinancialSummaryCard({ title, value, transactions, chart
   );
 
   return (
-    <div className="card flex min-h-[180px] flex-col overflow-hidden">
+    <div className={cn("flex flex-col overflow-hidden", bare ? "min-h-[150px]" : "card min-h-[180px]")}>
       <div className="flex-1 px-5 pb-2 pt-5">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold text-muted">{title}</p>
-          <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-full", tile)}>
-            <Icon className="h-4 w-4" />
-          </span>
+          {!bare && (
+            <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-full", tile)}>
+              <Icon className="h-4 w-4" />
+            </span>
+          )}
         </div>
 
         <p className="mt-2 flex items-baseline gap-0.5 font-extrabold tabular-nums tracking-tight text-ink">
