@@ -10,17 +10,19 @@ interface SplitTextProps {
   delay?: number;
 }
 
-/** Masked, staggered text rise (React Bits "SplitText" pattern on GSAP's SplitText). */
+/** Staggered word rise that resolves from a blur (GSAP SplitText). */
 export default function SplitText({ as: Tag = "h1", className, children, by = "words", delay = 0 }: SplitTextProps) {
   const ref = useRef<HTMLElement>(null);
 
   useGSAP(
     () => {
       if (!ref.current || prefersReducedMotion()) return;
-      const split = GSAPSplitText.create(ref.current, { type: by === "chars" ? "words,chars" : "words", mask: "words" });
+      const split = GSAPSplitText.create(ref.current, { type: by === "chars" ? "words,chars" : "words" });
       gsap.from(by === "chars" ? split.chars : split.words, {
-        yPercent: 110,
+        yPercent: 70,
         opacity: 0,
+        filter: "blur(12px)",
+        clearProps: "filter",
         duration: by === "chars" ? 0.9 : 0.7,
         stagger: by === "chars" ? 0.018 : 0.05,
         delay,

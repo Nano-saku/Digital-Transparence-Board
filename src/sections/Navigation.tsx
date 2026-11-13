@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, Moon, Sun, X } from "lucide-react";
 import type { UserRole, ViewState } from "@/types";
 import { ROLE_LABEL, VIEW_ROLES } from "@/lib/roles";
@@ -44,29 +44,12 @@ const MANAGE_LINKS: Link[] = [
 const allowed = (role: UserRole) => (l: Link) => (l.roles ?? VIEW_ROLES[l.view] ?? [role]).includes(role);
 
 export default function Navigation({ currentView, onNavigate, role, onLogout, studentId }: NavigationProps) {
-  // "top": transparent on the hero; "dark": dark glass while a hero band is under the bar; "light": light glass over content.
-  const [surface, setSurface] = useState<"top" | "dark" | "light">("top");
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
-
-  useEffect(() => {
-    const onScroll = () => {
-      const overHero = [...document.querySelectorAll("main .hero-bg")].some((el) => {
-        const { top, bottom } = el.getBoundingClientRect();
-        return top < 40 && bottom > 40; // the bar's vertical middle
-      });
-      setSurface(window.scrollY <= 24 ? "top" : overHero ? "dark" : "light");
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
 
   const links = role ? STAFF_LINKS.filter(allowed(role)) : PUBLIC_LINKS;
   const manage = role ? MANAGE_LINKS.filter(allowed(role)) : [];
   const manageActive = manage.some((l) => l.view === currentView);
-  // White text while over a dark hero band; ink on the light glass bar and the mobile sheet.
-  const solid = surface === "light" || mobileOpen;
 
   const go = (view: ViewState) => {
     setMobileOpen(false);
@@ -77,20 +60,19 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
     onLogout();
   };
 
-  const iconBtn = cn("btn btn-icon", solid ? "text-muted hover:bg-surface-2 hover:text-ink" : "text-white/85 hover:bg-white/10 hover:text-white");
+  // The bar is a floating glass pill over the backdrop, so its controls are always light.
+  const iconBtn = "btn btn-icon text-white/85 hover:bg-white/10 hover:text-white";
   const pillLink = (active: boolean) =>
     cn(
       "btn btn-sm h-9 px-4",
-      active
-        ? solid ? "bg-surface text-brand-600 shadow-soft" : "bg-white text-brand-700"
-        : solid ? "text-muted hover:text-ink" : "text-white/75 hover:text-white",
+      active ? "bg-white text-brand-700 shadow-soft" : "text-white/75 hover:text-white",
     );
   const sheetLink = (active: boolean) =>
-    cn("w-full rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", active ? "bg-brand-500/10 text-brand-600" : "text-ink hover:bg-surface-2");
+    cn("w-full rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", active ? "bg-white/15 text-white" : "text-white/85 hover:bg-white/10");
 
   return (
-    <nav className={cn("fixed inset-x-0 top-0 z-40 transition-[background-color,color,box-shadow] duration-300", mobileOpen ? "bg-surface text-ink shadow-soft" : solid ? "glass-bar text-ink" : surface === "dark" ? "glass-bar-dark text-white" : "text-white")}>
-      <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:h-[4.5rem] lg:px-8">
+    <nav className="fixed inset-x-0 top-0 z-40 px-3 pt-3 text-white sm:px-4">
+      <div className="glass-nav mx-auto flex h-14 max-w-6xl items-center gap-3 rounded-full pl-2.5 pr-2 lg:h-16 lg:pl-3">
         <button onClick={() => go("landing")} className="flex items-center gap-2.5" aria-label="LSynC home">
           <img src="/lsc-logo.jpg" alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white/30" />
           <span className="text-lg font-extrabold tracking-tight">
@@ -100,7 +82,7 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
 
         {/* Desktop: centered pill nav */}
         <div className="flex flex-1 justify-center">
-          <div className={cn("hidden items-center gap-1 rounded-full border p-1 lg:flex", solid ? "border-line bg-surface-2/70" : "border-white/15 bg-white/10 backdrop-blur")}>
+          <div className="hidden items-center gap-1 rounded-full border border-white/15 bg-white/10 p-1 lg:flex">
             {links.map((l) => (
               <button key={l.view} onClick={() => go(l.view)} className={pillLink(currentView === l.view)}>
                 {l.label}
@@ -156,7 +138,7 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
 
       {/* Mobile: card sheet */}
       {mobileOpen && (
-        <div className="card mx-4 mb-4 max-h-[calc(100dvh-6rem)] animate-fade-up overflow-y-auto p-2 shadow-lift lg:hidden">
+        <div className="glass-nav mx-auto mt-2 max-h-[calc(100dvh-6rem)] max-w-6xl animate-fade-up overflow-y-auto rounded-3xl p-2 lg:hidden">
           {role && <p className="px-4 pb-1 pt-2 text-xs font-semibold text-muted">Signed in as {ROLE_LABEL[role]}</p>}
           {role && (
             <button onClick={() => go("admin-dashboard")} className={sheetLink(currentView === "admin-dashboard")}>

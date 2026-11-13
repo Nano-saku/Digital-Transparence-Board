@@ -25,6 +25,10 @@ export default defineConfig({
               id.includes("node_modules/victory-vendor")) {
             return "vendor-charts";
           }
+          // The WebGL background is lazy-loaded; keep three.js out of the shared vendor chunk.
+          if (/node_modules\/(three|three-stdlib|@react-three|@shadergradient|camera-controls)\//.test(id)) {
+            return "vendor-three";
+          }
           if (id.includes("node_modules/gsap")) {
             return "vendor-gsap";
           }

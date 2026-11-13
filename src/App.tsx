@@ -19,6 +19,7 @@ import SyncStatusBadge from "@/components/SyncStatusBadge";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import PushPromptModal from "@/components/PushPromptModal";
 import SmoothScroll from "@/components/motion/SmoothScroll";
+import ShaderBackground from "@/components/background/ShaderBackground";
 import { scrollToTop, scrollToY } from "@/lib/scroll";
 import { growFrom, pressOrigin } from "@/lib/transition";
 import { useInteractionMotion } from "@/hooks/useInteractionMotion";
@@ -418,6 +419,7 @@ function App() {
 
   return (
     <div className="min-h-screen">
+      <ShaderBackground />
       <Toaster position="top-center" richColors />
       <SmoothScroll />
       <SyncStatusBadge />

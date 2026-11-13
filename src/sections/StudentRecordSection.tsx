@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Calendar, CalendarDays, CheckCircle, ChevronDown, Clock, Download, Eye, FileText, FolderOpen, HeartHandshake, PieChart, Sparkles, Wallet, XCircle } from "lucide-react";
@@ -11,12 +11,14 @@ import { createContributionReceiptPreview, downloadContributionReceipt, official
 import { formatDate, formatPeso, formatTime12, today } from "@/lib/format";
 import { calculateContributionTotals, contributionStatus } from "@/lib/contributions";
 import { calendarDateInTimeZone } from "@/lib/attendance";
+import { cn } from "@/lib/utils";
 import ReceiptViewer from "@/components/ReceiptViewer";
 import RecordHero, { VolunteerStatus } from "@/components/RecordHero";
 import { EventCard } from "@/components/UpcomingEvents";
 import { DownloadLink, FilePreviewModal, FileSize } from "@/components/FilePreview";
 import DataTable, { type DataColumn } from "@/components/DataTable";
 import Page from "@/components/ui/Page";
+import { Reveal as DisclosureReveal } from "@/components/ui/Disclosure";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
 import Pagination from "@/components/ui/Pagination";
@@ -121,20 +123,36 @@ function withUnpaidEvents(studentId: string, records: ContributionRecord[], even
   ];
 }
 
-function Panel({ id, icon: Icon, title, subtitle, aside, children }: { id?: string; icon: LucideIcon; title: string; subtitle?: string; aside?: ReactNode; children: ReactNode }) {
+interface PanelProps {
+  id?: string;
+  icon: LucideIcon;
+  title: string;
+  subtitle?: string;
+  aside?: ReactNode;
+  /** Secondary panels start collapsed; the stat cards above already summarise them. */
+  collapsed?: boolean;
+  children: ReactNode;
+}
+
+function Panel({ id, icon: Icon, title, subtitle, aside, collapsed = false, children }: PanelProps) {
+  const [open, setOpen] = useState(!collapsed);
+  const bodyId = useId();
   return (
     <section id={id} className="card overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 p-5">
-        <div className="icon-tile">
+      <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)} className="flex w-full flex-wrap items-center gap-3 p-5 text-left">
+        <span className="icon-tile">
           <Icon className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-bold">{title}</h2>
-          {subtitle && <p className="text-xs text-muted">{subtitle}</p>}
-        </div>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-lg font-bold text-ink">{title}</span>
+          {subtitle && <span className="block text-xs text-muted">{subtitle}</span>}
+        </span>
         {aside}
-      </div>
-      {children}
+        <ChevronDown className={cn("h-4 w-4 text-muted transition-[rotate] duration-500", open && "[rotate:180deg]")} />
+      </button>
+      <DisclosureReveal open={open} id={bodyId}>
+        {children}
+      </DisclosureReveal>
     </section>
   );
 }
@@ -352,7 +370,7 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
             )}
           </Panel>
 
-          <Panel icon={Calendar} title="Attendance history">
+          <Panel icon={Calendar} title="Attendance history" subtitle={`${attendance.length} records · ${counts.present} present, ${counts.excuse} excused, ${counts.absent} absent`} collapsed>
             {attendance.length === 0 ? (
               <EmptyState icon={Calendar} title="No attendance records found" />
             ) : (
@@ -368,12 +386,13 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
               icon={HeartHandshake}
               title="Event volunteer history"
               subtitle={`Official student volunteer assignments and service records (${volunteers.length})`}
+              collapsed
             >
               <DataTable columns={VOLUNTEER_COLUMNS} rows={volunteers} rowKey={(v) => v.id} />
             </Panel>
           )}
 
-          <Panel id="requirement-files" icon={FolderOpen} title="Shared files">
+          <Panel id="requirement-files" icon={FolderOpen} title="Shared files" subtitle={`${files.length} available to download`} collapsed>
             {files.length === 0 ? (
               <EmptyState icon={FolderOpen} title="No files shared yet" description="Requirement files published by the council will appear here." />
             ) : (
