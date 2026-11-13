@@ -10,8 +10,8 @@ interface EmptyStateProps {
 /** "Nothing here yet" placeholder for lists, tables, and cards. */
 export default function EmptyState({ icon: Icon, title, description, action }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center px-6 py-12 text-center">
-      <div className="icon-tile mb-4 h-14 w-14 bg-brand-500/5">
+    <div className="flex flex-col items-center px-6 py-10 text-center">
+      <div className="icon-tile mb-4 h-14 w-14">
         <Icon className="h-6 w-6" />
       </div>
       <p className="font-semibold text-ink">{title}</p>

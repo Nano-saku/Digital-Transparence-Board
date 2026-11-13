@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, BadgeCheck, CalendarCheck, Eye, FileCheck2, Loader2, ReceiptText, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { ArrowRight, BadgeCheck, CalendarCheck, Eye, Loader2, ReceiptText, ShieldCheck, UserRound, Wallet } from "lucide-react";
 import type { Student } from "@/types";
 import { studentsService } from "@/services/db";
 import { cn } from "@/lib/utils";
@@ -7,7 +7,6 @@ import LSCOfficerCarousel from "@/components/LSCOfficerCarousel";
 import CouncilUpdates from "@/components/CouncilUpdates";
 import UpcomingEvents from "@/components/UpcomingEvents";
 import SplitText from "@/components/motion/SplitText";
-import Reveal from "@/components/motion/Reveal";
 import { gsap, useGSAP, prefersReducedMotion } from "@/lib/gsap";
 
 interface LandingSectionProps {
@@ -181,12 +180,12 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
         {/* Decorative preview cards */}
         <div aria-hidden className="hero-cards group mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
           <Floating tilt="-rotate-6" fan="group-hover:[translate:-36px_-10px] group-hover:[rotate:-5deg]">
-            <div className="glass p-5">
-              <p className="text-xs font-semibold text-white/80">Funds Collected</p>
+            <div className="card p-5">
+              <p className="text-xs font-semibold text-muted">Funds collected</p>
               <p className="mt-1 text-2xl font-extrabold">₱48,250</p>
               <div className="mt-4 flex h-14 items-end gap-1.5">
                 {[40, 65, 50, 85, 60, 95, 75].map((h, i) => (
-                  <span key={i} className="flex-1 rounded-full bg-powder/80" style={{ height: `${h}%` }} />
+                  <span key={i} className="flex-1 rounded-full bg-[#1449ff]/80" style={{ height: `${h}%` }} />
                 ))}
               </div>
             </div>
@@ -205,11 +204,11 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
             </div>
           </Floating>
           <Floating tilt="rotate-6" fan="group-hover:[translate:36px_-10px] group-hover:[rotate:5deg]">
-            <div className="glass space-y-3 p-5">
-              <p className="text-xs font-semibold text-white/80">Receipts verified</p>
+            <div className="card space-y-3 p-5">
+              <p className="text-xs font-semibold text-muted">Receipts verified</p>
               {["Sports fest supplies", "Org fair booth", "Seminar snacks"].map((r) => (
                 <p key={r} className="flex items-center gap-2 text-sm font-medium">
-                  <BadgeCheck className="h-4 w-4 shrink-0 text-powder" /> {r}
+                  <BadgeCheck className="h-4 w-4 shrink-0 text-[#1449ff]" /> {r}
                 </p>
               ))}
             </div>
@@ -223,28 +222,19 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
       {/* Council officers */}
       <section className="bg-page px-4 pb-20 sm:px-6 lg:pb-28">
-        <Reveal className="hero-bg mx-auto max-w-6xl rounded-4xl px-4 py-14 sm:px-8">
-          <div className="mb-10 text-center">
-            <span className="eyebrow">Leadership · Service · Commitment</span>
-            <h2 className="mt-4 text-3xl font-extrabold text-white sm:text-4xl">Meet your council</h2>
-            <p className="mx-auto mt-3 max-w-xl text-white/85">The officers serving the Local Student Council community.</p>
-          </div>
+        <div className="mx-auto max-w-6xl">
+          <h2 className="mb-8 text-2xl font-extrabold text-white sm:text-3xl">Council officers</h2>
           <LSCOfficerCarousel />
-        </Reveal>
+        </div>
       </section>
 
       {/* About: one interactive panel instead of four marketing cards. */}
       <section className="bg-page px-4 pb-24 sm:px-6 lg:pb-32">
         <div className="mx-auto max-w-6xl">
-          <Reveal className="mx-auto mb-10 max-w-2xl text-center">
-            <span className="eyebrow">
-              <FileCheck2 className="h-3.5 w-3.5" /> Why LSynC
-            </span>
-            <h2 className="mt-4 text-3xl font-extrabold sm:text-4xl">Everything about your council, in one honest place</h2>
-          </Reveal>
-          <Reveal>
+          <h2 className="mb-6 text-2xl font-extrabold sm:text-3xl">What you can check here</h2>
+          <div>
             <FeatureExplorer features={features} />
-          </Reveal>
+          </div>
         </div>
       </section>
     </>
@@ -266,7 +256,7 @@ function FeatureExplorer({ features }: { features: Feature[] }) {
             role="tab"
             aria-selected={i === active}
             onClick={() => setActive(i)}
-            className={cn("flex shrink-0 items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", i === active ? "bg-white text-[#0a2a9c] shadow-soft" : "text-white/80 hover:bg-white/10")}
+            className={cn("flex shrink-0 items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", i === active ? "bg-[#1449ff] text-white" : "text-muted hover:bg-surface-2 hover:text-ink")}
           >
             <f.icon className="h-4 w-4 shrink-0" />
             {f.title}

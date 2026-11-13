@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, ChevronDown, Download, Eye, FileText, MessageCircle, Pencil, PieChart, Plus, Trash2, TrendingDown, TrendingUp, Upload, Wallet } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ArrowRight, ChevronDown, Download, Eye, FileText, MessageCircle, Pencil, PieChart, Plus, Trash2, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import type { ViewState, Transaction, FinancialReport, EventAllocation, UserRole, Event } from "@/types";
 import { transactionsService, financialReportingService, eventsService } from "@/services/db";
 import { uploadReceiptFile } from "@/lib/receipts";
@@ -229,22 +228,22 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
         )
       }
       hero={
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        // The lead figure, then its parts, in one strip.
+        <div className="card grid overflow-hidden lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
           {loading || !summary ? (
-            Array.from({ length: 4 }, (_, i) => <div key={i} className="glass h-32 animate-pulse" />)
+            <div className="h-36 animate-pulse lg:col-span-4" />
           ) : (
             <>
-              <div className="card-brand col-span-2 flex flex-col justify-between p-5 lg:col-span-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-white/75">Remaining budget</p>
-                  <PieChart className="h-5 w-5 text-powder" />
-                </div>
-                <p className="mt-3 text-3xl font-extrabold tracking-tight">{formatPeso(summary.remainingBudget)}</p>
-                <SpentBar className="mt-4 h-1.5 bg-white/20" fill="bg-powder" caption="text-white/70" percent={pct(summary.totalFundsSpent, summary.totalFundsCollected)} />
+              <div className="border-b border-line p-5 lg:border-b-0 lg:border-r">
+                <p className="text-xs font-semibold text-muted">Remaining budget</p>
+                <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-ink">{formatPeso(summary.remainingBudget)}</p>
+                <SpentBar className="mt-4 h-1.5 bg-surface-2" fill="bg-[#1449ff]" caption="text-muted" percent={pct(summary.totalFundsSpent, summary.totalFundsCollected)} />
               </div>
-              <GlassStat icon={Wallet} label="Total contribution amount" value={formatPeso(summary.totalBudget)} />
-              <GlassStat icon={TrendingUp} label="Funds collected" value={formatPeso(summary.totalFundsCollected)} />
-              <GlassStat icon={TrendingDown} label="Funds spent" value={formatPeso(summary.totalFundsSpent)} />
+              <div className="grid grid-cols-3 lg:col-span-3 [&>*+*]:border-l [&>*+*]:border-line">
+                <Figure label="Collected" value={formatPeso(summary.totalFundsCollected)} />
+                <Figure label="Spent" value={formatPeso(summary.totalFundsSpent)} />
+                <Figure label="Contribution total" value={formatPeso(summary.totalBudget)} />
+              </div>
             </>
           )}
         </div>
@@ -276,7 +275,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
           </section>
 
           <section>
-            <SectionHeading eyebrow="Allocations" title="Where each event's money stands" />
+            <SectionHeading eyebrow="By event" title="Event allocations" />
             {allocations.length === 0 ? (
               <div className="card">
                 <EmptyState icon={PieChart} title="No event allocations yet" />
@@ -396,14 +395,11 @@ function TypeChip({ income }: { income: boolean }) {
   );
 }
 
-function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+function Figure({ label, value }: { label: string; value: string }) {
   return (
-    <div className="glass flex flex-col justify-between p-4 sm:p-5">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold text-white/70">{label}</p>
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/20 sm:h-9 sm:w-9"><Icon className="h-4 w-4 text-powder" /></div>
-      </div>
-      <p className="mt-3 truncate text-xl font-extrabold tracking-tight text-white sm:text-2xl">{value}</p>
+    <div className="flex flex-col justify-center p-4 sm:p-5">
+      <p className="text-xs font-semibold text-muted">{label}</p>
+      <p className="mt-1.5 truncate text-lg font-bold tabular-nums tracking-tight text-ink sm:text-xl">{value}</p>
     </div>
   );
 }

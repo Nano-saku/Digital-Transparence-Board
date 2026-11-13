@@ -56,6 +56,8 @@ export function growFrom(update: (animated: boolean) => void, { origin = pressOr
   const back = direction === "back";
   root.dataset.vt = back ? "back" : "";
   const transition = document.startViewTransition(() => flushSync(() => update(true)));
+  // A browser may abandon a transition (e.g. a slow device); the page still updates, so just skip the animation.
+  transition.updateCallbackDone.catch(() => undefined);
   transition.ready.then(() => {
     const { innerWidth: w, innerHeight: h } = window;
     const cx = origin.left + origin.width / 2;
@@ -79,6 +81,6 @@ export function growFrom(update: (animated: boolean) => void, { origin = pressOr
       root.animate({ clipPath: [shrunk, full] }, { ...timing, pseudoElement: "::view-transition-new(root)" });
       root.animate([shown, sunk], { ...timing, pseudoElement: "::view-transition-old(root)" });
     }
-  });
-  transition.finished.finally(() => delete root.dataset.vt);
+  }).catch(() => undefined);
+  transition.finished.catch(() => undefined).finally(() => delete root.dataset.vt);
 }

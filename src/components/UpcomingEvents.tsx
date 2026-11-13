@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { CalendarClock, CalendarDays, Clock } from "lucide-react";
+import { CalendarClock, Clock } from "lucide-react";
 import type { Event, EventSchedule } from "@/types";
 import { eventsService } from "@/services/db";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 import { EVENT_SESSION_LABELS } from "@/lib/attendance";
 import { formatDate, formatTime12, parseCalendarDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import Reveal from "@/components/motion/Reveal";
 import Skeleton from "@/components/ui/Skeleton";
 
 const scheduleLabel = ({ period, timeIn, timeOut }: EventSchedule) => {
@@ -95,15 +94,12 @@ export default function UpcomingEvents() {
   return (
     <section id="upcoming-events" aria-labelledby="upcoming-events-heading" className="bg-page px-4 pt-20 sm:px-6 lg:pt-28">
       <div className="mx-auto max-w-6xl">
-        <Reveal className="mx-auto max-w-2xl text-center">
-          <span className="eyebrow">
-            <CalendarDays className="h-3.5 w-3.5" /> Stay connected
-          </span>
-          <h2 id="upcoming-events-heading" className="mt-4 text-3xl font-extrabold sm:text-5xl">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 id="upcoming-events-heading" className="text-2xl font-extrabold sm:text-3xl">
             Upcoming events
           </h2>
-          <p className="mt-4 text-muted">See what&apos;s coming up — nearest first, updated as the council schedules them.</p>
-        </Reveal>
+          <p className="text-sm text-muted">Nearest first</p>
+        </div>
 
         {loading ? (
           <div className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Loading upcoming events">
@@ -119,20 +115,20 @@ export default function UpcomingEvents() {
             ))}
           </div>
         ) : loadFailed || events.length === 0 ? (
-          <Reveal className="card mx-auto mt-14 flex max-w-2xl flex-col items-center p-8 text-center">
+          <div className="card mx-auto mt-14 flex max-w-2xl flex-col items-center p-8 text-center">
             <span className="icon-tile mb-4 h-14 w-14">
               <CalendarClock className="h-6 w-6" />
             </span>
             <p className="text-sm text-muted" role={loadFailed ? "alert" : undefined}>
               {message}
             </p>
-          </Reveal>
+          </div>
         ) : (
-          <Reveal stagger className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             {events.map((event) => (
               <EventCard key={event.id} event={event} className="card hover:-translate-y-1 hover:shadow-lift" />
             ))}
-          </Reveal>
+          </div>
         )}
       </div>
     </section>
