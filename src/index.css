@@ -162,3 +162,145 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }
+
+/* ───────────────────────── Glass theme over the shader backdrop ─────────────────────────
+   The page is the moving gradient (<ShaderBackground />); everything above it is clear glass
+   in the Apple sense: a light tint, heavy blur + saturation, a specular rim that is brightest
+   at the top-left, a soft inner glow and a shadow — with white text. Menus and dialogs, which
+   sit over busy content, use a denser, darker glass. */
+:root, [data-theme="dark"] {
+  --ink: 255 255 255;
+  --muted: 222 230 252;
+  --line: 150 170 235;
+  --surface: 255 255 255;
+  --surface-2: 255 255 255;
+}
+body { background: #0a1680; }
+.shader-bg { background: radial-gradient(60% 70% at 15% 20%, #1e00e1 0%, transparent 70%), radial-gradient(55% 60% at 85% 75%, rgb(0 193 219 / 0.8) 0%, transparent 70%), radial-gradient(70% 80% at 60% 10%, #0022ff 0%, transparent 70%), #0a1680; }
+/* A deep veil: the gradient glows through, text and glass stay crisp. */
+.shader-veil { background: linear-gradient(180deg, rgb(3 6 38 / 0.62), rgb(3 6 38 / 0.5) 45%, rgb(3 6 38 / 0.66)); }
+[data-theme="dark"] .shader-veil { background: rgb(2 4 22 / 0.76); }
+
+.bg-page, .hero-bg { background: transparent !important; }
+.hero-bg::after { display: none; }
+/* Text placed straight on the backdrop gets a soft shadow for contrast over bright patches. */
+.hero-bg :is(h1, h2, p, span), .bg-page :is(h2, p):not(.card *) { text-shadow: 0 1px 18px rgb(4 8 50 / 0.45); }
+
+/* The glass material. */
+.card, .glass, .glass-nav, .card-brand, .icon-tile, .btn-secondary, footer.bg-brand-950 {
+  --rim: linear-gradient(140deg, rgb(255 255 255 / 0.8), rgb(255 255 255 / 0.38) 30%, rgb(255 255 255 / 0.22) 70%, rgb(255 255 255 / 0.5));
+  border: 1px solid transparent !important;
+  /* An even, light tint (a touch brighter at the top, like light catching the pane). */
+  background: linear-gradient(rgb(var(--tint-top, 255 255 255) / var(--tint-a, 0.17)), rgb(var(--tint-bottom, 255 255 255) / var(--tint-b, 0.1))) padding-box, var(--rim) border-box !important;
+  backdrop-filter: blur(30px) saturate(1.8);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45), inset 0 0 32px rgb(255 255 255 / 0.06), 0 20px 50px -24px rgb(2 6 40 / 0.5);
+}
+.card-brand { --tint-top: 90 160 255; --tint-a: 0.42; --tint-bottom: 50 120 255; --tint-b: 0.34; }
+.card-brand.card-hover:hover { --tint-a: 0.52; --tint-b: 0.44; }
+.glass-nav { --tint-a: 0.16; --tint-b: 0.12; }
+.icon-tile { --tint-a: 0.22; --tint-b: 0.16; }
+footer.bg-brand-950 { --tint-top: 4 8 50; --tint-a: 0.35; --tint-bottom: 4 8 50; --tint-b: 0.5; }
+/* Dense glass for layers over content: menus, dialogs, toasts. */
+[data-radix-popper-content-wrapper] .card, [role="dialog"].card, .glass-dense { --tint-top: 22 34 110; --tint-a: 0.78; --tint-bottom: 12 20 80; --tint-b: 0.84; backdrop-filter: blur(40px) saturate(1.6); -webkit-backdrop-filter: blur(40px) saturate(1.6); }
+[data-theme="dark"] :is(.card, .glass-nav, .icon-tile) { --tint-a: 0.09; --tint-b: 0.05; }
+.card-hover:hover { box-shadow: inset 0 1px 1px rgb(255 255 255 / 0.45), inset 0 0 28px rgb(255 255 255 / 0.08), 0 22px 56px -20px rgb(2 6 40 / 0.65); }
+
+/* Fills, inputs and dividers inside glass. */
+.bg-surface { background-color: rgb(255 255 255 / 0.14) !important; }
+/* Nested glass tiles inside a pane (stats, fills): a little lighter, with their own hairline. */
+.bg-surface-2 { background-color: rgb(255 255 255 / 0.12) !important; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18); }
+.input { background-color: rgb(255 255 255 / 0.1); border-color: rgb(255 255 255 / 0.22); color: #fff; }
+.input::placeholder, .card input::placeholder { color: rgb(255 255 255 / 0.68); }
+.input:focus { border-color: rgb(255 255 255 / 0.55); box-shadow: 0 0 0 4px rgb(255 255 255 / 0.12); }
+select.input option { color: #0a1033; background: #fff; }
+.data-table th { background: rgb(255 255 255 / 0.06); }
+.data-table tbody tr:hover { background: rgb(255 255 255 / 0.05); }
+.eyebrow { background: rgb(255 255 255 / 0.12) !important; border-color: rgb(255 255 255 / 0.22) !important; color: rgb(255 255 255 / 0.9) !important; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+/* Primary action: a solid white pill with deep-blue text (reads on any glass). */
+.btn-primary { background: #fff !important; color: #0a2a9c !important; box-shadow: 0 10px 30px -12px rgb(2 6 40 / 0.5); }
+.btn-primary:hover { background: rgb(255 255 255 / 0.88) !important; }
+.btn-primary .btn-orb { background: #1449ff; color: #fff; }
+.btn-primary :is(.text-brand-500, .text-brand-600, .text-brand-700) { color: #0a2a9c !important; }
+/* Accents need lighter tones to read on glass. */
+.text-brand-400, .text-brand-500, .text-brand-600, .text-brand-700 { color: rgb(200 236 255) !important; }
+.chip-brand, .chip-success, .chip-warning, .chip-danger, .chip-neutral { background: rgb(255 255 255 / 0.16) !important; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18); }
+.chip-brand { color: #d2edff !important; } .chip-success { color: #8dffcf !important; } .chip-warning { color: #ffe08f !important; } .chip-danger { color: #ffc2bd !important; } .chip-neutral { color: rgb(255 255 255 / 0.85) !important; }
+.text-success { color: #7cf7c0 !important; } .text-danger { color: #ffaba4 !important; } .text-warning { color: #ffd77a !important; }
+.bg-white .text-brand-700, .btn-light, .bg-white.text-brand-700 { color: #0047b3 !important; }
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .card, .glass, .glass-nav, .card-brand, .icon-tile, .btn-secondary, footer.bg-brand-950 { backdrop-filter: none; -webkit-backdrop-filter: none; --tint-top: 14 22 90; --tint-a: 0.96; --tint-bottom: 14 22 90; --tint-b: 0.96; }
+}
+
+/* ───────────────────────── Motion graphics ─────────────────────────
+   Icons act out what they do when their control is hovered or focused (one play per hover);
+   headings resolve from a blur; presses send out rings. All of it is switched off by the
+   global prefers-reduced-motion rule. */
+:root { --spring: cubic-bezier(0.34, 1.4, 0.64, 1); --glide: cubic-bezier(0.22, 1, 0.36, 1); }
+.lucide { transform-origin: center; }
+:is(a, button, [role="button"], [role="menuitem"], [role="tab"], .card-hover, summary):is(:hover, :focus-visible) {
+  & .lucide-send { animation: icon-takeoff 900ms var(--glide); }
+  & :is(.lucide-bell, .lucide-bell-ring, .lucide-megaphone) { animation: icon-ring 800ms ease-out; transform-origin: 50% 8%; }
+  & .lucide-trash-2 { animation: icon-trash 650ms var(--spring); transform-origin: 50% 100%; }
+  & :is(.lucide-pen, .lucide-pencil, .lucide-square-pen) { animation: icon-write 700ms ease-in-out; }
+  & :is(.lucide-download, .lucide-chevrons-down) { animation: icon-drop 700ms var(--glide); }
+  & :is(.lucide-upload, .lucide-cloud-upload, .lucide-file-up, .lucide-image-up, .lucide-chevrons-up) { animation: icon-lift 700ms var(--glide); }
+  & .lucide-refresh-cw { animation: icon-spin 700ms var(--glide); }
+  & :is(.lucide-rotate-ccw, .lucide-history) { animation: icon-spin-back 700ms var(--glide); }
+  & :is(.lucide-search, .lucide-scan-line, .lucide-qr-code) { animation: icon-scan 800ms ease-in-out; }
+  & :is(.lucide-eye, .lucide-eye-off) { animation: icon-blink 500ms ease-in-out; }
+  & :is(.lucide-plus, .lucide-user-plus) { animation: icon-pop-turn 500ms var(--spring); }
+  & .lucide-moon { animation: icon-swing 800ms ease-in-out; }
+  & :is(.lucide-sun, .lucide-cloud-sun, .lucide-sunrise) { animation: icon-sunspin 900ms var(--glide); }
+  & :is(.lucide-log-in, .lucide-key-round, .lucide-lock) { animation: icon-enter 650ms var(--glide); }
+  & .lucide-log-out { animation: icon-exit 650ms var(--glide); }
+  & :is(.lucide-external-link, .lucide-arrow-up-right) { animation: icon-launch 700ms var(--glide); }
+  & :is(.lucide-message-circle, .lucide-mail, .lucide-mail-check, .lucide-inbox, .lucide-facebook, .lucide-globe, .lucide-phone) { animation: icon-pop 550ms var(--spring); }
+  & :is(.lucide-circle-check, .lucide-badge-check, .lucide-shield-check, .lucide-shield, .lucide-award, .lucide-check) { animation: icon-pop 550ms var(--spring); }
+  & :is(.lucide-chevron-down) { animation: icon-nudge-down 600ms var(--spring); }
+  & :is(.lucide-calendar, .lucide-calendar-days, .lucide-calendar-check, .lucide-calendar-clock, .lucide-clock) { animation: icon-hop 600ms var(--spring); }
+  & :is(.lucide-users, .lucide-user, .lucide-user-round, .lucide-user-check, .lucide-heart-handshake) { animation: icon-hop 600ms var(--spring); }
+  & :is(.lucide-wallet, .lucide-coins, .lucide-receipt, .lucide-receipt-text, .lucide-credit-card, .lucide-pie-chart, .lucide-chart-pie) { animation: icon-tilt 650ms var(--spring); }
+  & .lucide-trending-up { animation: icon-rise 700ms var(--glide); }
+  & .lucide-trending-down { animation: icon-fall 700ms var(--glide); }
+  & :is(.lucide-file-text, .lucide-file-check-2, .lucide-file-spreadsheet, .lucide-folder-open, .lucide-clipboard-list, .lucide-clipboard-check, .lucide-list-checks) { animation: icon-hop 600ms var(--spring); }
+  & :is(.lucide-funnel, .lucide-layers) { animation: icon-nudge-down 600ms var(--spring); }
+  & :is(.lucide-camera, .lucide-switch-camera) { animation: icon-snap 500ms var(--spring); }
+  & :is(.lucide-x, .lucide-circle-x) { animation: icon-turn 450ms var(--glide); }
+  & :is(.lucide-lightbulb, .lucide-sparkles, .lucide-target) { animation: icon-glow 800ms ease-out; }
+  & :is(.lucide-layout-dashboard, .lucide-chart-column, .lucide-bar-chart-3) { animation: icon-pop 550ms var(--spring); }
+}
+@keyframes icon-takeoff { 0% { transform: none; } 38% { transform: translate(11px, -11px) rotate(-6deg) scale(0.7); opacity: 0; } 39% { transform: translate(-11px, 11px) scale(0.7); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-launch { 0% { transform: none; } 40% { transform: translate(8px, -8px); opacity: 0; } 41% { transform: translate(-8px, 8px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-ring { 0%, 100% { transform: none; } 15% { transform: rotate(16deg); } 30% { transform: rotate(-13deg); } 45% { transform: rotate(9deg); } 60% { transform: rotate(-6deg); } 75% { transform: rotate(3deg); } }
+@keyframes icon-trash { 0%, 100% { transform: none; } 30% { transform: translateY(-2px) rotate(-12deg); } 55% { transform: rotate(9deg); } 80% { transform: rotate(-4deg); } }
+@keyframes icon-write { 0%, 100% { transform: none; } 25% { transform: translate(-1px, 1px) rotate(-10deg); } 50% { transform: translate(2px, -1px) rotate(6deg); } 75% { transform: translate(-1px, 1px) rotate(-6deg); } }
+@keyframes icon-drop { 0% { transform: none; } 40% { transform: translateY(7px); opacity: 0; } 41% { transform: translateY(-7px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-lift { 0% { transform: none; } 40% { transform: translateY(-7px); opacity: 0; } 41% { transform: translateY(7px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+@keyframes icon-spin-back { from { transform: rotate(0); } to { transform: rotate(-360deg); } }
+@keyframes icon-scan { 0%, 100% { transform: none; } 25% { transform: translate(-2px, -1px) rotate(-8deg); } 50% { transform: translate(2px, 1px) rotate(6deg); } 75% { transform: translate(-1px, 0) scale(1.06); } }
+@keyframes icon-blink { 0%, 100% { transform: none; } 45% { transform: scaleY(0.1); } }
+@keyframes icon-pop-turn { 0% { transform: none; } 60% { transform: rotate(90deg) scale(1.2); } 100% { transform: rotate(90deg); } }
+@keyframes icon-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-22deg); } 60% { transform: rotate(10deg); } }
+@keyframes icon-sunspin { from { transform: rotate(0) scale(1); } 50% { transform: rotate(90deg) scale(1.15); } to { transform: rotate(180deg) scale(1); } }
+@keyframes icon-enter { 0% { transform: none; } 40% { transform: translateX(6px); opacity: 0; } 41% { transform: translateX(-6px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-exit { 0% { transform: none; } 40% { transform: translateX(7px); opacity: 0; } 41% { transform: translateX(-5px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes icon-pop { 0%, 100% { transform: none; } 40% { transform: scale(1.22) rotate(-6deg); } 70% { transform: scale(0.94); } }
+@keyframes icon-nudge-down { 0%, 100% { transform: none; } 40% { transform: translateY(3px); } 70% { transform: translateY(-1px); } }
+@keyframes icon-hop { 0%, 100% { transform: none; } 35% { transform: translateY(-4px) scale(1.06); } 65% { transform: translateY(1px) scale(0.98); } }
+@keyframes icon-tilt { 0%, 100% { transform: none; } 35% { transform: rotate(-12deg) scale(1.1); } 70% { transform: rotate(6deg); } }
+@keyframes icon-rise { 0% { transform: none; } 45% { transform: translate(4px, -4px); opacity: 0.2; } 46% { transform: translate(-4px, 4px); } 100% { transform: none; opacity: 1; } }
+@keyframes icon-fall { 0% { transform: none; } 45% { transform: translate(4px, 4px); opacity: 0.2; } 46% { transform: translate(-4px, -4px); } 100% { transform: none; opacity: 1; } }
+@keyframes icon-snap { 0%, 100% { transform: none; } 30% { transform: scale(0.82); } 60% { transform: scale(1.12); } }
+@keyframes icon-turn { from { transform: rotate(0); } to { transform: rotate(90deg); } }
+@keyframes icon-glow { 0%, 100% { transform: none; filter: none; } 40% { transform: scale(1.18); filter: drop-shadow(0 0 6px rgb(255 230 140 / 0.9)); } }
+
+/* Headings resolve from a blur, like a focus pull. */
+.blur-in { animation: blur-in 700ms var(--glide) both; }
+@keyframes blur-in { from { opacity: 0; filter: blur(10px); translate: 0 8px; } to { opacity: 1; filter: none; translate: none; } }
+
+/* Press rings: concentric pulses from the press point (see useInteractionMotion). */
+.press-ring { position: absolute; pointer-events: none; border-radius: 9999px; border: 2px solid currentColor; opacity: 0; animation: press-ring 650ms var(--glide) forwards; }
+@keyframes press-ring { from { transform: translate(-50%, -50%) scale(0); opacity: 0.45; } to { transform: translate(-50%, -50%) scale(1); opacity: 0; } }

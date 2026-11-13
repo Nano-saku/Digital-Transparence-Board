@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, Download, Eye, FileText, MessageCircle, Pencil, PieChart, Plus, Trash2, TrendingDown, TrendingUp, Upload, Wallet } from "lucide-react";
+import { ArrowRight, ChevronDown, Download, Eye, FileText, MessageCircle, Pencil, PieChart, Plus, Trash2, TrendingDown, TrendingUp, Upload, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ViewState, Transaction, FinancialReport, EventAllocation, UserRole, Event } from "@/types";
 import { transactionsService, financialReportingService, eventsService } from "@/services/db";
 import { uploadReceiptFile } from "@/lib/receipts";
 import { formatDate, today, formatPeso } from "@/lib/format";
 import { canAccess } from "@/lib/roles";
+import { cn } from "@/lib/utils";
 import { downloadReport, printTable, type Column, type PrintableReport } from "@/lib/printReport";
 import { useSearch } from "@/hooks/useSearch";
 import { usePagination } from "@/hooks/usePagination";
@@ -20,6 +21,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import SearchInput from "@/components/ui/SearchInput";
 import Pagination from "@/components/ui/Pagination";
 import { LoadingCard } from "@/components/ui/Skeleton";
+import { Reveal as DisclosureReveal } from "@/components/ui/Disclosure";
 import { Menu, MenuContent, MenuItem, MenuSeparator, RowActionsTrigger } from "@/components/ui/Menu";
 
 interface TransparencyBoardSectionProps {
@@ -44,6 +46,7 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [openAllocation, setOpenAllocation] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
 
@@ -280,39 +283,11 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
               </div>
             ) : (
               <div className="card overflow-hidden p-0">
-                {/* One calm row per event: the collected amount leads, the rest is secondary. */}
-                <div className="hidden grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.4fr)] gap-6 border-b border-line px-6 py-3 text-xs font-semibold uppercase tracking-wide text-muted md:grid">
-                  <span>Event</span>
-                  <span className="text-right">Collected</span>
-                  <span className="text-right">Spent</span>
-                  <span className="text-right">Balance</span>
-                  <span>Used</span>
-                </div>
-                <ul className="divide-y divide-line">
-                  {allocations.map((a) => {
-                    const expected = expectedCollection(a);
-                    const used = pct(a.totalSpent, a.totalCollected);
-                    return (
-                      <li key={a.eventId} className="grid grid-cols-3 items-center gap-x-6 gap-y-3 px-5 py-4 transition-colors hover:bg-surface-2/60 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.4fr)] md:px-6">
-                        <div className="col-span-3 min-w-0 md:col-span-1">
-                          <p className="truncate font-semibold text-ink" title={a.eventName}>{a.eventName}</p>
-                          <p className="text-xs text-muted">
-                            {formatPeso(a.allocationAmount)} per student
-                            {expected > 0 && <> · {formatPeso(expected)} expected</>}
-                          </p>
-                        </div>
-                        <Amount label="Collected" value={a.totalCollected} weight="strong" />
-                        <Amount label="Spent" value={a.totalSpent} />
-                        <Amount label="Balance" value={a.remainingBalance} weight="medium" />
-                        <div className="col-span-3 flex items-center gap-3 md:col-span-1">
-                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-                            <div className="h-full rounded-full bg-brand-500" style={{ width: `${used}%` }} />
-                          </div>
-                          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted">{used}%</span>
-                        </div>
-                      </li>
-                    );
-                  })}
+                {/* At a glance: event, collected, how much is used. Details open on demand. */}
+                <ul className="divide-y divide-line/40">
+                  {allocations.map((a) => (
+                    <AllocationRow key={a.eventId} allocation={a} open={openAllocation === a.eventId} onToggle={() => setOpenAllocation((id) => (id === a.eventId ? null : a.eventId))} />
+                  ))}
                 </ul>
               </div>
             )}
@@ -434,15 +409,40 @@ function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
 }
 
 /** "N% of collected funds spent" progress bar. */
-/** A money figure; the label only shows on small screens (the header labels the columns on desktop). */
-const AMOUNT_STYLE = { strong: "font-bold text-ink", medium: "text-sm font-medium text-ink", muted: "text-sm text-muted" };
-
-function Amount({ label, value, weight = "muted" }: { label: string; value: number; weight?: keyof typeof AMOUNT_STYLE }) {
+function AllocationRow({ allocation: a, open, onToggle }: { allocation: EventAllocation; open: boolean; onToggle: () => void }) {
+  const used = pct(a.totalSpent, a.totalCollected);
+  const expected = expectedCollection(a);
+  const id = `allocation-${a.eventId}`;
+  const details: [string, string][] = [
+    ["Spent", formatPeso(a.totalSpent)],
+    ["Balance", formatPeso(a.remainingBalance)],
+    ["Per student", formatPeso(a.allocationAmount)],
+    ...(expected > 0 ? [["Expected", formatPeso(expected)] as [string, string]] : []),
+  ];
   return (
-    <div className="min-w-0 md:text-right">
-      <p className="text-[11px] text-muted md:hidden">{label}</p>
-      <p className={`truncate tabular-nums ${AMOUNT_STYLE[weight]}`}>{formatPeso(value)}</p>
-    </div>
+    <li>
+      <button type="button" aria-expanded={open} aria-controls={id} onClick={onToggle} className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-x-4 gap-y-2 px-5 py-4 text-left transition-colors hover:bg-white/[.04] sm:grid-cols-[minmax(0,1fr)_9rem_minmax(8rem,14rem)_auto] sm:px-6">
+        <span className="col-start-1 row-start-1 min-w-0 truncate font-semibold text-ink" title={a.eventName}>{a.eventName}</span>
+        <span className="col-start-2 row-start-1 text-right font-bold tabular-nums text-ink">{formatPeso(a.totalCollected)}</span>
+        <span className="col-span-3 row-start-2 flex items-center gap-3 sm:col-span-1 sm:col-start-3 sm:row-start-1">
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
+            <span className="block h-full rounded-full bg-[#8ff4ff]" style={{ width: `${used}%` }} />
+          </span>
+          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted">{used}%</span>
+        </span>
+        <ChevronDown className={cn("col-start-3 row-start-1 h-4 w-4 text-muted transition-[rotate] duration-500 sm:col-start-4", open && "[rotate:180deg]")} />
+      </button>
+      <DisclosureReveal open={open} id={id}>
+        <dl className="grid grid-cols-2 gap-2 px-5 pb-5 sm:grid-cols-4 sm:px-6">
+          {details.map(([label, value]) => (
+            <div key={label} className="rounded-2xl bg-surface-2 px-4 py-3">
+              <dt className="text-[11px] font-medium text-muted">{label}</dt>
+              <dd className="mt-0.5 font-bold tabular-nums text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </DisclosureReveal>
+    </li>
   );
 }
 

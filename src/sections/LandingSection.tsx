@@ -103,9 +103,9 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
           <SplitText delay={0.1} className="mt-6 text-[2.5rem] font-extrabold leading-[1.05] text-white sm:text-6xl lg:text-7xl">
             Your Council Records,
             <br />
-            Clear &amp; <span className="text-brand-400">Transparent</span>
+            Clear &amp; <span className="text-[#8ff4ff]">Transparent</span>
           </SplitText>
-          <p className="hero-intro mx-auto mt-5 max-w-xl text-base text-white/65 sm:text-lg">
+          <p className="hero-intro mx-auto mt-5 max-w-xl text-base text-white/90 sm:text-lg">
             Check your contributions and attendance, and see exactly how student funds are used — all in one place.
           </p>
 
@@ -174,15 +174,15 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
             <button onClick={onViewTransparency} className="inline-flex items-center gap-2 py-2 font-semibold text-white/85 underline-offset-4 hover:text-white hover:underline">
               <Eye className="h-4 w-4" /> View Transparency Board
             </button>
-            <span className="text-white/45">Your Student ID is only used to verify it&apos;s you.</span>
+            <span className="text-white/75">Your Student ID is only used to verify it&apos;s you.</span>
           </div>
         </div>
 
         {/* Decorative preview cards */}
-        <div aria-hidden className="hero-cards pointer-events-none mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
-          <Floating tilt="-rotate-6">
+        <div aria-hidden className="hero-cards group mt-auto hidden w-full max-w-5xl grid-cols-3 items-end gap-6 pt-16 md:grid">
+          <Floating tilt="-rotate-6" fan="group-hover:[translate:-36px_-10px] group-hover:[rotate:-5deg]">
             <div className="glass p-5">
-              <p className="text-xs font-semibold text-white/60">Funds Collected</p>
+              <p className="text-xs font-semibold text-white/80">Funds Collected</p>
               <p className="mt-1 text-2xl font-extrabold">₱48,250</p>
               <div className="mt-4 flex h-14 items-end gap-1.5">
                 {[40, 65, 50, 85, 60, 95, 75].map((h, i) => (
@@ -191,7 +191,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
               </div>
             </div>
           </Floating>
-          <Floating tilt="rotate-0">
+          <Floating tilt="rotate-0" fan="group-hover:[translate:0_-22px] group-hover:[scale:1.04]">
             <div className="card p-5 pb-16">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted">Attendance</p>
@@ -204,9 +204,9 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
               <p className="mt-3 text-xs text-muted">Across 12 council events</p>
             </div>
           </Floating>
-          <Floating tilt="rotate-6">
+          <Floating tilt="rotate-6" fan="group-hover:[translate:36px_-10px] group-hover:[rotate:5deg]">
             <div className="glass space-y-3 p-5">
-              <p className="text-xs font-semibold text-white/60">Receipts verified</p>
+              <p className="text-xs font-semibold text-white/80">Receipts verified</p>
               {["Sports fest supplies", "Org fair booth", "Seminar snacks"].map((r) => (
                 <p key={r} className="flex items-center gap-2 text-sm font-medium">
                   <BadgeCheck className="h-4 w-4 shrink-0 text-powder" /> {r}
@@ -219,37 +219,6 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
       <UpcomingEvents />
 
-      {/* Features */}
-      <section className="bg-page px-4 py-20 sm:px-6 lg:py-28">
-        <div className="mx-auto max-w-6xl">
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <span className="eyebrow">
-              <FileCheck2 className="h-3.5 w-3.5" /> Why LSynC
-            </span>
-            <h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Everything about your council, in one honest place</h2>
-            <p className="mt-4 text-muted">Built so every student can check the numbers — no requests, no waiting.</p>
-          </Reveal>
-          <Reveal stagger className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {features.map(({ icon: Icon, title, text, action }, i) => (
-              <button
-                key={title}
-                onClick={action}
-                className={cn("group flex flex-col p-6 text-left", i === 0 ? "card-brand card-hover" : "card card-hover")}
-              >
-                <span className={cn("icon-tile", i === 0 && "border-white/25 bg-white/10 text-white")}>
-                  <Icon className="h-5 w-5" />
-                </span>
-                <h3 className={cn("mt-8 text-lg font-bold", i === 0 && "text-white")}>{title}</h3>
-                <p className={cn("mt-2 flex-1 text-sm", i === 0 ? "text-white/75" : "text-muted")}>{text}</p>
-                <span className={cn("mt-6 inline-flex items-center gap-1.5 text-sm font-semibold", i === 0 ? "text-white" : "text-brand-600")}>
-                  Learn more <ArrowRight className="h-4 w-4" />
-                </span>
-              </button>
-            ))}
-          </Reveal>
-        </div>
-      </section>
-
       <CouncilUpdates />
 
       {/* Council officers */}
@@ -258,12 +227,65 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
           <div className="mb-10 text-center">
             <span className="eyebrow">Leadership · Service · Commitment</span>
             <h2 className="mt-4 text-3xl font-extrabold text-white sm:text-4xl">Meet your council</h2>
-            <p className="mx-auto mt-3 max-w-xl text-white/65">The officers serving the Local Student Council community.</p>
+            <p className="mx-auto mt-3 max-w-xl text-white/85">The officers serving the Local Student Council community.</p>
           </div>
           <LSCOfficerCarousel />
         </Reveal>
       </section>
+
+      {/* About: one interactive panel instead of four marketing cards. */}
+      <section className="bg-page px-4 pb-24 sm:px-6 lg:pb-32">
+        <div className="mx-auto max-w-6xl">
+          <Reveal className="mx-auto mb-10 max-w-2xl text-center">
+            <span className="eyebrow">
+              <FileCheck2 className="h-3.5 w-3.5" /> Why LSynC
+            </span>
+            <h2 className="mt-4 text-3xl font-extrabold sm:text-4xl">Everything about your council, in one honest place</h2>
+          </Reveal>
+          <Reveal>
+            <FeatureExplorer features={features} />
+          </Reveal>
+        </div>
+      </section>
     </>
+  );
+}
+
+type Feature = { icon: typeof Wallet; title: string; text: string; action: () => void };
+
+/** Tabs on the left (a scrolling pill row on phones); the chosen feature resolves in on the right. */
+function FeatureExplorer({ features }: { features: Feature[] }) {
+  const [active, setActive] = useState(0);
+  const { icon: Icon, title, text, action } = features[active];
+  return (
+    <div className="card grid overflow-hidden p-2 md:grid-cols-[18rem_1fr]">
+      <div role="tablist" aria-label="LSynC features" className="flex gap-1 overflow-x-auto p-1 md:flex-col">
+        {features.map((f, i) => (
+          <button
+            key={f.title}
+            role="tab"
+            aria-selected={i === active}
+            onClick={() => setActive(i)}
+            className={cn("flex shrink-0 items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", i === active ? "bg-white text-[#0a2a9c] shadow-soft" : "text-white/80 hover:bg-white/10")}
+          >
+            <f.icon className="h-4 w-4 shrink-0" />
+            {f.title}
+          </button>
+        ))}
+      </div>
+      <div key={active} role="tabpanel" className="blur-in flex flex-col justify-center gap-5 p-6 sm:p-10">
+        <span className="icon-tile h-14 w-14">
+          <Icon className="h-6 w-6" />
+        </span>
+        <div>
+          <h3 className="text-2xl font-extrabold">{title}</h3>
+          <p className="mt-2 max-w-lg text-muted">{text}</p>
+        </div>
+        <button onClick={action} className="btn btn-primary self-start">
+          Open <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -277,11 +299,11 @@ function Segment({ id, label, divided, children }: { id: string; label: string; 
   );
 }
 
-/** A tilted, static preview card in the hero. */
-function Floating({ tilt, children }: { tilt: string; children: ReactNode }) {
+/** A tilted preview card in the hero; the three fan apart (springy) when the stack is hovered. */
+function Floating({ tilt, fan, children }: { tilt: string; fan: string; children: ReactNode }) {
   return (
     <div className={cn("hero-card", tilt)}>
-      {children}
+      <div className={cn("transition-[translate,rotate,scale] duration-700 ease-[cubic-bezier(0.34,1.4,0.64,1)]", fan)}>{children}</div>
     </div>
   );
 }
