@@ -172,7 +172,8 @@ body { background: #0a1680; }
 .shader-veil { background: linear-gradient(180deg, rgb(3 6 38 / 0.58), rgb(3 6 38 / 0.46) 45%, rgb(3 6 38 / 0.62)); }
 [data-theme="dark"] .shader-veil { background: rgb(2 4 22 / 0.76); }
 .bg-page, .hero-bg { background: transparent !important; }
-.hero-bg :is(h1, h2, p, span), .bg-page :is(h2, p):not(.card *) { text-shadow: 0 1px 18px rgb(4 8 50 / 0.45); }
+/* Only text sitting on the wallpaper gets the soft shadow, never text inside a pane. */
+:is(.hero-bg, .bg-page) :is(h1, h2, p, span):not(.card *, .glass *) { text-shadow: 0 1px 18px rgb(4 8 50 / 0.45); }
 
 /* Rim light shared by every pane: a hairline that catches light at the top-left and drifts slowly. */
 @property --rim { syntax: "<angle>"; inherits: false; initial-value: 45deg; }
