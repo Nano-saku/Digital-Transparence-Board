@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,8 @@ export default function LSCOfficerCarousel() {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
   const move = (dir: number) => setActive((a) => (a + dir + N) % N);
+  // Horizontal swipe on touch screens; vertical drags keep scrolling the page (touch-action: pan-y).
+  const swipe = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (paused) return;
@@ -31,7 +33,22 @@ export default function LSCOfficerCarousel() {
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
-      <div className="relative mx-auto h-[min(72vw,27rem)] min-h-[20rem] w-full max-w-5xl [perspective:1400px]">
+      <div
+        className="relative mx-auto h-[min(72vw,27rem)] min-h-[20rem] w-full max-w-5xl touch-pan-y [perspective:1400px]"
+        onPointerDown={(e) => {
+          swipe.current = { x: e.clientX, y: e.clientY };
+          setPaused(true);
+        }}
+        onPointerUp={(e) => {
+          const start = swipe.current;
+          swipe.current = null;
+          if (e.pointerType !== "mouse") setPaused(false);
+          if (!start) return;
+          const dx = e.clientX - start.x;
+          if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(e.clientY - start.y)) move(dx < 0 ? 1 : -1);
+        }}
+        onPointerCancel={() => (swipe.current = null)}
+      >
         {IMAGES.map((src, i) => {
           // Shortest signed distance from the active slide, wrapping around.
           const rel = ((i - active + N + N / 2) % N) - N / 2;
@@ -68,7 +85,7 @@ export default function LSCOfficerCarousel() {
         </button>
       </div>
 
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
+      <div className="mt-4 flex flex-wrap justify-center">
         {IMAGES.map((src, i) => (
           <button
             key={src}
@@ -76,8 +93,11 @@ export default function LSCOfficerCarousel() {
             onClick={() => setActive(i)}
             aria-label={`Go to officer image ${i + 1}`}
             aria-current={active === i || undefined}
-            className={cn("h-2 rounded-full transition-all", active === i ? "w-7 bg-powder" : "w-2 bg-white/40 hover:bg-white/70")}
-          />
+            className="group grid h-8 place-items-center px-1"
+          >
+            {/* Small visual dot inside a larger tap area. */}
+            <span className={cn("h-2 rounded-full transition-all", active === i ? "w-7 bg-powder" : "w-2 bg-white/40 group-hover:bg-white/70")} />
+          </button>
         ))}
       </div>
     </div>

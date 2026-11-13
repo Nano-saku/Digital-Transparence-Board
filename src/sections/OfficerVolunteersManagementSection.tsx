@@ -212,7 +212,7 @@ export default function OfficerVolunteersManagementSection({ onBack, role }: Off
       onBack={onBack}
       actions={assignButton}
       hero={
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard featured icon={ShieldCheck} label="Total Officers" value={officers.length} hint="Officially appointed" />
           <StatCard icon={Award} label="Board Members" value={officers.filter((o) => hasRole(o, "Board Member")).length} hint="Manual board roles" />
           <StatCard

@@ -465,7 +465,7 @@ export default function ContributionManagementSection({ onBack, role, staffName 
         </>
       }
       hero={
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <StatCard featured icon={Wallet} label="Total collected" value={formatPeso(totals.totalPaid)} hint="payments received" />
           <StatCard icon={Coins} label="Total collectable" value={formatPeso(totals.totalRequired)} hint="required contributions" />
           <StatCard icon={Scale} tone="warning" label="Outstanding" value={formatPeso(totals.totalBalance)} hint="remaining balances" />

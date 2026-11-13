@@ -21,10 +21,13 @@ export default function SyncStatusBadge() {
     let cancelled = false;
     let hideTimer: ReturnType<typeof setTimeout> | undefined;
     let prev = offlineSyncService.getState();
+    let lastPending = 0; // queued changes seen before the latest sync
+
 
     const refresh = async (next: SyncState, toastFailure: boolean) => {
       const [count, current] = await Promise.all([offlineSyncService.pendingCount(), offlineSyncService.firstFailure()]);
       if (cancelled) return;
+      if (next !== "synced") lastPending = count;
       setPending(count);
       setFailure(current);
       // Toast only on entering "failed"; the persistent card covers the rest.
@@ -38,7 +41,8 @@ export default function SyncStatusBadge() {
       void refresh(next, prev !== "failed");
       prev = next;
       clearTimeout(hideTimer);
-      if (next === "synced") {
+      // Confirm only when queued changes actually went up; a routine check stays silent.
+      if (next === "synced" && lastPending > 0) {
         setShowSynced(true);
         hideTimer = setTimeout(() => setShowSynced(false), 2000);
       } else if (next !== "offline") {

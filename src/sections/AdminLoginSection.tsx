@@ -57,7 +57,7 @@ export default function AdminLoginSection({ onLogin, onForgotPassword }: AdminLo
           />
         </Field>
         <div className="-mt-1 text-right">
-          <button type="button" onClick={onForgotPassword} className="text-xs font-semibold text-brand-600 hover:underline">
+          <button type="button" onClick={onForgotPassword} className="-my-2 py-2 text-xs font-semibold text-brand-600 hover:underline">
             Forgot password?
           </button>
         </div>

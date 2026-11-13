@@ -97,7 +97,8 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
         <div className="mx-auto w-full max-w-4xl text-center">
           <span className="hero-intro eyebrow">
             <ShieldCheck className="h-3.5 w-3.5 text-powder" />
-            LSC Student Digital Board · Transparency you can check
+            <span className="sm:hidden">Transparency you can check</span>
+            <span className="hidden sm:inline">LSC Student Digital Board · Transparency you can check</span>
           </span>
           <SplitText delay={0.1} className="mt-6 text-[2.5rem] font-extrabold leading-[1.05] text-white sm:text-6xl lg:text-7xl">
             Your Council Records,
@@ -170,7 +171,7 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
           </form>
 
           <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm">
-            <button onClick={onViewTransparency} className="inline-flex items-center gap-2 font-semibold text-white/85 underline-offset-4 hover:text-white hover:underline">
+            <button onClick={onViewTransparency} className="inline-flex items-center gap-2 py-2 font-semibold text-white/85 underline-offset-4 hover:text-white hover:underline">
               <Eye className="h-4 w-4" /> View Transparency Board
             </button>
             <span className="text-white/45">Your Student ID is only used to verify it&apos;s you.</span>
@@ -268,12 +269,11 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
 function Segment({ id, label, divided, children }: { id: string; label: string; divided?: boolean; children: ReactNode }) {
   return (
-    <div className={cn("rounded-2xl px-5 py-2.5 transition focus-within:bg-surface-2 sm:rounded-full", divided && "sm:rounded-none sm:border-l sm:border-line sm:focus-within:rounded-full")}>
-      <label htmlFor={id} className="block text-[11px] font-bold uppercase tracking-wider text-ink">
-        {label}
-      </label>
+    // The whole segment is the tap target, not just the input line.
+    <label htmlFor={id} className={cn("block cursor-text rounded-2xl px-5 py-2.5 transition focus-within:bg-surface-2 sm:rounded-full", divided && "sm:rounded-none sm:border-l sm:border-line sm:focus-within:rounded-full")}>
+      <span className="block text-[11px] font-bold uppercase tracking-wider text-ink">{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 
