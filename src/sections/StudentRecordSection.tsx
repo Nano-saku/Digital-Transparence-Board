@@ -298,7 +298,7 @@ export default function StudentRecordSection({ student, onBack, currentUserId, c
         <LoadingCard rows={6} label="Loading student records…" />
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             <StatCard featured icon={Wallet} label="Total paid" value={formatPeso(totalPaid)} hint={`of ${formatPeso(totalRequired)} required`} />
             <StatCard
               icon={PieChart}

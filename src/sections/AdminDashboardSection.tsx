@@ -128,8 +128,8 @@ export default function AdminDashboardSection({ onNavigate, role, userEmail }: A
         </div>
       }
       hero={
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="grid gap-4">
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-1 sm:gap-4">
             <StatCard featured label="Total Students" value={loading ? "—" : studentCount} icon={Users} hint={`${upcoming.length} upcoming events`} />
             <StatCard label="Expected Contributions" value={loading ? "—" : formatPeso(summary?.totalExpectedContributions ?? 0)} icon={Coins} />
           </div>

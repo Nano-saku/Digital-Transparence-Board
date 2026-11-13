@@ -226,12 +226,12 @@ export default function TransparencyBoardSection({ adminMode = false, onBack, on
         )
       }
       hero={
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {loading || !summary ? (
             Array.from({ length: 4 }, (_, i) => <div key={i} className="glass h-32 animate-pulse" />)
           ) : (
             <>
-              <div className="card-brand flex flex-col justify-between p-5 sm:col-span-2 lg:col-span-1 lg:row-span-1">
+              <div className="card-brand col-span-2 flex flex-col justify-between p-5 lg:col-span-1">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold text-white/75">Remaining budget</p>
                   <PieChart className="h-5 w-5 text-powder" />
@@ -423,12 +423,12 @@ function TypeChip({ income }: { income: boolean }) {
 
 function GlassStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return (
-    <div className="glass flex flex-col justify-between p-5">
+    <div className="glass flex flex-col justify-between p-4 sm:p-5">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-white/70">{label}</p>
-        <div className="grid h-9 w-9 place-items-center rounded-full border border-white/20"><Icon className="h-4 w-4 text-powder" /></div>
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/20 sm:h-9 sm:w-9"><Icon className="h-4 w-4 text-powder" /></div>
       </div>
-      <p className="mt-3 truncate text-2xl font-extrabold tracking-tight text-white">{value}</p>
+      <p className="mt-3 truncate text-xl font-extrabold tracking-tight text-white sm:text-2xl">{value}</p>
     </div>
   );
 }

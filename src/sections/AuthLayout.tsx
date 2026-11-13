@@ -73,7 +73,7 @@ export function PasswordInput({ shown, onToggle, ...props }: ComponentProps<"inp
       <button
         type="button"
         onClick={onToggle ?? (() => setOwn((v) => !v))}
-        className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-muted hover:text-ink"
+        className="absolute right-1.5 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full text-muted hover:text-ink"
         aria-label={visible ? "Hide password" : "Show password"}
       >
         {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

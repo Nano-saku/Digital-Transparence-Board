@@ -89,7 +89,7 @@ export default function Navigation({ currentView, onNavigate, role, onLogout, st
     cn("w-full rounded-2xl px-4 py-3 text-left text-sm font-semibold transition", active ? "bg-brand-500/10 text-brand-600" : "text-ink hover:bg-surface-2");
 
   return (
-    <nav className={cn("fixed inset-x-0 top-0 z-40 transition-[background-color,color,box-shadow] duration-300", solid ? "glass-bar text-ink" : surface === "dark" ? "glass-bar-dark text-white" : "text-white")}>
+    <nav className={cn("fixed inset-x-0 top-0 z-40 transition-[background-color,color,box-shadow] duration-300", mobileOpen ? "bg-surface text-ink shadow-soft" : solid ? "glass-bar text-ink" : surface === "dark" ? "glass-bar-dark text-white" : "text-white")}>
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:h-[4.5rem] lg:px-8">
         <button onClick={() => go("landing")} className="flex items-center gap-2.5" aria-label="LSynC home">
           <img src="/lsc-logo.jpg" alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white/30" />
