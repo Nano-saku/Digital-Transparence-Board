@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 /** Height-animating reveal (grid 0fr → 1fr) that resolves from a blur; content is inert while closed. */
 export function Reveal({ open, id, children }: { open: boolean; id?: string; children: ReactNode }) {
   return (
-    <div id={id} className={cn("grid transition-[grid-template-rows,opacity,filter] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 blur-sm")}>
+    <div id={id} className={cn("grid transition-[grid-template-rows,opacity,filter] duration-500 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 blur-sm")}>
       <div className="min-h-0 overflow-hidden" inert={!open}>
         {children}
       </div>

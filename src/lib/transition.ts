@@ -1,5 +1,6 @@
 import { flushSync } from "react-dom";
 import { prefersReducedMotion } from "@/lib/gsap";
+import { isLightDevice } from "@/lib/device";
 
 /** One fluid curve for every grow/shrink (decelerates like a settling liquid). */
 export const FLUID_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -48,7 +49,8 @@ type GrowOptions = {
  * fallback), so callers can skip their own entrance animation.
  */
 export function growFrom(update: (animated: boolean) => void, { origin = pressOrigin(), shape = "morph", direction = "forward" }: GrowOptions = {}) {
-  if (!document.startViewTransition || !origin || prefersReducedMotion()) {
+  // Phones skip the full-page snapshot morph (the CSS fade-in still plays): it is costly on mobile GPUs.
+  if (!document.startViewTransition || !origin || prefersReducedMotion() || isLightDevice()) {
     update(false);
     return;
   }

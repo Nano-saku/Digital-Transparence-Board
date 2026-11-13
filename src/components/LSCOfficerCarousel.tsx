@@ -19,7 +19,7 @@ export default function LSCOfficerCarousel() {
     return () => clearInterval(id);
   }, [paused]);
 
-  const arrow = "btn btn-icon absolute top-1/2 z-20 -translate-y-1/2 border border-white/25 bg-white/10 text-white backdrop-blur hover:bg-white/20";
+  const arrow = "btn btn-icon absolute top-1/2 z-20 -translate-y-1/2 border border-white/25 bg-white/10 text-white hover:bg-white/20 md:backdrop-blur";
 
   return (
     <div
