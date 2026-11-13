@@ -1,5 +1,6 @@
 import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { prefersReducedMotion } from "@/lib/gsap";
+import { isLightDevice } from "@/lib/device";
 
 const ShaderCanvas = lazy(() => import("./ShaderCanvas"));
 
@@ -28,14 +29,14 @@ const hasWebGL = () => {
 /**
  * The site's backdrop: a static gradient in the shader's colours paints
  * instantly; the moving WebGL gradient fades in over it once its code has
- * loaded (after first paint, so it never delays the page). Phones render at
- * a lower pixel density; "reduce motion" keeps the static gradient.
+ * loaded (after first paint, so it never delays the page). Phones, Data Saver
+ * and "reduce motion" keep the static gradient.
  */
 export default function ShaderBackground() {
   const [ready, setReady] = useState(false);
   // Reduced motion gets the static CSS gradient: no WebGL loop burning GPU on a frame that never changes.
-  const [webgl] = useState(() => hasWebGL() && !prefersReducedMotion());
-  const pixelDensity = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches ? 1 : 1.5;
+  // Phones keep the static gradient too: the WebGL loop (and its ~1 MB of code) is the heaviest thing on the page.
+  const [webgl] = useState(() => hasWebGL() && !prefersReducedMotion() && !isLightDevice());
 
   useEffect(() => {
     if (!webgl) return;
@@ -49,7 +50,7 @@ export default function ShaderBackground() {
         <WebGLGuard>
           <Suspense fallback={null}>
             <div className="absolute inset-0 animate-in fade-in-0 duration-1000">
-              <ShaderCanvas pixelDensity={pixelDensity} />
+              <ShaderCanvas pixelDensity={1.5} />
             </div>
           </Suspense>
         </WebGLGuard>

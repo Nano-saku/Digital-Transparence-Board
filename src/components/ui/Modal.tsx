@@ -88,7 +88,7 @@ export default function Modal({ open, onClose, title, description, icon, size = 
     <Dialog.Root open={mounted} onOpenChange={(o) => !o && open && onClose()}>
       <Dialog.Portal>
         {/* Soften the glass panes behind, so the modal's glass never stacks on another layer of glass. */}
-        <Dialog.Overlay ref={overlayRef} className="fixed inset-0 z-50 bg-[rgb(2_4_24/0.42)] backdrop-blur-[14px] backdrop-saturate-[1.2]" />
+        <Dialog.Overlay ref={overlayRef} className="modal-scrim fixed inset-0 z-50 bg-[rgb(2_4_24/0.42)] backdrop-blur-[14px] backdrop-saturate-[1.2]" />
         <div className={cn("fixed inset-0 z-50 grid place-items-center p-4", !open && "pointer-events-none")}>
           <Dialog.Content
             ref={setPanel}

@@ -2,11 +2,13 @@ import { useEffect } from "react";
 import Lenis from "lenis";
 import { gsap, ScrollTrigger, prefersReducedMotion } from "@/lib/gsap";
 import { smooth } from "@/lib/scroll";
+import { isLightDevice } from "@/lib/device";
 
 /** Lenis smooth scrolling driven by GSAP's ticker so ScrollTrigger stays in sync. */
 export default function SmoothScroll() {
   useEffect(() => {
-    if (prefersReducedMotion()) return;
+    // Native scrolling on phones: lighter and what touch users expect.
+    if (prefersReducedMotion() || isLightDevice()) return;
     const lenis = new Lenis({ autoRaf: false, allowNestedScroll: true, lerp: 0.1 });
     smooth.lenis = lenis;
     lenis.on("scroll", ScrollTrigger.update);

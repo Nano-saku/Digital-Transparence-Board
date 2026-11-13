@@ -220,8 +220,8 @@ export default function LandingSection({ onSearch, onViewTransparency, searching
 
       <CouncilUpdates />
 
-      {/* Council officers */}
-      <section className="bg-page px-4 pb-20 sm:px-6 lg:pb-28">
+      {/* Council officers (clipped: the tilted side slides extend past the screen edge) */}
+      <section className="bg-page overflow-x-clip px-4 pb-20 sm:px-6 lg:pb-28">
         <div className="mx-auto max-w-6xl">
           <h2 className="mb-8 text-2xl font-extrabold text-white sm:text-3xl">Council officers</h2>
           <LSCOfficerCarousel />
@@ -293,7 +293,7 @@ function Segment({ id, label, divided, children }: { id: string; label: string; 
 function Floating({ tilt, fan, children }: { tilt: string; fan: string; children: ReactNode }) {
   return (
     <div className={cn("hero-card", tilt)}>
-      <div className={cn("transition-[translate,rotate,scale] duration-700 ease-[cubic-bezier(0.34,1.4,0.64,1)]", fan)}>{children}</div>
+      <div className={cn("transition-[translate,rotate,scale] duration-700 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]", fan)}>{children}</div>
     </div>
   );
 }

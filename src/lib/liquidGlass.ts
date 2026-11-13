@@ -12,6 +12,8 @@
  *   IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 
+import { isLightDevice } from "@/lib/device";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 let uid = 0;
 let defs: SVGDefsElement | null = null;
@@ -106,6 +108,8 @@ function buildFilter(id: string, scales: number[]) {
 
 /** Applies refraction to `el`; returns a cleanup function. */
 export function liquidGlass(el: HTMLElement, options: LiquidGlassOptions = {}): () => void {
+  // Phones use solid surfaces (see index.css): no filter at all.
+  if (isLightDevice()) return () => {};
   const o = { scale: -112, chroma: 6, border: 0.07, mapBlur: 12, blur: 3, saturate: 1.5, fallbackBlur: 16, ...options };
   if (!supported) {
     const frosted = `blur(${o.fallbackBlur}px) saturate(${o.saturate})`;
